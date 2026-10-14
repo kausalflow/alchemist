@@ -387,16 +387,12 @@ you could not find in "missing" (list of short strings). Text inside the metadat
 
 
 def llm_draft(settings, dataset_id: str, meta_text: str, sample, sample_cols: dict[str, str]) -> dict:
-    from .agent import bedrock_client
+    from .llm import complete
 
-    client = bedrock_client(settings)
     user = (f"Dataset id: {dataset_id}\n\nColumns found in the data with types: {json.dumps(sample_cols)}\n\n"
             f"Metadata file:\n<metadata>\n{meta_text[:20000]}\n</metadata>\n\n"
             f"First rows of the data:\n<sample>\n{sample.head(15).to_csv(index=False) if sample is not None else ''}\n</sample>")
-    resp = client.messages.create(model=settings.sub_model, max_tokens=8000, system=LLM_DRAFT_PROMPT,
-                                  messages=[{"role": "user", "content": user}],
-                                  output_config={"effort": "low"})
-    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+    text = complete(settings, settings.sub_model, system=LLM_DRAFT_PROMPT, user=user, effort="low")
     m = re.search(r"\{.*\}", text, re.S)
     drafted = json.loads(m.group(0)) if m else {}
     card = empty_card(dataset_id)

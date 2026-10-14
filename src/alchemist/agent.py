@@ -1,6 +1,6 @@
-"""The agent loop: Claude on Amazon Bedrock, calling Alchemist's tools.
+"""The agent loop: a model (any provider, via llm.py) calling Alchemist's tools.
 
-The loop is a plain Messages API tool loop so every model call and tool call
+The loop is a plain tool loop so every model call and tool call
 passes through code Alchemist owns (budgets, logging, the provenance record).
 `ScriptedModel` replays a fixed list of tool calls through the same loop, for
 offline demos and tests.
@@ -16,41 +16,10 @@ from typing import Callable, Protocol
 from .paths import as_path
 
 
-def bedrock_client(settings):
-    from anthropic import AnthropicBedrockMantle
-
-    return AnthropicBedrockMantle(aws_region=settings.aws_region)
-
-
 class Model(Protocol):
     name: str
 
     def create(self, *, system: str, tools: list[dict], messages: list[dict]) -> dict: ...
-
-
-class BedrockModel:
-    """Claude through the company's Bedrock account. Model ids may be inference profile ARNs."""
-
-    def __init__(self, settings, model: str | None = None, effort: str | None = None, max_tokens: int = 16000):
-        self.client = bedrock_client(settings)
-        self.name = model or settings.lead_model
-        self.effort = effort or settings.effort
-        self.max_tokens = max_tokens
-
-    def create(self, *, system: str, tools: list[dict], messages: list[dict]) -> dict:
-        resp = self.client.messages.create(
-            model=self.name,
-            max_tokens=self.max_tokens,
-            system=system,
-            tools=tools,
-            messages=messages,
-            thinking={"type": "adaptive"},
-            output_config={"effort": self.effort},
-        )
-        # Keep every block (thinking included) exactly as returned, so the history stays append-only.
-        content = [b.to_dict() if hasattr(b, "to_dict") else b.model_dump(exclude_none=True) for b in resp.content]
-        return {"content": content, "stop_reason": resp.stop_reason,
-                "usage": {"input_tokens": resp.usage.input_tokens, "output_tokens": resp.usage.output_tokens}}
 
 
 class ScriptedModel:

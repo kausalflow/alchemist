@@ -22,14 +22,31 @@ The demo plays a scripted investigation through the real agent loop and tools, s
 synthetic data has a planted cause (resin lot R-118 lowers melt temperature by about 2 °C and yield by about 5 points),
 a sensor gap, a second plant the demo user may not read, and metadata files in three different layouts.
 
-## Run it with Claude on Bedrock
+## Choose the model provider
 
-All model calls go through your AWS account's Amazon Bedrock. Model ids can be application inference profile ARNs.
+Models are set per role with [Pydantic AI](https://ai.pydantic.dev) specs, `provider:model-id`. A bare id means Bedrock.
+
+| Provider | Example | Credentials |
+| --- | --- | --- |
+| Amazon Bedrock (default) | `bedrock:anthropic.claude-opus-5-5` or an inference profile ARN | AWS credential chain, `AWS_REGION` |
+| Anthropic API | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
+| Google Gemini | `google-gla:gemini-3-pro` | `GOOGLE_API_KEY` |
+| OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
 
 ```bash
-export AWS_REGION=eu-central-1
-export ALC_LEAD_MODEL=anthropic.claude-opus-5-5     # or your inference profile ARN
-export ALC_SUB_MODEL=anthropic.claude-sonnet-5-5    # reviewer and catalog-card drafter
+export ALC_LEAD_MODEL=bedrock:anthropic.claude-opus-5-5   # plans and analyses
+export ALC_SUB_MODEL=bedrock:anthropic.claude-sonnet-5-5  # reviewer and catalog-card drafter
+export ALC_ALLOWED_PROVIDERS=bedrock                      # default; plant data goes only to listed providers
+alchemist ask "..." --model google-gla:gemini-3-pro ...   # per-run override (provider must be allowed)
+```
+
+Because plant data is private, any provider other than Bedrock is refused until it is added to `ALC_ALLOWED_PROVIDERS`
+(comma-separated, `*` for all). The manifest records the exact `provider:model` used for each role.
+
+## Run it on a real model
+
+```bash
+export AWS_REGION=eu-central-1   # Bedrock only
 uv run alchemist catalog index --use-model --force  # draft catalog cards from free-form metadata with Claude
 uv run alchemist ask "Why was quality low on Line 2 from 3 to 9 August 2026?" \
     --user eng_p1 --workspace quality --project line2-yield --plants P01
@@ -74,7 +91,8 @@ src/alchemist/
   sqlguard.py   read-only SQL guard on DuckDB's parser
   nb.py         helpers used inside the kernel as `alc` (query, finding, align, effect, check_results)
   sandbox.py    one Jupyter kernel per run; every call becomes a notebook cell
-  agent.py      Bedrock tool loop with budgets and a transcript; ScriptedModel for offline runs
+  llm.py        model access through Pydantic AI (Bedrock, Anthropic, Gemini, OpenAI), provider allow-list
+  agent.py      tool loop with budgets and a transcript; ScriptedModel for offline runs
   prompts.py    system prompts and tool definitions (their hash goes into each manifest)
   run.py        ask / approve / replay lifecycle and the tool handlers
   report.py     conclusion card and HTML report

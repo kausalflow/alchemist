@@ -21,10 +21,12 @@ class Settings:
     access_file: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS") or _home("access.yaml"))
     # Searchable domain documents (markdown with front matter).
     knowledge_root: str = field(default_factory=lambda: os.environ.get("ALC_KNOWLEDGE") or _home("knowledge"))
-    # Bedrock settings. Model ids can be application inference profile ARNs.
+    # Models are Pydantic AI specs `provider:model-id`; a bare id means Bedrock (and may be an inference profile ARN).
     aws_region: str = field(default_factory=lambda: os.environ.get("AWS_REGION", "eu-central-1"))
     lead_model: str = field(default_factory=lambda: os.environ.get("ALC_LEAD_MODEL", "anthropic.claude-opus-5-5"))
     sub_model: str = field(default_factory=lambda: os.environ.get("ALC_SUB_MODEL", "anthropic.claude-sonnet-5-5"))
+    # Providers plant data may be sent to. Anything else is refused unless listed (or '*').
+    allowed_providers: list[str] = field(default_factory=lambda: [p.strip() for p in os.environ.get("ALC_ALLOWED_PROVIDERS", "bedrock").split(",") if p.strip()])
     effort: str = field(default_factory=lambda: os.environ.get("ALC_EFFORT", "high"))
     # Budgets per run.
     max_steps: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_STEPS", "60")))

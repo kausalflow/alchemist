@@ -28,9 +28,9 @@ def _model(name: str, phase: str):
         from .demo import script
 
         return ScriptedModel(script.PLAN_TURNS if phase == "plan" else script.ANALYSIS_TURNS)
-    from .agent import BedrockModel
+    from .llm import PydanticAIModel
 
-    return BedrockModel(load_settings())
+    return PydanticAIModel(load_settings(), None if name in ("bedrock", "default") else name)
 
 
 def _reviewer(name: str):
@@ -194,7 +194,7 @@ def main(argv=None) -> None:
     d = sub.add_parser("demo", help="synthetic plant data and an offline end-to-end run")
     dsub = d.add_subparsers(dest="demo_cmd", required=True)
     ds = dsub.add_parser("setup", help="generate demo data, register and index the datasets")
-    ds.add_argument("--use-model", action="store_true", help="draft catalog cards with Claude on Bedrock")
+    ds.add_argument("--use-model", action="store_true", help="draft catalog cards with the sub model (ALC_SUB_MODEL)")
     ds.add_argument("--no-approve", action="store_true", help="leave drafts for an admin to review")
     ds.set_defaults(fn=cmd_demo_setup)
     dsub.add_parser("run", help="ask, approve, replay and verify the demo question offline").set_defaults(fn=cmd_demo_run)
@@ -222,7 +222,8 @@ def main(argv=None) -> None:
     k.add_argument("--project", required=True)
     k.add_argument("--plants", help="comma-separated plants in scope")
     k.add_argument("--scope", help='JSON, e.g. {"line": "L2", "period": ["2026-08-03", "2026-08-09"]}')
-    k.add_argument("--model", choices=["bedrock", "scripted"], default="bedrock")
+    k.add_argument("--model", default="default",
+                   help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
     k.add_argument("--auto-approve", action="store_true")
     k.set_defaults(fn=cmd_ask)
 
@@ -230,7 +231,8 @@ def main(argv=None) -> None:
     ap.add_argument("run_id")
     ap.add_argument("--user", required=True)
     ap.add_argument("--plan-file", help="edited plan JSON")
-    ap.add_argument("--model", choices=["bedrock", "scripted"], default="bedrock")
+    ap.add_argument("--model", default="default",
+                   help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
     ap.set_defaults(fn=cmd_approve)
 
     sub.add_parser("runs", help="list runs").set_defaults(fn=cmd_runs)

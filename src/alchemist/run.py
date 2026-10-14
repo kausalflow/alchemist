@@ -15,7 +15,8 @@ from pathlib import Path
 
 from . import prompts
 from .access import AccessDenied, AccessModel
-from .agent import BedrockModel, Budget, Model, ToolOutput, run_loop
+from .agent import Budget, Model, ToolOutput, run_loop
+from .llm import PydanticAIModel
 from .catalog import Catalog, now
 from .knowledge import Knowledge
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json
@@ -269,7 +270,7 @@ def ask(svc: Services, *, user: str, workspace: str, project: str, question: str
     row = svc.catalog.run(rid)
 
     ctx = RunContext(svc, row, user=user)
-    model = model or BedrockModel(s)
+    model = model or PydanticAIModel(s)
     ctx.models["lead"] = model.name
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     handlers = {"search_catalog": ctx.search_catalog, "search_knowledge": ctx.search_knowledge,
@@ -312,8 +313,8 @@ def approve(svc: Services, run_id: str, *, user: str, plan: dict | None = None, 
     write_json(ctx.run / "inputs" / "views.json", views)
     write_json(ctx.run / "inputs" / "knowledge_index.json", svc.knowledge.copy_structured(ctx.run, ctx.plants))
 
-    model = model or BedrockModel(s)
-    reviewer = reviewer or BedrockModel(s, model=s.sub_model, effort="medium")
+    model = model or PydanticAIModel(s)
+    reviewer = reviewer or PydanticAIModel(s, s.sub_model, effort="medium")
     ctx.models.update(lead=model.name, reviewer=reviewer.name)
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     ended = "error"
