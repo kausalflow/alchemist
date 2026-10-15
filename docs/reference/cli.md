@@ -32,8 +32,8 @@ alchemist catalog {list,register,index,show,approve,reject,suggestions,health} [
 | Action | Options | Does |
 | --- | --- | --- |
 | `list` | | registry rows, each with its card versions |
-| `register` | `--id --prefix --plant` (required), `--glob` (default `*.parquet`), `--format` (`parquet`, `csv`, `json`), `--metadata`, `--owner` | add or replace a dataset in the registry |
-| `index` | `--id` (default: all), `--use-model`, `--force` | draft a new card version where the metadata file changed |
+| `register` | `--id --prefix --plant` (required), `--glob` (default `*.parquet`), `--format` (`parquet`, `csv`, `json`, or a format a plugin adds), `--metadata`, `--owner` | add or replace a dataset in the registry |
+| `index` | `--id` (default: all), `--use-model`, `--drafter NAME`, `--force` | draft a new card version where the metadata file changed, with the `heuristic` drafter (`model` with `--use-model`, or any registered drafter) |
 | `show` | `--id` | latest card version, any status |
 | `approve` | `--id --version`, `--card-file` | approve a draft, optionally replacing it with an edited card |
 | `reject` | `--id --version` | reject a draft |
@@ -92,3 +92,13 @@ alchemist verify RUN_ID
 
 Checks the run folder against `SEALED` and the seal hash recorded at sealing. Lists every missing, changed or added file
 and exits non-zero on any problem.
+
+## `plugins`
+
+```text
+alchemist plugins [list|show]
+```
+
+`list` prints the loaded plugins with their versions and contributions; `show` prints every extension point and which
+plugin provides each name. Plugins can add their own commands, which then appear in `alchemist --help`. See
+[Plugins](../guides/plugins.md).

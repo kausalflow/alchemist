@@ -27,6 +27,7 @@ nav = [
     "guides/real-questions.md",
     "guides/catalog-admin.md",
     "guides/s3.md",
+    "guides/plugins.md",
   ] },
   { "Reference" = [
     "reference/cli.md",

@@ -19,7 +19,8 @@ from typing import Any
 
 import duckdb
 
-from .paths import as_path, expand_glob, object_info, read_structured
+from .paths import as_path, expand_glob, object_info
+from .plugins import DraftRequest, get_registry
 
 SCHEMA = """
 create table if not exists datasets (
@@ -76,8 +77,9 @@ class Catalog:
     def register(self, *, id: str, s3_prefix: str, file_glob: str, file_format: str, plant: str,
                  metadata_uri: str | None, owner: str = "", sensitivity: str = "internal",
                  name: str | None = None, actor: str = "admin") -> None:
-        if file_format not in ("parquet", "csv", "json"):
-            raise ValueError("file_format must be parquet, csv or json")
+        formats = get_registry().data_formats
+        if file_format not in formats:
+            raise ValueError(f"file_format must be one of {', '.join(formats.names())}")
         self.db.execute(
             "insert or replace into datasets(id, name, s3_prefix, file_glob, metadata_uri, file_format, plant,"
             " sensitivity, owner, status, created_by, created_at) values (?,?,?,?,?,?,?,?,?, 'active', ?, ?)",
@@ -353,9 +355,8 @@ def sample_dataset(catalog: Catalog, ds: dict, rows: int = 200):
     if not files:
         return [], None
     con = duckdb.connect()
-    reader = {"parquet": "read_parquet", "csv": "read_csv_auto", "json": "read_json_auto"}[ds["file_format"]]
-    file_list = ", ".join(f"'{f}'" for f in files[:20])
-    rel = con.sql(f"select * from {reader}([{file_list}]) limit {rows}")
+    scan = get_registry().data_formats.get(ds["file_format"]).scan(files[:20])
+    rel = con.sql(f"select * from {scan} limit {rows}")
     return files, rel.df()
 
 
@@ -411,15 +412,25 @@ def llm_draft(settings, dataset_id: str, meta_text: str, sample, sample_cols: di
     return card
 
 
-def index_dataset(catalog: Catalog, settings, dataset_id: str, use_model: bool = False, force: bool = False) -> dict:
-    """Draft a new card version if the metadata file changed since the last draft."""
+def metadata_parser(uri: str):
+    """The registered metadata parser for a file's suffix (YAML/JSON by default)."""
+    suffix = as_path(uri).suffix.lower()
+    parsers = get_registry().metadata_parsers
+    return next((p for p in parsers if suffix in p.suffixes), None) or parsers.get("yaml")
+
+
+def index_dataset(catalog: Catalog, settings, dataset_id: str, use_model: bool = False, force: bool = False,
+                  drafter: str | None = None) -> dict:
+    """Draft a new card version if the metadata file changed since the last draft.
+
+    `drafter` names a registered card drafter; default "model" with use_model, else "heuristic"."""
     ds = catalog.dataset(dataset_id)
     meta_text, etag, meta = "", "none", {}
     if ds["metadata_uri"] and as_path(ds["metadata_uri"]).exists():
         meta_text = as_path(ds["metadata_uri"]).read_text()
         etag = object_info(ds["metadata_uri"])["etag"]
         try:
-            meta = read_structured(ds["metadata_uri"])
+            meta = metadata_parser(ds["metadata_uri"]).parse(meta_text)
         except Exception:  # unreadable metadata still gets a card from the data sample
             meta = {}
     last = catalog.latest_card(dataset_id, status=None)
@@ -431,10 +442,9 @@ def index_dataset(catalog: Catalog, settings, dataset_id: str, use_model: bool =
     if sample is not None:
         con.register("s", sample)
         sample_cols = {r[0]: r[1] for r in con.sql("describe s").fetchall()}
-    if use_model:
-        card, drafted_by = llm_draft(settings, dataset_id, meta_text, sample, sample_cols), settings.sub_model
-    else:
-        card, drafted_by = heuristic_draft(dataset_id, meta, sample_cols), "heuristic"
+    d = get_registry().card_drafters.get(drafter or ("model" if use_model else "heuristic"))
+    card = d.draft(DraftRequest(dataset_id, meta, meta_text, sample, sample_cols, settings))
+    drafted_by = d.drafted_by(settings) if d.drafted_by else d.name
     validate_card(card)
     checks = check_card(card, sample)
     version = catalog.add_draft(dataset_id, card, etag, drafted_by, checks)

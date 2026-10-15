@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from .paths import as_path, expand_glob, object_info, put_file, read_json, write_json
+from .plugins import get_registry
 from .sqlguard import check_sql
 
 RESULT_MARKER = "ALC_RESULT "
@@ -55,15 +56,19 @@ def init(run_dir: str, run_mode: str = "live", seed: int = 1729) -> None:
 
     con = duckdb.connect()
     con.execute("set threads = 1")
-    if any(v["glob"].startswith("s3://") for v in views.values()):
-        con.execute("install httpfs; load httpfs")
-        con.execute("create secret (type s3, provider credential_chain)")
+    backends = get_registry().storage_backends
+    for scheme in sorted({_scheme(v["glob"]) for v in views.values()}):
+        backends.get(scheme).setup(con)
     roots = sorted({_root(v["glob"]) for v in views.values()} | {str(tmp)})
     con.execute("set allowed_directories = " + "[" + ", ".join(f"'{r}'" for r in roots) + "]")
     con.execute("set enable_external_access = false")
     con.execute("set lock_configuration = true")
     con.execute("create schema if not exists ds")
     _state["con"] = con
+
+
+def _scheme(uri: str) -> str:
+    return uri.split("://", 1)[0] if "://" in uri else "file"
 
 
 def _root(glob: str) -> str:
@@ -90,15 +95,14 @@ def _pin_views(datasets: list[str]) -> list[dict]:
         if not files:
             raise FileNotFoundError(f"no files for dataset {name}")
         objects += [dict(object_info(f), dataset=name) for f in files]
-        reader = {"parquet": "read_parquet", "csv": "read_csv_auto", "json": "read_json_auto"}[spec["format"]]
+        scan = get_registry().data_formats.get(spec["format"]).scan(files)
         cols = []
         for c in spec["columns"]:
             if c["exposure"] == "never_to_model":
                 continue
             q = f'"{c["name"]}"'
             cols.append(f"md5('{key}' || {q}::varchar) as {q}" if c["exposure"] == "pseudonymise" else q)
-        file_list = ", ".join(f"'{f}'" for f in files)
-        con.execute(f"create or replace view ds.{name} as select {', '.join(cols)} from {reader}([{file_list}])")
+        con.execute(f"create or replace view ds.{name} as select {', '.join(cols)} from {scan}")
     return objects
 
 
@@ -258,6 +262,24 @@ def effect(a, b) -> dict:
     return {"mean_a": float(a.mean()), "mean_b": float(b.mean()), "diff": float(a.mean() - b.mean()),
             "p_value": float(t.pvalue), "cohens_d": float((a.mean() - b.mean()) / pooled) if pooled else None,
             "n_a": int(len(a)), "n_b": int(len(b))}
+
+
+class _Methods:
+    """Analysis methods from plugins: alc.methods.<name>(...). alc.methods.list() shows what is available."""
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return get_registry().analysis_methods.get(name)
+
+    def __dir__(self):
+        return get_registry().analysis_methods.names()
+
+    def list(self) -> dict[str, str]:
+        return get_registry().method_docs()
+
+
+methods = _Methods()
 
 
 def knowledge(name: str):

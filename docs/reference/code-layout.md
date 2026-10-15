@@ -17,6 +17,7 @@ src/alchemist/
   workspace.py  S3 (or local) folder layout, sealing and verification
   knowledge.py  document passages and structured knowledge
   paths.py      cloudpathlib helpers, ULIDs, hashing, glob expansion
+  plugins.py    plugin registry and extension-point types; the built-in defaults are registered here
   api/
     app.py      FastAPI app: session routes, plugin routers, serving the built web app
     runs.py     questions and runs: ask, approve, events, stop, contents, replay, verdicts
@@ -31,6 +32,8 @@ tests/          pytest suite, including an end-to-end run, replay and verify, an
 web/            React single-page app (Vite, TypeScript) over the REST API
   src/pages/    Ask, Runs, Run, Catalog, Dataset, Catalog admin, About
   src/runTabs.tsx  registry of run page tabs
+examples/
+  alchemist-example-plugin/   a working plugin of most extension kinds (see guides/plugins.md)
 ```
 
 ## How the pieces call each other
@@ -49,6 +52,10 @@ flowchart TB
     NB --> DUCK[(DuckDB on S3 / local)]
     RUN --> REP[report.py]
     RUN --> WS[workspace.py: folders, seal, verify]
+    PLG[plugins.py: registry] -.-> CAT
+    PLG -.-> LLM
+    PLG -.-> RUN
+    PLG -.-> NB
 ```
 
 The orchestration (`run.py`, `agent.py`, `llm.py`) talks to the model; everything that touches data runs in the kernel
