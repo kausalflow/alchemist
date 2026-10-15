@@ -44,11 +44,12 @@ flowchart TB
 | Sealed runs cannot change | files made read-only + SHA-256 tamper evidence | run credentials expire; optional S3 Object Lock |
 | Catalog and run index | SQLite | Aurora PostgreSQL + pgvector |
 | Document search | keyword ranking | hybrid (embeddings + full text) |
-| Plan approval and progress | CLI | web app with plan editing and live progress |
+| Plan approval and progress | web app with plan editing and live progress, or the CLI | same |
+| Sign-in | pick a user from `access.yaml` (`ALC_AUTH=dev`) | corporate OIDC at the load balancer, groups mapped to plants and workspaces |
+| Long steps | thread pool in the API process | Step Functions execution per run, through a launcher plugged in with `ALC_LAUNCHER` |
 
 ## Not in the MVP yet
 
-- Web app and REST API.
 - Step Functions orchestration and the AWS infrastructure code (CDK).
 - The separate sandbox container and the credential broker.
 - pgvector search and knowledge ingestion from PDFs.

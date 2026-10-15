@@ -108,12 +108,41 @@ def meta(request: Request, me: Me) -> dict:
         "models": {"lead": s.lead_model, "sub": s.sub_model, "allowed_providers": s.allowed_providers,
                    "scripted": os.environ.get("ALC_API_MODEL") == "scripted"},
         "budgets": {"max_steps": s.max_steps, "max_output_tokens": s.max_output_tokens_total},
-        "tools": {"planning": [_tool(n) for n in prompts.PLAN_TOOLS],
-                  "analysis": [_tool(n) for n in prompts.ANALYSIS_TOOLS]},
+        "tools": {"planning": [_tool(n) for n in prompts.PLAN_TOOLS] + _plugin_tools("plan"),
+                  "analysis": [_tool(n) for n in prompts.ANALYSIS_TOOLS] + _plugin_tools("analysis")},
         "prompts": prompts.prompt_version(),
-        "plugins": request.app.state.plugins,
+        "plugins": _registry_summary() + [{"name": n, "kind": "api"} for n in request.app.state.plugins],
+        "options": _registry_options(),
         "launcher": type(request.app.state.launcher).__name__,
     }
+
+
+def _registry():
+    """The plugin registry (alchemist.plugins), when this build has it."""
+    try:
+        from ..plugins import get_registry
+    except ImportError:
+        return None
+    return get_registry()
+
+
+def _registry_summary() -> list[dict]:
+    r = _registry()
+    return list(r.summary()) if r else []
+
+
+def _plugin_tools(phase: str) -> list[dict]:
+    r = _registry()
+    return [{"name": t.name, "description": t.description.split("\n")[0], "plugin": True}
+            for t in r.tools_for(phase)] if r else []
+
+
+def _registry_options() -> dict:
+    """Choices the web app offers in forms (dataset formats, card drafters), from the registry when present."""
+    r = _registry()
+    if not r:
+        return {"data_formats": ["parquet", "csv", "json"], "card_drafters": ["heuristic", "model"]}
+    return {"data_formats": r.data_formats.names(), "card_drafters": r.card_drafters.names()}
 
 
 def _tool(name: str) -> dict:

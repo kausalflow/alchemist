@@ -22,6 +22,7 @@ nav = [
     "concepts/knowledge.md",
   ] },
   { "Guides" = [
+    "guides/web-app.md",
     "guides/models.md",
     "guides/real-questions.md",
     "guides/catalog-admin.md",
@@ -29,6 +30,7 @@ nav = [
   ] },
   { "Reference" = [
     "reference/cli.md",
+    "reference/api.md",
     "reference/configuration.md",
     "reference/run-folder.md",
     "reference/agent-tools.md",

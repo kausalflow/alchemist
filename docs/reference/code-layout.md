@@ -17,10 +17,20 @@ src/alchemist/
   workspace.py  S3 (or local) folder layout, sealing and verification
   knowledge.py  document passages and structured knowledge
   paths.py      cloudpathlib helpers, ULIDs, hashing, glob expansion
+  api/
+    app.py      FastAPI app: session routes, plugin routers, serving the built web app
+    runs.py     questions and runs: ask, approve, events, stop, contents, replay, verdicts
+    catalog.py  catalog browsing, suggestions and admin
+    identity.py who is calling (dev header or the load balancer's OIDC token) and their groups
+    jobs.py     launchers that run plan, analysis and replay steps outside the request
+    deps.py     per-request services, the signed-in user, entitlement checks
   demo/
     generate.py synthetic plant with a planted root cause
     script.py   the scripted investigation used by `demo run` and the tests
-tests/          pytest suite, including an end-to-end run, replay and verify
+tests/          pytest suite, including an end-to-end run, replay and verify, and the API
+web/            React single-page app (Vite, TypeScript) over the REST API
+  src/pages/    Ask, Runs, Run, Catalog, Dataset, Catalog admin, About
+  src/runTabs.tsx  registry of run page tabs
 ```
 
 ## How the pieces call each other

@@ -30,6 +30,16 @@ The demo plays a scripted investigation through the real agent loop and tools, s
 synthetic data has a planted cause (resin lot R-118 lowers melt temperature by about 2 °C and yield by about 5 points),
 a sensor gap, a second plant the demo user may not read, and metadata files in three different layouts.
 
+## Use it in the browser
+
+```bash
+cd web && npm ci && npm run build && cd ..
+uv run alchemist serve --scripted   # http://127.0.0.1:8000; drop --scripted to use your models
+```
+
+Ask a question, review and edit the plan, watch the run, then read the conclusion with the data, queries, notebook,
+citations and review behind it. See [Web app](docs/guides/web-app.md) and [REST API](docs/reference/api.md).
+
 ## Choose the model provider
 
 Models are set per role with [Pydantic AI](https://ai.pydantic.dev) specs, `provider:model-id`. A bare id means Bedrock.
@@ -115,5 +125,5 @@ prefixes uses S3 directly (DuckDB reads it with the `credential_chain` secret).
 
 ## Not in the MVP yet
 
-Web app and REST API, Step Functions orchestration and the AWS infrastructure code, the separate sandbox container,
+Step Functions orchestration and the AWS infrastructure code, the separate sandbox container,
 pgvector search, PDF reports, rerunning on a new scope, and the evaluation benchmark of past investigations.

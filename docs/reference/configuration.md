@@ -32,6 +32,20 @@ Provider credentials are read the usual way: the AWS credential chain for Bedroc
 | `ALC_MAX_STEPS` | `60` | tool calls per planning or analysis step |
 | `ALC_MAX_OUTPUT_TOKENS` | `400000` | output tokens per planning or analysis step |
 
+## Web app and API
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_AUTH` | `dev` | `dev`: the user comes from the `X-Alchemist-User` header or `alc_user` cookie (local only); `alb-oidc`: the load balancer's signed OIDC header |
+| `ALC_ALB_ARN` | unset | in `alb-oidc` mode, the only load balancer whose tokens are accepted |
+| `ALC_OIDC_USER_CLAIM` | `email` | claim used as the user id (falls back to `sub`) |
+| `ALC_OIDC_GROUPS_CLAIM` | `groups` | claim holding the `alc-*` group names |
+| `ALC_API_MODEL` | unset | `scripted` plays the offline demo script instead of calling a model (`alchemist serve --scripted`) |
+| `ALC_LAUNCHER` | unset | `package.module:factory` for a launcher that runs plan, analysis and replay steps elsewhere; default runs them on a thread pool in the API process |
+| `ALC_WEB_DIST` | `web/dist` | built web app to serve at `/`; the API alone runs if it is missing |
+
+See [Web app](../guides/web-app.md) and [REST API](api.md).
+
 ## Security and provenance
 
 | Variable | Default | Meaning |

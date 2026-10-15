@@ -14,6 +14,15 @@ printed as JSON.
 | `alchemist demo setup [--use-model] [--no-approve]` | generate the synthetic plant under `ALC_HOME`, register its datasets and index them. `--use-model` drafts cards with `ALC_SUB_MODEL`; `--no-approve` leaves drafts for review |
 | `alchemist demo run` | ask, approve, replay and verify the demo question offline, with the scripted model |
 
+## `serve`
+
+```text
+alchemist serve [--host 127.0.0.1] [--port 8000] [--scripted]
+```
+
+Runs the [REST API](api.md) under `/api` and, when `web/dist` has been built, the [web app](../guides/web-app.md) at
+`/`. `--scripted` plays the offline demo script instead of calling a model.
+
 ## `catalog`
 
 ```text

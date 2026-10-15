@@ -315,7 +315,6 @@ def approve(svc: Services, run_id: str, *, user: str, plan: dict | None = None, 
 
 def start_approval(svc: Services, run_id: str, *, user: str, plan: dict | None = None) -> dict:
     """Record the approval (with the user's edits, if any) and mark the run running. Returns the approved plan."""
-    s = svc.settings
     row = svc.catalog.run(run_id)
     if row["status"] != "awaiting_approval":
         raise ValueError(f"run {run_id} is {row['status']}, not awaiting approval")

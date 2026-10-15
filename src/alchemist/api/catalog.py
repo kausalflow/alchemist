@@ -77,7 +77,7 @@ class RegisterBody(BaseModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,62}$")
     s3_prefix: str
     file_glob: str = "*.parquet"
-    file_format: Literal["parquet", "csv", "json"] = "parquet"
+    file_format: str = "parquet"  # parquet, csv, json, or a format a plugin registers
     plant: str
     metadata_uri: str | None = None
     owner: str = ""
@@ -87,7 +87,10 @@ class RegisterBody(BaseModel):
 
 @router.post("/datasets", status_code=201)
 def register(body: RegisterBody, svc: Svc, me: Admin) -> dict:
-    svc.catalog.register(actor=me.user.id, **body.model_dump())
+    try:
+        svc.catalog.register(actor=me.user.id, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     return svc.catalog.dataset(body.id)
 
 
