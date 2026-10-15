@@ -38,7 +38,10 @@ def _question(row: dict) -> dict:
 
 def _json(path, default=None):
     p = as_path(path)
-    return read_json(p) if p.exists() else default
+    try:
+        return read_json(p) if p.exists() else default
+    except (json.JSONDecodeError, FileNotFoundError):  # being rewritten by a running step
+        return default
 
 
 def _summary(svc, me, row: dict) -> dict:
@@ -63,7 +66,10 @@ def _transcript_steps(path) -> list[dict]:
     for line in p.read_text().splitlines():
         if not line.strip():
             continue
-        e = json.loads(line)
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         if "tool" in e:
             steps.append({"at": e["at"], "type": "tool", "tool": e["tool"], "input": e.get("input"),
                           "is_error": e.get("is_error", False), "seconds": e.get("seconds"),

@@ -13,7 +13,7 @@ import json
 import time
 from typing import Callable, Protocol
 
-from .paths import as_path
+from .paths import as_path, write_text
 
 
 class Model(Protocol):
@@ -98,7 +98,7 @@ def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str
     nudges = 0
 
     def flush():
-        log.write_text("\n".join(lines) + "\n")
+        write_text(log, "\n".join(lines) + "\n")
 
     while True:
         reason = budget.exceeded()

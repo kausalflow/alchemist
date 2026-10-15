@@ -38,9 +38,14 @@ def is_cloud(path) -> bool:
 
 def write_text(path, text: str) -> None:
     path = as_path(path)
-    if not is_cloud(path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    if is_cloud(path):
+        path.write_text(text)  # an S3 PUT replaces the object atomically
+        return
+    # Locally, write a temporary file and rename it, so a reader (the web app following a run) never sees half a file.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def write_json(path, data: Any) -> None:
