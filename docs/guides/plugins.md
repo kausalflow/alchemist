@@ -16,7 +16,7 @@ A working example to copy lives in
 | `metadata_parsers` | `MetadataParser(name, suffixes, parse)` | reading a dataset's own metadata file, chosen by suffix | `yaml` (YAML and JSON) |
 | `card_drafters` | `CardDrafter(name, draft)` | turning metadata plus a data sample into a catalog card | `heuristic`, `model` |
 | `model_providers` | `ModelProvider(name, build)` | a `provider:` prefix in model specs, built as a Pydantic AI model | `bedrock` |
-| `access_providers` | `AccessProvider(name, load)` | where users, plant groups and workspaces come from | `yaml` |
+| `access_providers` | `AccessProvider(name, load)` | where users, plant groups and workspaces come from | `yaml`, `oidc` (alias `alb-oidc`) |
 | `tools` | `Tool(name, description, input_schema, handler, phases)` | extra agent tools in the planning and/or analysis step | |
 | `analysis_methods` | any function | `alc.methods.<name>(...)` in the sandbox kernel | |
 | `knowledge_packs` | `KnowledgePack(name, root, version)` | folders of documents and structured knowledge, searched with `ALC_KNOWLEDGE` | |
@@ -112,7 +112,7 @@ A tool that needs data should not read the lake itself: give the agent an analys
 | --- | --- | --- |
 | `ALC_PLUGINS` | `*` | installed plugins (entry-point names) to load: comma-separated, `*` for all, `none` for built-ins only. Naming one that is not installed is an error |
 | `ALC_PLUGIN_MODULES` | unset | importable modules to load as plugins without an entry point |
-| `ALC_ACCESS_PROVIDER` | `yaml` | which access provider supplies users and groups |
+| `ALC_ACCESS_PROVIDER` | `yaml` | which access provider supplies users and groups (`oidc` in production) |
 | `ALC_ALLOWED_PROVIDERS` | `bedrock` | model providers plant data may go to; this applies to plugin providers too |
 
 Card drafters are chosen per call (`alchemist catalog index --drafter NAME`); data formats per dataset

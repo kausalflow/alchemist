@@ -11,7 +11,7 @@ printed as JSON.
 
 | Command | Does |
 | --- | --- |
-| `alchemist demo setup [--use-model] [--no-approve]` | generate the synthetic plant under `ALC_HOME`, register its datasets and index them. `--use-model` drafts cards with `ALC_SUB_MODEL`; `--no-approve` leaves drafts for review |
+| `alchemist demo setup [--use-model] [--no-approve] [--lake URI]` | generate the synthetic plant under `ALC_HOME`, register its datasets and index them. `--use-model` drafts cards with `ALC_SUB_MODEL`; `--no-approve` leaves drafts for review; `--lake s3://...` uploads the lake there and registers it on S3 |
 | `alchemist demo run` | ask, approve, replay and verify the demo question offline, with the scripted model |
 
 ## `catalog`
@@ -36,7 +36,7 @@ All actions accept `--user` (default `data_admin`), recorded in the audit log.
 ## `ask`
 
 ```text
-alchemist ask QUESTION --user USER --workspace WS --project PROJECT
+alchemist ask QUESTION (--user USER | --claims FILE) --workspace WS --project PROJECT
               [--plants P01,P02] [--scope JSON] [--model SPEC] [--reviewer-model SPEC] [--auto-approve]
 ```
 
@@ -44,6 +44,8 @@ Checks access, creates the question and run, runs the planning step and stops fo
 
 | Option | Meaning |
 | --- | --- |
+| `--user` | a local user from `access.yaml` |
+| `--claims` | JSON file with the verified claims of an identity-provider token, instead of `--user` |
 | `--plants` | comma-separated plants in scope; each must be readable by the user in this workspace |
 | `--scope` | JSON scope, e.g. `{"line": "L2", "period": ["2026-08-03", "2026-08-09"]}` |
 | `--model` | lead model spec (`provider:model-id`); default `ALC_LEAD_MODEL`; `scripted` for the demo |
@@ -53,7 +55,7 @@ Checks access, creates the question and run, runs the planning step and stops fo
 ## `approve`
 
 ```text
-alchemist approve RUN_ID --user USER [--plan-file FILE] [--model SPEC] [--reviewer-model SPEC]
+alchemist approve RUN_ID (--user USER | --claims FILE) [--plan-file FILE] [--model SPEC] [--reviewer-model SPEC]
 ```
 
 Approves the plan (only the asker or an admin may), runs the analysis, review and report, and seals the run.
@@ -69,11 +71,20 @@ Approves the plan (only the asker or an admin may), runs the analysis, review an
 ## `replay`
 
 ```text
-alchemist replay RUN_ID --user USER [--mode {replay,rerun}]
+alchemist replay RUN_ID (--user USER | --claims FILE) [--mode {replay,rerun}]
 ```
 
 Verifies the sealed parent, then re-executes its notebook as a new run, on its snapshots (`replay`, default) or on
 current data (`rerun`). Prints the comparison table and any cell errors. Exits non-zero unless the new run completed.
+
+## `whoami`
+
+```text
+alchemist whoami (--user USER | --claims FILE)
+```
+
+Prints the plants, workspaces and roles the access model gives the user, and the plants a run would read in each of
+their workspaces. Use it to check the `identity` mapping in `access.yaml` against a real token's claims.
 
 ## `verify`
 

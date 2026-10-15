@@ -354,7 +354,10 @@ def sample_dataset(catalog: Catalog, ds: dict, rows: int = 200):
     if not files:
         return [], None
     con = duckdb.connect()
-    scan = get_registry().data_formats.get(ds["file_format"]).scan(files[:20])
+    reg = get_registry()
+    for scheme in sorted({str(f).split("://", 1)[0] if "://" in str(f) else "file" for f in files}):
+        reg.storage_backends.get(scheme).setup(con)
+    scan = reg.data_formats.get(ds["file_format"]).scan(files[:20])
     rel = con.sql(f"select * from {scan} limit {rows}")
     return files, rel.df()
 

@@ -36,12 +36,12 @@ flowchart TB
 
 | Rule | MVP | Target design |
 | --- | --- | --- |
-| Plant groups decide data, workspaces decide projects | `access.yaml`, checked in the tool layer | identity-provider groups, per-run STS credentials enforced by S3 |
+| Plant groups decide data, workspaces decide projects | identity-provider groups (or local users in `access.yaml`); tool layer, plus per-run STS credentials enforced by S3 when `ALC_RUN_ROLE_ARN` is set | same, always with per-run credentials |
 | Only approved, registered datasets are queryable | views built from approved cards; SQL guard | same, plus the run role can only read registered prefixes |
 | Hidden and pseudonymised columns | dropped or keyed-hashed in the views | same, HMAC with a per-deployment secret |
 | Plant data goes only to approved model providers | `ALC_ALLOWED_PROVIDERS` allow-list | allow-list of inference profile ARNs; Bedrock reached through a VPC endpoint |
 | The kernel cannot reach the model or the internet | not enforced (local process) | separate Fargate task, no route to Bedrock, no NAT |
-| Sealed runs cannot change | files made read-only + SHA-256 tamper evidence | run credentials expire; optional S3 Object Lock |
+| Sealed runs cannot change | SEALED written once (S3 conditional put), run credentials may not write it, SHA-256 tamper evidence | same |
 | Catalog and run index | SQLite | Aurora PostgreSQL + pgvector |
 | Document search | keyword ranking | hybrid (embeddings + full text) |
 | Plan approval and progress | CLI | web app with plan editing and live progress |
@@ -50,9 +50,8 @@ flowchart TB
 
 - Web app and REST API.
 - Deployment: the AWS infrastructure (CDK in `infra/`, see [Deploy to AWS](guides/deploy-aws.md)) is written and
-  synthesizes, including Step Functions orchestration and the credential broker Lambda, but has not been deployed yet.
-  The app commands it runs (`api`, `worker ...`, `sandbox serve`) are in progress.
-- The separate sandbox image.
+  synthesizes, including Step Functions orchestration, but has not been deployed yet.
+- The separate sandbox container. The credential broker exists; refreshing run credentials past one hour does not.
 - pgvector search and knowledge ingestion from PDFs.
 - PDF reports.
 - Rerunning on a new scope (`rescope` mode).
