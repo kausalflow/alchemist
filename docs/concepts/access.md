@@ -53,7 +53,7 @@ them in the `identity` section of `access.yaml`:
 
 ```yaml
 identity:
-  group_claim: groups                      # cognito:groups, roles, ...
+  group_claim: groups                      # cognito:groups, roles, ...; or set ALC_GROUP_CLAIM
   user_claims: [preferred_username, email, sub]   # first one present is the user id
   plant_group: "alc-plant-{plant}"
   workspace_group: "alc-ws-{workspace}"
@@ -73,7 +73,8 @@ prints the user's plants, workspaces and roles, and the plants a run would read 
 `access.yaml` (`ALC_ACCESS`, default `$ALC_HOME/access.yaml`, may be an `s3://` URI) lists the plants, the workspaces
 and the plants each covers, and the optional `identity` mapping above. It may also list local users, which the CLI,
 the demo and tests use instead of an identity provider. Leave `users` out in production, so identity-provider groups
-are the only way in. The demo writes this one:
+are the only way in, or set `ALC_ACCESS_PROVIDER=oidc` (alias `alb-oidc`), which refuses local users even if listed.
+Both providers are plugins ([Plugins](../guides/plugins.md)); another one can replace them. The demo writes this one:
 
 ```yaml
 plants: [P01, P02]

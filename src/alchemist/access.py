@@ -13,6 +13,7 @@ and at S3 through the run's scoped credentials (see credentials.py).
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 
@@ -56,7 +57,8 @@ class AccessModel:
     def __init__(self, data: dict):
         self.data = data or {}
         self.all_plants = frozenset(self.data.get("plants", []))
-        self.identity = {**DEFAULT_IDENTITY, **(self.data.get("identity") or {})}
+        env = {"group_claim": os.environ["ALC_GROUP_CLAIM"]} if os.environ.get("ALC_GROUP_CLAIM") else {}
+        self.identity = {**DEFAULT_IDENTITY, **env, **(self.data.get("identity") or {})}
 
     @classmethod
     def load(cls, path) -> "AccessModel":
@@ -143,3 +145,13 @@ class AccessModel:
             return False
         mine = self.all_plants if user.is_global else user.plants
         return set(run_plants) <= mine
+
+
+class ClaimsOnlyAccessModel(AccessModel):
+    """Access provider "oidc" (also "alb-oidc"): users come only from identity-provider claims.
+
+    Any `users` listed in access.yaml are ignored, so the identity provider is the only way in.
+    """
+
+    def user(self, user_id: str) -> User:
+        raise AccessDenied(f"local users are disabled with the oidc access provider; sign in ({user_id!r})")

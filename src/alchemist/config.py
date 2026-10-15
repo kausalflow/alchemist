@@ -23,6 +23,8 @@ class Settings:
     # Unset: the sandbox uses the process's own AWS credentials (laptops, tests).
     run_role_arn: str | None = field(default_factory=lambda: os.environ.get("ALC_RUN_ROLE_ARN") or None)
     run_credential_seconds: int = field(default_factory=lambda: int(os.environ.get("ALC_RUN_CREDENTIAL_SECONDS", "3600")))
+    # Which registered access provider supplies users, plant groups and workspaces ("yaml" reads access_file).
+    access_provider: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS_PROVIDER", "yaml"))
     # Searchable domain documents (markdown with front matter).
     knowledge_root: str = field(default_factory=lambda: os.environ.get("ALC_KNOWLEDGE") or _home("knowledge"))
     # Models are Pydantic AI specs `provider:model-id`; a bare id means Bedrock (and may be an inference profile ARN).

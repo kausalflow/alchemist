@@ -97,17 +97,6 @@ def duckdb_s3_secret() -> str:
     return f"create secret ({', '.join(opts)})"
 
 
-def duckdb_connect(s3: bool = False):
-    """A DuckDB connection; with s3=True it reads S3 with the same endpoint and credentials as boto3."""
-    import duckdb
-
-    con = duckdb.connect()
-    if s3:
-        con.execute("install httpfs; load httpfs")  # a no-op when the image ships the extension
-        con.execute(duckdb_s3_secret())
-    return con
-
-
 def write_json(path, data: Any) -> None:
     write_text(path, json.dumps(data, indent=2, sort_keys=False, default=str) + "\n")
 
@@ -124,9 +113,14 @@ def read_yaml(path) -> Any:
     return yaml.safe_load(as_path(path).read_text())
 
 
+def parse_yaml_text(text: str) -> Any:
+    """Parse YAML or JSON text; YAML is a superset of JSON, so one parser fits both."""
+    return yaml.safe_load(text)
+
+
 def read_structured(path) -> Any:
-    """Read a YAML or JSON file; YAML is a superset of JSON, so one parser fits both."""
-    return yaml.safe_load(as_path(path).read_text())
+    """Read a YAML or JSON file."""
+    return parse_yaml_text(as_path(path).read_text())
 
 
 def sha256_file(path) -> str:

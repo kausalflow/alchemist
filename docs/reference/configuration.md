@@ -35,6 +35,17 @@ See [S3 and the workspace](../guides/s3.md).
 Provider credentials are read the usual way: the AWS credential chain for Bedrock, `ANTHROPIC_API_KEY`,
 `GOOGLE_API_KEY`, `OPENAI_API_KEY`. See [Model providers](../guides/models.md).
 
+## Plugins
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_PLUGINS` | `*` | installed plugins to load (entry-point names, comma-separated); `*` for all, `none` for built-ins only |
+| `ALC_PLUGIN_MODULES` | unset | importable modules to load as plugins without an entry point, e.g. `site_plugins.acme` |
+| `ALC_ACCESS_PROVIDER` | `yaml` | registered access provider for users, plant groups and workspaces; `yaml` reads `ALC_ACCESS` with its local users; `oidc` (alias `alb-oidc`) accepts only identity-provider claims |
+| `ALC_GROUP_CLAIM` | `groups` | token claim holding the groups; `identity.group_claim` in `access.yaml` takes precedence |
+
+See [Plugins](../guides/plugins.md).
+
 ## Budgets
 
 | Variable | Default | Meaning |

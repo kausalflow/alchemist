@@ -62,3 +62,18 @@ def test_claims_with_custom_names_and_group_ids():
 def test_claims_need_a_user_id():
     with pytest.raises(AccessDenied):
         AccessModel(ID).user_from_claims({"groups": ["alc-admin"]})
+
+
+def test_oidc_provider_refuses_local_users(monkeypatch, tmp_path):
+    import yaml
+
+    from alchemist.config import Settings
+    from alchemist.plugins import get_registry
+
+    (tmp_path / "access.yaml").write_text(yaml.safe_dump(DATA))
+    monkeypatch.setenv("ALC_GROUP_CLAIM", "cognito:groups")
+    m = get_registry().access_providers.get("alb-oidc").load(Settings(access_file=str(tmp_path / "access.yaml")))
+    with pytest.raises(AccessDenied):
+        m.user("a")
+    u = m.user_from_claims({"sub": "s", "cognito:groups": ["alc-plant-P02", "alc-ws-maint"]})
+    assert m.run_plants(u, "maint") == {"P02"}

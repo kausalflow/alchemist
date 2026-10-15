@@ -1,0 +1,17 @@
+[project]
+name = "alchemist-example-plugin"
+version = "0.1.0"
+description = "Example Alchemist plugin: a CUSUM analysis method, a glossary tool, a knowledge pack, TSV data, TOML metadata and a Markdown report"
+requires-python = ">=3.11"
+dependencies = ["alchemist"]
+
+# This is the whole integration: Alchemist finds the plugin through this entry point.
+[project.entry-points."alchemist.plugins"]
+example = "alchemist_example:register"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alchemist_example"]

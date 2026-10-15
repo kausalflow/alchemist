@@ -146,11 +146,16 @@ ANALYSIS_TOOLS = ["search_catalog", "search_knowledge", "run_query", "run_python
                   "suggest_catalog_fix", "finish_analysis", "build_report"]
 
 
-def tool_list(names: list[str]) -> list[dict]:
-    return [TOOLS[n] for n in names]
+def tool_list(names: list[str], extra: list | None = None) -> list[dict]:
+    """Built-in tool definitions by name, followed by plugin tools (alchemist.plugins.Tool)."""
+    return [TOOLS[n] for n in names] + [t.definition() for t in extra or []]
 
 
 def prompt_version() -> str:
-    blob = json.dumps({"plan": PLAN_SYSTEM, "analysis": ANALYSIS_SYSTEM, "review": REVIEW_SYSTEM, "tools": TOOLS},
-                      sort_keys=True)
+    """Hash of the prompts and every tool definition the model can see, plugin tools included."""
+    from .plugins import get_registry
+
+    plugin_tools = {t.name: {**t.definition(), "phases": list(t.phases)} for t in get_registry().tools}
+    blob = json.dumps({"plan": PLAN_SYSTEM, "analysis": ANALYSIS_SYSTEM, "review": REVIEW_SYSTEM, "tools": TOOLS,
+                       **({"plugin_tools": plugin_tools} if plugin_tools else {})}, sort_keys=True)
     return "sha256:" + hashlib.sha256(blob.encode()).hexdigest()[:16]
