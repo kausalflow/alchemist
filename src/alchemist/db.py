@@ -113,6 +113,23 @@ create table if not exists card_search (
 );
 create index if not exists card_search_tsv on card_search using gin(tsv);
 """),
+    (4, "plant catalogs: plants and their lines",
+     """
+create table if not exists plants (
+  id text primary key, name text not null, description text, created_by text, created_at text, updated_at text
+);
+create table if not exists plant_lines (
+  plant text not null, id text not null, name text, description text, primary key (plant, id)
+);
+""",
+     """
+create table if not exists plants (
+  id text primary key, name text not null, description text, created_by text, created_at text, updated_at text
+);
+create table if not exists plant_lines (
+  plant text not null, id text not null, name text, description text, primary key (plant, id)
+);
+"""),
 ]
 
 LATEST = MIGRATIONS[-1][0]

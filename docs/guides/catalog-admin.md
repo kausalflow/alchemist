@@ -3,6 +3,11 @@
 Catalog admins (assigned by the data team) register datasets, review the cards the indexer drafts, and act on
 suggestions. All commands take `--user` for the audit log; it defaults to `data_admin`.
 
+Everything here can also be done in the web app's **Admin** area, which only catalog admins and admins see. It is
+organised by plant: each plant (and "All plants (shared)") has its data sources and their cards, its documents and
+reference facts, and its lines, plus a box to test what an agent would find for a question at that plant. See
+[Web app](web-app.md#admin-area).
+
 ## Register a dataset
 
 ```bash

@@ -50,20 +50,43 @@ Set `ALC_ALB_ARN` to the load balancer's ARN; tokens signed by anything else are
 
 ## Screens
 
+The app follows one question through its gates: the agent drafts a plan, the asker approves it, the analysis runs,
+and a sealed report comes out. People act only at the gates.
+
 | Screen | What you do there |
 | --- | --- |
-| Ask | type the question, pick workspace and project, optionally narrow the line, period and plants. Similar past questions you may open appear as you type |
-| Plan review | read each candidate cause with its method and data; edit, strike, add or reorder causes, then approve. Nothing reads the data lake before this |
-| Live run | each query, computation and finding as it happens, with a Stop button. A stopped run still writes and seals a partial report |
-| Answer | the conclusion card and every finding with its value, verdict, confidence and evidence; record whether you confirm it |
-| Runs | all runs in your workspaces, by workspace and project |
+| Board | every question in the current workspace (switch it at the top of the side menu) as a card in its stage: drafting plan, needs approval, running, sealed (closed runs behind a toggle). "Waiting on you" lists plans to approve and paused runs. Filter by project, by your own runs, or by text |
+| Ask | type the question, pick workspace and project, optionally narrow the line, period and plants; plants you cannot read are shown locked. Similar past questions appear as you type, with a rerun shortcut for sealed ones |
+| Approval gate | read each candidate cause with its method and data; untick, edit, add or reorder causes, see which data the plan will read and the run limits, then approve. Nothing reads the data lake before this. A plan expires 14 days after it was drafted |
+| Running | each query, computation and finding as it happens, which causes have findings, the step and token limits, and Pause or Stop, each saying what will happen. A stopped run still writes and seals a partial report |
+| Sealed report | the answer first, then findings, data, methods and plan, notebook and the full report; beside them how to reproduce the run, its replays and reruns, and your verdict |
+| Reports | all runs in your workspaces as a table |
 | Catalog | approved datasets for your plants: description, grain, time zone, join keys, quirks and which columns the model never sees; suggest a fix |
-| Catalog admin | health of every card, drafts to approve, edit or reject, suggestions, and registering a dataset |
+| Admin | catalog admins and admins only; see below |
 | About | which models, budgets, agent tools and plugins this deployment uses |
+
+### Admin area
+
+Only catalog admins and admins see the Admin link. It has one catalog per plant, plus "All plants (shared)", which
+every plant's questions also search. Each plant has:
+
+| Tab | What you do there |
+| --- | --- |
+| Overview | counts of data sources, documents, fact tables and lines; what needs attention (drafts to review, data without a metadata file, documents past their review date, suggestions); and a box to type a question and see what an agent working on this plant would find |
+| Data sources | the plant's datasets and their cards: review a draft against the approved version in plain words (what a row is, units, which columns the model may see), approve, edit, reject or redraft, and register a new data source |
+| Documents and facts | add SOPs, FMEAs, incident reports and specs (Markdown or text) with the lines they cover and a review date; save new versions; edit reference fact tables as YAML |
+| Lines and equipment | the plant's lines; saved lines become searchable for the agent |
+
+Add a plant from the side menu. Who may read a plant's data is still decided by the `alc-plant-<code>` group (or
+`access.yaml`); the Workspaces, Access groups and Models and limits pages show the current setup read-only, since
+those are set in the identity provider and in configuration. See [Domain knowledge](../concepts/knowledge.md) for
+where documents and facts are stored.
 
 ### What a run page shows
 
-The tabs on a finished run are how a reader checks the answer without trusting it:
+The tabs and side panels on a finished run are how a reader checks the answer without trusting it. The table lists what
+each part shows (the run page groups them as Findings, Data, Methods and plan, Notebook and Full report, with
+provenance beside them):
 
 | Tab | Shows |
 | --- | --- |

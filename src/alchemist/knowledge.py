@@ -35,9 +35,13 @@ class Knowledge:
         self.root = as_path(root)
         self.roots = [(None, self.root)] + [(p.name, as_path(p.root)) for p in packs]
         self.passages: list[dict] = []
+        self.documents: dict[str, dict] = {}  # doc id -> its front matter, path and pack (admin pages list these)
         for pack, r in self.roots:
             if r.exists():
                 for f in sorted(r.rglob("*.md"), key=str):
+                    # Folders starting with "." hold earlier versions of edited documents (see plant_catalog.py).
+                    if any(part.startswith(".") for part in f.relative_to(r).parts[:-1]):
+                        continue
                     self._load(f, pack)
         df = Counter()
         for p in self.passages:
@@ -56,11 +60,17 @@ class Knowledge:
                "review_date": str(meta.get("review_date", "")), "path": str(path)}
         if pack:
             doc["pack"] = pack
+        lines = meta.get("lines") or []
+        self.documents[doc["doc"]] = {**doc, "type": str(meta.get("type", "Other")),
+                                      "lines": [str(x) for x in (lines if isinstance(lines, list) else [lines])],
+                                      "updated_at": str(meta.get("updated_at", "")),
+                                      "updated_by": str(meta.get("updated_by", "")), "sections": 0}
         heading, buf = doc["title"], []
 
         def flush():
             content = "\n".join(buf).strip()
             if content:
+                self.documents[doc["doc"]]["sections"] += 1
                 self.passages.append({**doc, "heading": heading, "text": content,
                                       "_words": _words(heading + " " + content)})
 
@@ -89,6 +99,23 @@ class Knowledge:
             stale = bool(p["review_date"]) and p["review_date"] < today.isoformat()
             out.append({"doc": p["doc"], "version": p["version"], "title": p["title"], "section": p["heading"],
                         "text": p["text"][:1200], "review_date": p["review_date"], "stale": stale})
+        return out
+
+    def facts(self) -> list[dict]:
+        """Every structured knowledge table: name, plant, version, description, pack and path (not its values)."""
+        out = []
+        for pack, root in self.roots:
+            folder = root / "structured"
+            if not folder.exists():
+                continue
+            for f in sorted(folder.glob("*.yaml"), key=str):
+                data = yaml.safe_load(f.read_text()) or {}
+                entry = {"name": f.stem, "plant": str(data.get("plant", "global")), "version": str(data.get("version", "1")),
+                         "description": str(data.get("description", "")), "updated_at": str(data.get("updated_at", "")),
+                         "updated_by": str(data.get("updated_by", "")), "path": str(f)}
+                if pack:
+                    entry["pack"] = pack
+                out.append(entry)
         return out
 
     def copy_structured(self, run_dir, plants) -> list[dict]:

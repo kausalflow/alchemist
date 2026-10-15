@@ -29,6 +29,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   get: <T,>(path: string) => request<T>("GET", path),
   post: <T,>(path: string, body: unknown = {}) => request<T>("POST", path, body),
+  put: <T,>(path: string, body: unknown = {}) => request<T>("PUT", path, body),
 };
 
 export const fileUrl = (runId: string, path: string, download = false) =>
@@ -195,4 +196,159 @@ export interface DatasetSummary {
   missing_facts?: string[];
 }
 
+export interface CardColumn {
+  name: string;
+  type?: string;
+  unit?: string;
+  description?: string;
+  valid_min?: number;
+  valid_max?: number;
+  exposure?: "model" | "pseudonymise" | "never_to_model" | string;
+}
+
+/** A catalog card as stored (src/alchemist/catalog.py, schema alchemist.card/v1). */
+export interface Card {
+  schema?: string;
+  dataset?: string;
+  description?: string;
+  grain?: string;
+  time_zone?: string;
+  time_meaning?: string;
+  join_keys?: string[];
+  refresh_lag?: string;
+  quirks?: string[];
+  example_queries?: string[];
+  columns?: CardColumn[];
+  missing?: string[];
+  [k: string]: unknown;
+}
+
+export interface CardVersion {
+  dataset_id: string;
+  version: number;
+  status: string;
+  drafted_by: string;
+  reviewed_by?: string | null;
+  card: Card;
+  checks: string[];
+}
+
+export interface Suggestion {
+  id: number;
+  dataset_id: string;
+  raised_by: string;
+  kind: string;
+  text: string;
+  status: string;
+  created_at: string;
+}
+
+export interface DatasetDetail {
+  dataset: Record<string, string>;
+  approved: { version: number; card: Card; reviewed_by: string; reviewed_at: string } | null;
+  summary: DatasetSummary | null;
+  versions?: CardVersion[];
+  suggestions?: Suggestion[];
+}
+
+// ---- admin (catalog admins and admins; see the admin API contract)
+
+export interface PlantSummary {
+  id: string;
+  name: string;
+  description: string;
+  in_access_model: boolean;
+  readers_group: string; // "" for the shared "global" catalog
+  datasets: number;
+  datasets_waiting: number;
+  datasets_unusable: number;
+  documents: number;
+  documents_overdue: number;
+  facts: number;
+  lines: number;
+}
+
+export interface DatasetRow {
+  dataset: string;
+  name: string;
+  plant: string;
+  s3_prefix: string;
+  file_glob: string;
+  file_format: string;
+  metadata_uri: string;
+  owner: string;
+  approved_version: number | null;
+  latest_version: number | null;
+  waiting_for_review: boolean;
+  missing_facts: string[];
+  checks: string[];
+  no_metadata_file: boolean;
+  runs_using: number | null; // null = unknown
+}
+
+export const DOC_TYPES = ["SOP", "FMEA", "Incident report", "Specification", "Design document", "Procedure", "Other"] as const;
+
+export interface DocSummary {
+  id: string;
+  title: string;
+  type: string;
+  plant: string;
+  lines: string[];
+  version: number;
+  review_date: string; // "YYYY-MM-DD" or ""
+  overdue: boolean;
+  updated_at: string;
+  updated_by: string;
+  sections: number;
+  read_only: boolean; // shipped by a plugin knowledge pack
+}
+
+export type DocDetail = DocSummary & { content: string };
+
+export interface FactSummary {
+  name: string;
+  plant: string;
+  version: number;
+  description: string;
+  updated_at: string;
+  updated_by: string;
+  read_only: boolean;
+}
+
+export type FactDetail = FactSummary & { content: string };
+
+export interface Line {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface PlantDetail {
+  plant: PlantSummary;
+  datasets: DatasetRow[];
+  documents: DocSummary[];
+  facts: FactSummary[];
+  lines: Line[];
+  suggestions: Suggestion[];
+}
+
+export interface PlantPreview {
+  datasets: { dataset: string; plant: string; description: string; version: number }[];
+  documents: { doc: string; title: string; section: string; version: number; plant: string; stale: boolean; text: string }[];
+  facts: { name: string; plant: string; version: number }[];
+  lines: Line[];
+}
+
+export interface DevUser {
+  id: string;
+  plants: string[];
+  workspaces: string[];
+  admin: boolean;
+  global: boolean;
+}
+
 export const TERMINAL = new Set(["completed", "partial", "failed", "mismatch", "cancelled", "expired"]);
+/** Terminal statuses that end with a sealed report. */
+export const SEALED = new Set(["completed", "partial", "mismatch"]);
+/** Terminal statuses that end without one. */
+export const CLOSED = new Set(["failed", "cancelled", "expired"]);
