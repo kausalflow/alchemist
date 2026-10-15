@@ -50,7 +50,8 @@ the `ui-previews` artifact and warns when the committed images are out of date.
 ## Working on the documentation
 
 The site is built with [Zensical](https://zensical.org). Its configuration is `zensical.toml` at the repository root
-and the pages are in `docs/`.
+and the pages are in `docs/`. Every push to `main` publishes it to GitHub Pages at
+<https://kausalflow.com/alchemist/> (`.github/workflows/docs.yml`).
 
 ```bash
 uvx zensical serve    # live preview on http://localhost:8000

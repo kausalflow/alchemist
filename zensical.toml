@@ -4,6 +4,7 @@
 
 [project]
 site_name = "Alchemist"
+site_url = "https://kausalflow.com/alchemist/"
 site_description = "AI research system for chemical engineering process questions over an S3 data lake"
 site_author = "Alchemist contributors"
 repo_url = "https://github.com/kausalflow/alchemist"
