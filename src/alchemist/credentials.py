@@ -18,10 +18,14 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import logging
 import re
+import threading
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlparse
+
+log = logging.getLogger(__name__)
 
 # STS limit on the packed session policy; the JSON text is a close, conservative proxy.
 MAX_POLICY_CHARS = 2048
@@ -47,6 +51,14 @@ class RunCredentials:
         """Environment for the sandbox kernel: these keys and nothing it could fall back to."""
         return {"AWS_ACCESS_KEY_ID": self.access_key_id, "AWS_SECRET_ACCESS_KEY": self.secret_access_key,
                 "AWS_SESSION_TOKEN": self.session_token, "AWS_EC2_METADATA_DISABLED": "true"}
+
+    def process_json(self) -> dict:
+        """The credentials as AWS credential_process output."""
+        return {"Version": 1, "AccessKeyId": self.access_key_id, "SecretAccessKey": self.secret_access_key,
+                "SessionToken": self.session_token, "Expiration": self.expiration}
+
+    def expires_at(self) -> dt.datetime:
+        return dt.datetime.fromisoformat(self.expiration.replace("Z", "+00:00"))
 
     def record(self) -> dict:
         """What the manifest keeps: who and what, never the keys."""
@@ -279,3 +291,98 @@ def process_profile_env(config_dir: str, command: list[str]) -> dict[str, str | 
     return {"AWS_CONFIG_FILE": str(path), "AWS_PROFILE": PROFILE, "AWS_SDK_LOAD_CONFIG": "1",
             "ALC_S3_CREDENTIALS": "process", "AWS_EC2_METADATA_DISABLED": "true",
             **{k: None for k in STATIC_AWS_VARS}}
+
+
+# ------------------------------------------------------------------ in-process sandbox: credentials the worker refreshes
+#
+# A chained role session lasts one hour at most, and an analysis can run for many. In in_process mode the worker
+# holds the right to assume the run role, so it issues the run's credentials again before they expire and writes
+# them to a file only it and the kernel can read. The kernel's AWS profile reads that file through a
+# credential_process (`alchemist broker credentials --file`), so boto3 and DuckDB pick up each new session the same
+# way they do with the broker Lambda in separate mode. The policy is the same on every issue.
+
+class RefreshingCredentials:
+    """A run's scoped credentials, re-issued by a background thread while the kernel lives."""
+
+    def __init__(self, issue, *, first: RunCredentials | None = None, refresh_before: float = 1800,
+                 check_every: float = 60, config_dir: str | None = None):
+        """`issue()` returns new RunCredentials (`first`, when given, is the session already issued); they are
+        re-issued once less than `refresh_before` seconds remain.
+
+        boto3 asks its credential_process again 15 minutes before expiry and DuckDB on expiry, so `refresh_before`
+        must leave the file holding newer credentials by then.
+        """
+        import tempfile
+        from pathlib import Path
+
+        self.issue = issue
+        self.refresh_before = refresh_before
+        self.check_every = check_every
+        self.dir = Path(config_dir or tempfile.mkdtemp(prefix="alc-aws-"))
+        self.file = self.dir / "credentials.json"
+        self.issued = 0
+        self.current = self._write(first or issue())
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _write(self, creds: RunCredentials) -> RunCredentials:
+        import os
+
+        tmp = self.file.with_suffix(".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(creds.process_json(), f)
+        os.replace(tmp, self.file)  # the kernel never reads half a file
+        self.issued += 1
+        return creds
+
+    def refresh_if_due(self, now: dt.datetime | None = None) -> bool:
+        now = now or dt.datetime.now(dt.timezone.utc)
+        if (self.current.expires_at() - now).total_seconds() > self.refresh_before:
+            return False
+        self.current = self._write(self.issue())
+        return True
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.check_every):
+            try:
+                self.refresh_if_due()
+            except Exception:  # STS hiccup: the old keys still hold, try again next check
+                log.warning("could not refresh the run's S3 credentials; retrying", exc_info=True)
+
+    def start(self) -> "RefreshingCredentials":
+        self._thread = threading.Thread(target=self._loop, name="alc-credentials", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        import shutil
+
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def env(self, command_prefix: list[str] | None = None) -> dict[str, str | None]:
+        """Kernel environment: an AWS profile whose credential_process reads the file, and no other identity."""
+        import sys
+
+        command = (command_prefix or [sys.executable, "-m", "alchemist.cli"]) + ["broker", "credentials", "--file",
+                                                                                str(self.file)]
+        return {**{k: None for k in AMBIENT_AWS_VARS}, **process_profile_env(str(self.dir), command)}
+
+    def record(self) -> dict:
+        return {**self.current.record(), "refresh": "worker"}
+
+
+def read_credentials_file(path: str) -> dict:
+    """Body of `alchemist broker credentials --file`: the credentials the worker last wrote for this run."""
+    from pathlib import Path
+
+    try:
+        body = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        raise BrokerDenied(f"no credentials for this run at {path}: {e}") from None
+    if "AccessKeyId" not in body:
+        raise BrokerDenied(f"no credentials for this run at {path}")
+    return body
