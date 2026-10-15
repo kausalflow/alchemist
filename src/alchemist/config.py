@@ -19,6 +19,8 @@ class Settings:
     db_path: str = field(default_factory=lambda: os.environ.get("ALC_DB") or _home("alchemist.db"))
     # Who may see which plants and workspaces (stands in for identity-provider groups).
     access_file: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS") or _home("access.yaml"))
+    # Which registered access provider supplies users, plant groups and workspaces ("yaml" reads access_file).
+    access_provider: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS_PROVIDER", "yaml"))
     # Searchable domain documents (markdown with front matter).
     knowledge_root: str = field(default_factory=lambda: os.environ.get("ALC_KNOWLEDGE") or _home("knowledge"))
     # Models are Pydantic AI specs `provider:model-id`; a bare id means Bedrock (and may be an inference profile ARN).

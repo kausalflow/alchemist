@@ -59,9 +59,14 @@ def read_yaml(path) -> Any:
     return yaml.safe_load(as_path(path).read_text())
 
 
+def parse_yaml_text(text: str) -> Any:
+    """Parse YAML or JSON text; YAML is a superset of JSON, so one parser fits both."""
+    return yaml.safe_load(text)
+
+
 def read_structured(path) -> Any:
-    """Read a YAML or JSON file; YAML is a superset of JSON, so one parser fits both."""
-    return yaml.safe_load(as_path(path).read_text())
+    """Read a YAML or JSON file."""
+    return parse_yaml_text(as_path(path).read_text())
 
 
 def sha256_file(path) -> str:

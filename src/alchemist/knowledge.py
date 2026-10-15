@@ -7,6 +7,9 @@ hybrid search (pgvector + full text) over the same passages.
 Structured knowledge (spec limits, residence times, tag maps) lives in
 `structured/*.yaml` and is copied into each run's inputs, so code uses it
 directly and replays see the same values.
+
+Plugins can add knowledge packs (`alchemist.plugins.KnowledgePack`): folders with
+the same layout, searched and copied alongside ALC_KNOWLEDGE.
 """
 
 from __future__ import annotations
@@ -28,19 +31,21 @@ def _words(text: str) -> list[str]:
 
 
 class Knowledge:
-    def __init__(self, root):
+    def __init__(self, root, packs=()):
         self.root = as_path(root)
+        self.roots = [(None, self.root)] + [(p.name, as_path(p.root)) for p in packs]
         self.passages: list[dict] = []
-        if self.root.exists():
-            for f in sorted(self.root.rglob("*.md"), key=str):
-                self._load(f)
+        for pack, r in self.roots:
+            if r.exists():
+                for f in sorted(r.rglob("*.md"), key=str):
+                    self._load(f, pack)
         df = Counter()
         for p in self.passages:
             df.update(set(p["_words"]))
         n = max(len(self.passages), 1)
         self.idf = {w: math.log(1 + n / c) for w, c in df.items()}
 
-    def _load(self, path) -> None:
+    def _load(self, path, pack: str | None = None) -> None:
         text = path.read_text()
         meta, body = {}, text
         if text.startswith("---"):
@@ -49,6 +54,8 @@ class Knowledge:
         doc = {"doc": str(meta.get("id", path.stem)), "title": str(meta.get("title", path.stem)),
                "version": str(meta.get("version", "1")), "plant": str(meta.get("plant", "global")),
                "review_date": str(meta.get("review_date", "")), "path": str(path)}
+        if pack:
+            doc["pack"] = pack
         heading, buf = doc["title"], []
 
         def flush():
@@ -86,15 +93,22 @@ class Knowledge:
 
     def copy_structured(self, run_dir, plants) -> list[dict]:
         """Copy structured knowledge for the run's plants into inputs/knowledge/."""
-        copied = []
-        folder = self.root / "structured"
-        if not folder.exists():
-            return copied
-        for f in sorted(folder.glob("*.yaml"), key=str):
-            data = yaml.safe_load(f.read_text()) or {}
-            plant = str(data.get("plant", "global"))
-            if plant != "global" and plant not in plants:
+        copied, seen = [], set()
+        for pack, root in self.roots:
+            folder = root / "structured"
+            if not folder.exists():
                 continue
-            write_json(as_path(run_dir) / "inputs" / "knowledge" / f"{f.stem}.json", data)
-            copied.append({"name": f.stem, "version": str(data.get("version", "1")), "plant": plant})
+            for f in sorted(folder.glob("*.yaml"), key=str):
+                if f.stem in seen:
+                    raise ValueError(f"structured knowledge {f.stem!r} is defined twice (in {pack or 'ALC_KNOWLEDGE'})")
+                seen.add(f.stem)
+                data = yaml.safe_load(f.read_text()) or {}
+                plant = str(data.get("plant", "global"))
+                if plant != "global" and plant not in plants:
+                    continue
+                write_json(as_path(run_dir) / "inputs" / "knowledge" / f"{f.stem}.json", data)
+                entry = {"name": f.stem, "version": str(data.get("version", "1")), "plant": plant}
+                if pack:
+                    entry["pack"] = pack
+                copied.append(entry)
         return copied

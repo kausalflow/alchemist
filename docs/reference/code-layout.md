@@ -17,10 +17,13 @@ src/alchemist/
   workspace.py  S3 (or local) folder layout, sealing and verification
   knowledge.py  document passages and structured knowledge
   paths.py      cloudpathlib helpers, ULIDs, hashing, glob expansion
+  plugins.py    plugin registry and extension-point types; the built-in defaults are registered here
   demo/
     generate.py synthetic plant with a planted root cause
     script.py   the scripted investigation used by `demo run` and the tests
 tests/          pytest suite, including an end-to-end run, replay and verify
+examples/
+  alchemist-example-plugin/   a working plugin of most extension kinds (see guides/plugins.md)
 ```
 
 ## How the pieces call each other
@@ -39,6 +42,10 @@ flowchart TB
     NB --> DUCK[(DuckDB on S3 / local)]
     RUN --> REP[report.py]
     RUN --> WS[workspace.py: folders, seal, verify]
+    PLG[plugins.py: registry] -.-> CAT
+    PLG -.-> LLM
+    PLG -.-> RUN
+    PLG -.-> NB
 ```
 
 The orchestration (`run.py`, `agent.py`, `llm.py`) talks to the model; everything that touches data runs in the kernel

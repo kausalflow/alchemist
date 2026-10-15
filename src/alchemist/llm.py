@@ -10,6 +10,7 @@ A model is named `provider:model-id` in Pydantic AI's notation, for example
 Alchemist keeps its own tool loop (budgets, transcript, provenance), so only the
 single "send messages, get a response" step goes through Pydantic AI. Plant data
 is private: providers outside `ALC_ALLOWED_PROVIDERS` (default `bedrock`) are refused.
+Plugins can add providers (`alchemist.plugins.ModelProvider`); the allow-list applies to them too.
 """
 
 from __future__ import annotations
@@ -29,8 +30,12 @@ class ProviderNotAllowed(PermissionError):
 
 def split_spec(spec: str) -> tuple[str, str]:
     """`bedrock:anthropic.x` -> ("bedrock", "anthropic.x"); a bare id means Bedrock."""
+    from .plugins import get_registry
+
     head, sep, rest = spec.partition(":")
-    if sep and head in PROVIDER_ALIASES or (sep and head in ("openai-chat", "openai-responses", "groq", "mistral", "cohere")):
+    known = (head in PROVIDER_ALIASES or head in ("openai-chat", "openai-responses", "groq", "mistral", "cohere")
+             or head in get_registry().model_providers)
+    if sep and known:
         return head, rest
     return DEFAULT_PROVIDER, spec  # Bedrock ids and ARNs contain ':' themselves
 
@@ -47,13 +52,13 @@ def check_allowed(spec: str, allowed: list[str]) -> str:
 
 def build_model(spec: str, settings):
     """Resolve a spec to a Pydantic AI Model, applying the provider allow-list and the Bedrock region."""
+    from .plugins import get_registry
+
     full = check_allowed(spec, settings.allowed_providers)
     provider, model_id = full.split(":", 1)
-    if provider == "bedrock":
-        from pydantic_ai.models.bedrock import BedrockConverseModel
-        from pydantic_ai.providers.bedrock import BedrockProvider
-
-        return BedrockConverseModel(model_id, provider=BedrockProvider(region_name=settings.aws_region))
+    providers = get_registry().model_providers
+    if provider in providers:  # bedrock, and any provider a plugin adds
+        return providers.get(provider).build(model_id, settings)
     from pydantic_ai.models import infer_model
 
     return infer_model(full)
