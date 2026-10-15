@@ -24,7 +24,7 @@ from .knowledge import Knowledge
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json
 from .plugins import get_registry
 from .report import ReportError, render
-from .sandbox import Sandbox, finding_cell, query_cell
+from .sandbox import RemoteKernel, Sandbox, finding_cell, query_cell
 from .workspace import (create_question, create_run, ensure_project, seal, update_question, verify)
 
 ACTIVE = ("planning", "running")  # a step is (or should be) working on the run
@@ -76,6 +76,20 @@ class Services:
             env.update(creds.env())
             env.update({k: None for k in AMBIENT_AWS_VARS})
         return env
+
+    def sandbox(self, ctx: "RunContext", views: dict, *, run_mode: str, sandbox_url: str | None = None) -> Sandbox:
+        """The run's kernel: a local child process, or the separate sandbox task at sandbox_url."""
+        if sandbox_url:
+            kernel = RemoteKernel(sandbox_url, run_dir=str(ctx.run), run_mode=run_mode, seed=self.settings.seed)
+            return Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)
+        if self.settings.sandbox_mode == "separate":
+            raise ValueError("ALC_SANDBOX_MODE=separate: give the sandbox's address (--sandbox-task-arn or --sandbox-url)")
+        return Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, extra_env=self.sandbox_env(ctx, views))
+
+    @property
+    def seals_in_worker(self) -> bool:
+        """In-process the worker seals the run; with a separate sandbox the workflow's Seal step does."""
+        return self.settings.sandbox_mode != "separate"
 
 
 def plugin_tools(phase: str, ctx: "RunContext") -> tuple[list, dict]:
@@ -196,7 +210,8 @@ class RunContext:
     def build_report(self, inp: dict) -> ToolOutput:
         if not self.review_requested:
             return ToolOutput("Call finish_analysis first to get the independent review.", is_error=True)
-        self.sandbox.execute("alc.check_results()", kind="check")
+        if self.sandbox is not None:  # the Report step of a separate sandbox has no kernel
+            self.sandbox.execute("alc.check_results()", kind="check")
         try:
             out = render(self.run, ctx=self.report_ctx(), report_input=inp, findings=self._findings(),
                          queries=self._queries())
@@ -469,8 +484,9 @@ def _record_approval(svc: Services, row: dict, user: str, plan: dict | None) -> 
 
 
 def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None, reviewer: Model | None = None,
-            should_stop: Callable[[], bool] | None = None) -> dict:
-    """The analysis step of an approved run: query, compute, review, report, seal."""
+            should_stop: Callable[[], bool] | None = None, sandbox_url: str | None = None) -> dict:
+    """The analysis step of an approved run: query, compute, review, report, seal (in-process; with a separate
+    sandbox the workflow's Seal step seals)."""
     s = svc.settings
     row = svc.catalog.run(run_id)
     if row["status"] != "running":
@@ -483,8 +499,10 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     ctx.models.update(lead=model.name, reviewer=reviewer.name)
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     ended = "error"
-    with Sandbox(str(ctx.run), run_mode="live", seed=s.seed, extra_env=svc.sandbox_env(ctx, views)) as sb:
+    with svc.sandbox(ctx, views, run_mode="live", sandbox_url=sandbox_url) as sb:
         ctx.sandbox = sb
+        if sb.kernel.credentials is not None:
+            ctx.credentials = sb.kernel.credentials
         sb.add_markdown(f"# {question['text']}\n\nRun `{run_id}` · approved plan v{ctx.plan.get('version')} · "
                         f"plants {', '.join(sorted(ctx.plants))}\n\nSet `run_mode = 'replay'` in the next cell to "
                         "re-execute on the stored snapshots.")
@@ -524,11 +542,55 @@ def _finish(svc: Services, ctx: RunContext, status: str, usage: dict, extra: dic
     ctx.write_manifest(status, usage=usage, extra=extra)
     if ctx.row.get("mode", "live") == "live":  # replays share the question; its status is the live run's
         update_question(ctx.qdir, status=status)
+    out = {"run_id": ctx.row["run_id"], "status": status, "path": str(ctx.run), "seal_sha256": None,
+           **(extra or {}), "conclusion": (ctx.report_out or {}).get("conclusion_text")}
+    if not svc.seals_in_worker:
+        svc.catalog.upsert_run(run_id=ctx.row["run_id"], status=status)
+        return out
     seal_sha = seal(ctx.run, ctx.row["run_id"])
     svc.catalog.upsert_run(run_id=ctx.row["run_id"], status=status, seal_sha256=seal_sha)
     svc.catalog.audit(ctx.user_id, "run.seal", ctx.row["run_id"], {"status": status, "seal_sha256": seal_sha})
-    return {"run_id": ctx.row["run_id"], "status": status, "path": str(ctx.run), "seal_sha256": seal_sha,
-            **(extra or {}), "conclusion": (ctx.report_out or {}).get("conclusion_text")}
+    return {**out, "seal_sha256": seal_sha}
+
+
+def report_step(svc: Services, run_id: str) -> dict:
+    """Separate sandbox, after Analyse (which may have crashed or timed out): make sure the run has a manifest and,
+    if anything was found, a report. A run Analyse already finished is left as it is."""
+    row = svc.catalog.run(run_id)
+    if row["status"] != "running":
+        return {"run_id": run_id, "status": row["status"], "ended": "already reported"}
+    ctx = RunContext(svc, row, user=(read_yaml(as_path(row["path"]).parent.parent / "question.yaml").get("plan") or {})
+                     .get("approved_by") or row["user_id"])
+    ended = "the analysis step stopped before it finished"
+    if ctx._findings():
+        ctx.review_requested = True
+        ctx.build_report({"title": f"Partial result: {ctx.question['text']}",
+                          "conclusion": "The run stopped before it finished; findings so far are listed below.",
+                          "top_causes": [], "limitations": [f"Run ended early: {ended}"]})
+    status = "partial" if ctx.report_out else "failed"
+    ctx.write_manifest(status, extra={"analysis_ended": f"error: {ended}"})
+    update_question(ctx.qdir, status=status)
+    svc.catalog.upsert_run(run_id=run_id, status=status)
+    svc.catalog.audit("system", "run.report", run_id, {"status": status})
+    return {"run_id": run_id, "status": status, "ended": ended}
+
+
+def seal_step(svc: Services, run_id: str) -> dict:
+    """Separate sandbox, last step: seal the run folder (the sealer is the only role that may write SEALED)."""
+    row = svc.catalog.run(run_id)
+    if row.get("seal_sha256"):
+        return {"run_id": run_id, "status": row["status"], "seal_sha256": row["seal_sha256"]}
+    status = "failed" if row["status"] in ("planning", "running") else row["status"]  # a step died without a word
+    run = as_path(row["path"])
+    if (run / "SEALED").exists():  # sealed by an earlier attempt that failed before indexing it
+        import hashlib
+
+        seal_sha = hashlib.sha256((run / "SEALED").read_bytes()).hexdigest()
+    else:
+        seal_sha = seal(run, run_id)
+    svc.catalog.upsert_run(run_id=run_id, status=status, seal_sha256=seal_sha)
+    svc.catalog.audit("system", "run.seal", run_id, {"status": status, "seal_sha256": seal_sha})
+    return {"run_id": run_id, "status": status, "seal_sha256": seal_sha}
 
 
 def replay(svc: Services, run_id: str, *, user: "str | User", mode: str = "replay") -> dict:
@@ -567,8 +629,8 @@ def start_replay(svc: Services, run_id: str, *, user: "str | User", mode: str = 
     return svc.catalog.run(rid)
 
 
-def execute_replay(svc: Services, run_id: str) -> dict:
-    """Run the parent's notebook cells in a fresh kernel, compare findings, then seal."""
+def execute_replay(svc: Services, run_id: str, *, sandbox_url: str | None = None) -> dict:
+    """Run the parent's notebook cells in a fresh kernel, compare findings, then seal (in-process)."""
     row = svc.catalog.run(run_id)
     mode, parent_id = row["mode"], row["parent_run"]
     prun = as_path(svc.catalog.run(parent_id)["path"])
@@ -581,7 +643,10 @@ def execute_replay(svc: Services, run_id: str) -> dict:
     views = read_json(rdir / "inputs" / "views.json") if (rdir / "inputs" / "views.json").exists() else {}
     if mode == "replay":
         views = {}  # a replay reads only the snapshots in its own folder, never the lake
-    with Sandbox(str(rdir), run_mode=mode, seed=svc.settings.seed, extra_env=svc.sandbox_env(ctx, views)) as sb:
+    result_check = None
+    with svc.sandbox(ctx, views, run_mode=mode, sandbox_url=sandbox_url) as sb:
+        if sb.kernel.credentials is not None:
+            ctx.credentials = sb.kernel.credentials
         sb.add_markdown(f"# {mode.capitalize()} of run `{parent_id}`\n\n{ctx.question['text']}")
         sb.setup()
         for c in cells:
@@ -592,9 +657,11 @@ def execute_replay(svc: Services, run_id: str) -> dict:
             res = sb.execute(src, kind=meta.get("kind", "python"), meta={k: v for k, v in meta.items() if k not in ("cell_id", "kind")})
             if res.error:
                 errors.append({"cell": meta.get("cell_id"), "error": res.error[:500]})
+            result_check = _result_check(res) or result_check
         if not any(c.get("metadata", {}).get("alchemist", {}).get("kind") == "check" for c in cells):
-            sb.execute("alc.check_results()", kind="check")
-    result_check = read_json(rdir / "work" / "result_check.json")
+            result_check = _result_check(sb.execute("alc.check_results()", kind="check"))
+    if result_check is None:
+        raise RuntimeError("the replay's check cell reported no result")
     drift = plugin_drift(read_json(prun / "manifest.json").get("plugins", []), get_registry().summary())
     status = "completed" if not errors and result_check["status"]["mismatches"] == 0 else "mismatch"
     if mode == "rerun":
@@ -602,6 +669,11 @@ def execute_replay(svc: Services, run_id: str) -> dict:
     out = _finish(svc, ctx, status, usage={}, extra={"parent_run": parent_id, "result_check": result_check,
                                                      "cell_errors": errors, "plugin_drift": drift})
     return out
+
+
+def _result_check(res) -> dict | None:
+    """The comparison alc.check_results() prints; read from the cell output so the worker never reads work/."""
+    return next((r["result_check"] for r in res.results if "result_check" in r), None)
 
 
 def plugin_drift(then: list[dict], now_: list[dict]) -> list[str]:

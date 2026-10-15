@@ -229,7 +229,7 @@ def check_results() -> pd.DataFrame:
     status = {"mode": _state["mode"], "compared": int(df["match"].notna().sum()) if len(df) else 0,
               "mismatches": int((df["match"] == False).sum()) if len(df) else 0}  # noqa: E712
     write_json(_state["run"] / "work" / "result_check.json", {"status": status, "rows": rows})
-    print(RESULT_MARKER + json.dumps(status))
+    print(RESULT_MARKER + json.dumps({"result_check": {"status": status, "rows": rows}}, default=str))
     return df
 
 

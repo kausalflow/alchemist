@@ -14,6 +14,6 @@ RUN if [ -n "$EXTRA_PACKAGES" ]; then cd /tmp/build-context && uv pip install --
     && rm -rf /tmp/build-context
 ENV PATH="/app/.venv/bin:$PATH" ALC_HOME=/data
 USER alchemist
-# The sandbox has no internet, so DuckDB's S3 extension ships in the image.
-RUN python -c "import duckdb; duckdb.connect().execute('install httpfs')"
+# The sandbox has no internet, so DuckDB's S3 extensions ship in the image (aws: credential_process credentials).
+RUN python -c "import duckdb; duckdb.connect().execute('install httpfs; install aws')"
 ENTRYPOINT ["alchemist"]

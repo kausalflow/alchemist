@@ -143,3 +143,36 @@ def test_rerun_on_s3_reads_lake_with_run_credentials(s3_svc, s3_run):
     rep = replay(s3_svc, res["run_id"], user=user, mode="rerun")
     assert rep["status"] == "completed", rep
     assert read_json(as_path(rep["path"]) / "manifest.json")["access"]["credentials"]["mode"] == "scoped"
+
+
+def test_separate_sandbox_kernel_reads_s3_through_the_credential_process(s3_svc, tmp_path):
+    """A separate sandbox's kernel has no keys in its environment: boto3, cloudpathlib and DuckDB all get them from
+    the profile's credential_process (the broker in AWS; a script here) and DuckDB refreshes them as they expire."""
+    import os
+    import subprocess
+    import sys
+
+    from alchemist.credentials import process_profile_env
+
+    calls = tmp_path / "calls"
+    creds = tmp_path / "creds.sh"
+    creds.write_text("#!/bin/sh\necho x >> " + str(calls) + "\n"
+                     "echo '{\"Version\": 1, \"AccessKeyId\": \"test\", \"SecretAccessKey\": \"test\", "
+                     "\"SessionToken\": \"t\", \"Expiration\": \"2099-01-01T00:00:00Z\"}'\n")
+    creds.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_") or k in ("AWS_ENDPOINT_URL", "AWS_REGION")}
+    env.update({k: v for k, v in process_profile_env(str(tmp_path), [str(creds)]).items() if v is not None})
+    code = """
+import duckdb
+from cloudpathlib import S3Path
+from alchemist.paths import duckdb_s3_secret
+files = sorted(str(p) for p in S3Path("s3://lake/demo").rglob("*.parquet"))
+con = duckdb.connect()
+con.execute("load httpfs")
+con.execute(duckdb_s3_secret())
+print(con.execute(f"select count(*) from read_parquet('{files[0]}')").fetchone()[0])
+"""
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=300)
+    assert out.returncode == 0, out.stderr
+    assert int(out.stdout.strip()) > 0
+    assert len(calls.read_text().split()) >= 2  # boto3 and DuckDB each asked the process

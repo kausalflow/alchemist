@@ -139,5 +139,4 @@ only its plants' registered prefixes and write only its run folder. See the S3 g
 
 ## Not in the MVP yet
 
-Step Functions orchestration and the AWS infrastructure code, the separate sandbox container,
 pgvector search, PDF reports, rerunning on a new scope, and the evaluation benchmark of past investigations.

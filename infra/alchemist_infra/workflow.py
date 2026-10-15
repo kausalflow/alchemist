@@ -4,7 +4,8 @@ The API's launcher (`alchemist.sfn_launcher`) starts an execution with input {"r
 creating a run, or {"run_id": ..., "mode": "replay"} after creating a replay run. With a separate sandbox the input
 also carries "broker_token".
 
-    mode = replay:  Replay
+    mode = replay:  Replay                                                               (sandbox_mode: in_process)
+                    StartReplaySandbox -> Replay -> StopReplaySandbox -> SealReplay      (sandbox_mode: separate)
     mode = run:     Plan -> WaitForApproval -> Analyse                                   (sandbox_mode: in_process)
                     Plan -> WaitForApproval -> StartSandbox -> Analyse -> Report
                          -> StopSandbox -> Seal                                          (sandbox_mode: separate)
@@ -12,7 +13,9 @@ also carries "broker_token".
 WaitForApproval invokes the approval function with the task token, which stores it in the workspace bucket under
 `_approvals/<run_id>/`; the execution then waits at no cost until the launcher sends the token on approval (see
 lambdas/approval). In-process, the analyse step builds the report and seals the run itself and a model failure still
-ends in a sealed partial run. With a separate sandbox, Report, StopSandbox and Seal run even if Analyse fails.
+ends in a sealed partial run. With a separate sandbox, Report, StopSandbox and Seal run even if Analyse fails, and
+the orchestrator reaches the kernel at the sandbox task's address (`--sandbox-task-arn`); only the sandbox task gets
+the broker token.
 """
 
 from __future__ import annotations
@@ -88,10 +91,13 @@ class RunWorkflow(Construct):
             cmds |= {"report": _command(c.report), "seal": _command(c.seal), "sandbox": J.array(*c.sandbox)}
         prepare = sfn.Pass(self, "Prepare", parameters=cmds, result_path="$.cmd")
 
-        replay = run_task("Replay", command_path="$.cmd.replay", env=run_env,
-                          timeout=Duration.hours(wf.analysis_timeout_hours), **orch)
-        replay.add_catch(failed, result_path="$.error")
-        replay.next(done)
+        if svc.in_process:
+            replay = run_task("Replay", command_path="$.cmd.replay", env=run_env,
+                              timeout=Duration.hours(wf.analysis_timeout_hours), **orch)
+            replay.add_catch(failed, result_path="$.error")
+            replay.next(done)
+        else:
+            replay = self._separate(cfg, network, svc, run_task, orch, run_env, failed, done, replay=True)
 
         plan = run_task("Plan", command_path="$.cmd.plan", env=run_env, timeout=Duration.hours(2), **orch)
         wait = tasks.LambdaInvoke(
@@ -133,32 +139,36 @@ class RunWorkflow(Construct):
                                                          f"{cfg.prefix}-runs:*"]))
         svc.api_container.add_environment("ALC_STATE_MACHINE_ARN", self.state_machine.state_machine_arn)
 
-    def _separate(self, cfg, network, svc, run_task, orch, run_env, failed, done) -> sfn.IChainable:
-        """Target design: sandbox task with broker credentials, then report, stop and seal."""
+    def _separate(self, cfg, network, svc, run_task, orch, run_env, failed, done, *,
+                  replay: bool = False) -> sfn.IChainable:
+        """Sandbox task with broker credentials, then (for a run) report, then stop and seal.
+
+        A run's chain is StartSandbox, Analyse, Report, StopSandbox, Seal; a replay's is StartReplaySandbox, Replay,
+        StopReplaySandbox, SealReplay. The analysing step gets the sandbox task's ARN, never the broker token.
+        """
         wf = cfg.workflow
+        n = "Replay" if replay else ""
+        step = "replay" if replay else "analyse"
         start_sandbox = run_task(
-            "StartSandbox", svc.sandbox_task, svc.sandbox_container, "$.cmd.sandbox", network.sandbox_sg,
+            f"Start{n}Sandbox", svc.sandbox_task, svc.sandbox_container, "$.cmd.sandbox", network.sandbox_sg,
             network.sandbox_subnets, pattern=sfn.IntegrationPattern.REQUEST_RESPONSE,
             env={**run_env, "ALC_BROKER_TOKEN": J.string_at("$.broker_token")},
             result_selector={"task_arn": J.string_at("$.Tasks[0].TaskArn")}, result_path="$.sandbox")
-        prepare_analyse = sfn.Pass(self, "PrepareAnalyse", parameters={
-            "analyse": J.array(*cfg.commands.analyse, J.string_at("$.run_id"), "--sandbox-task-arn",
-                               J.string_at("$.sandbox.task_arn"))}, result_path="$.cmd2")
-        analyse = run_task("Analyse", command_path="$.cmd2.analyse", env=run_env,
+        prepare = sfn.Pass(self, f"Prepare{n or 'Analyse'}", parameters={
+            step: J.array(*getattr(cfg.commands, step), J.string_at("$.run_id"), "--sandbox-task-arn",
+                          J.string_at("$.sandbox.task_arn"))}, result_path="$.cmd2")
+        analyse = run_task(n or "Analyse", command_path=f"$.cmd2.{step}", env=run_env,
                            timeout=Duration.hours(wf.analysis_timeout_hours), **orch)
-        report = run_task("Report", command_path="$.cmd.report",
-                          env={**run_env, "ALC_SANDBOX_TASK_ARN": J.string_at("$.sandbox.task_arn")},
-                          timeout=Duration.hours(1), **orch)
         stop_sandbox = tasks.CallAwsService(
-            self, "StopSandbox", service="ecs", action="stopTask",
+            self, f"Stop{n}Sandbox", service="ecs", action="stopTask",
             parameters={"Cluster": svc.cluster.cluster_arn, "Task": J.string_at("$.sandbox.task_arn"),
                         "Reason": "Alchemist run finished"},
             iam_resources=[f"arn:aws:ecs:{cfg.region}:{cfg.account}:task/{svc.cluster.cluster_name}/*"],
             iam_action="ecs:StopTask", result_path=J.DISCARD)
-        seal = run_task("Seal", svc.sealer_task, svc.sealer_container, "$.cmd.seal", network.indexer_sg,
+        seal = run_task(f"Seal{n}", svc.sealer_task, svc.sealer_container, "$.cmd.seal", network.indexer_sg,
                         network.app_subnets, env=run_env, timeout=Duration.hours(1))
-        outcome = sfn.Choice(self, "Outcome")
-        seal_failed = sfn.Fail(self, "SealFailed", cause="The run folder could not be sealed")
+        outcome = sfn.Choice(self, f"{n}Outcome")
+        seal_failed = sfn.Fail(self, f"{n}SealFailed", cause="The run folder could not be sealed")
 
         start_sandbox.add_retry(errors=["ECS.AmazonECSException", "ECS.ServerException"],
                                 interval=Duration.seconds(10), max_attempts=3, backoff_rate=2)
@@ -166,9 +176,14 @@ class RunWorkflow(Construct):
                        interval=Duration.seconds(10), max_attempts=2, backoff_rate=2)
         stop_sandbox.add_retry(interval=Duration.seconds(5), max_attempts=3)
         start_sandbox.add_catch(failed, result_path="$.error")
-        analyse.add_catch(report, result_path="$.error")
-        report.add_catch(stop_sandbox, result_path="$.report_error")
         stop_sandbox.add_catch(seal, result_path="$.stop_error")
         seal.add_catch(seal_failed, result_path="$.seal_error")
-        return (start_sandbox.next(prepare_analyse).next(analyse).next(report).next(stop_sandbox).next(seal)
-                .next(outcome.when(sfn.Condition.is_present("$.error"), failed).otherwise(done)))
+        if replay:
+            analyse.add_catch(stop_sandbox, result_path="$.error")
+            chain = start_sandbox.next(prepare).next(analyse).next(stop_sandbox)
+        else:
+            report = run_task("Report", command_path="$.cmd.report", env=run_env, timeout=Duration.hours(1), **orch)
+            analyse.add_catch(report, result_path="$.error")
+            report.add_catch(stop_sandbox, result_path="$.report_error")
+            chain = start_sandbox.next(prepare).next(analyse).next(report).next(stop_sandbox)
+        return chain.next(seal).next(outcome.when(sfn.Condition.is_present("$.error"), failed).otherwise(done))

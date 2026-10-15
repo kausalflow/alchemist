@@ -81,7 +81,9 @@ def duckdb_s3_secret() -> str:
     """DuckDB S3 secret built from the environment; keys never appear in a notebook.
 
     With per-run credentials in the environment the secret uses exactly those keys, so
-    DuckDB cannot fall back to any other identity; otherwise it uses the AWS credential chain.
+    DuckDB cannot fall back to any other identity. In a separate sandbox (ALC_S3_CREDENTIALS=process) it uses only
+    the profile's credential_process and fetches new credentials when they expire. Otherwise it uses the AWS
+    credential chain.
     """
     def lit(v: str) -> str:
         return "'" + v.replace("'", "''") + "'"
@@ -90,6 +92,10 @@ def duckdb_s3_secret() -> str:
     if os.environ.get("AWS_SESSION_TOKEN") and os.environ.get("AWS_ACCESS_KEY_ID"):
         opts += ["provider config", f"key_id {lit(os.environ['AWS_ACCESS_KEY_ID'])}",
                  f"secret {lit(os.environ['AWS_SECRET_ACCESS_KEY'])}", f"session_token {lit(os.environ['AWS_SESSION_TOKEN'])}"]
+    elif os.environ.get("ALC_S3_CREDENTIALS") == "process":
+        opts += ["provider credential_chain", "chain 'process'", "refresh auto"]
+        if os.environ.get("AWS_PROFILE"):
+            opts.append(f"profile {lit(os.environ['AWS_PROFILE'])}")
     else:
         opts.append("provider credential_chain")
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")

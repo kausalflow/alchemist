@@ -5,11 +5,12 @@ src/alchemist/
   cli.py        the `alchemist` command
   config.py     settings from environment variables
   access.py     plant groups and workspaces from identity-provider claims or access.yaml; which plants a run may read
-  credentials.py  per-run STS credentials and their session policy (the credential broker)
+  credentials.py  per-run STS credentials and their session policy; broker grants and the broker Lambda client
   catalog.py    registry, catalog cards (drafted by a model or a heuristic), search, suggestions, run index, audit
   sqlguard.py   read-only SQL guard on DuckDB's parser
   nb.py         helpers used inside the kernel as `alc` (query, finding, align, effect, check_results)
-  sandbox.py    one Jupyter kernel per run; every call becomes a notebook cell
+  sandbox.py    one Jupyter kernel per run (local, or a separate sandbox's); every call becomes a notebook cell
+  sandbox_server.py  `alchemist sandbox serve`: the kernel's HTTP API in a separate sandbox task
   llm.py        model access through Pydantic AI (Bedrock, Anthropic, Gemini, OpenAI), provider allow-list
   agent.py      tool loop with budgets and a transcript; ScriptedModel for offline runs
   prompts.py    system prompts and tool definitions (their hash goes into each manifest)

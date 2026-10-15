@@ -250,6 +250,44 @@ def cmd_serve(a) -> None:
     uvicorn.run(create_app(), host=a.host, port=a.port, log_level="info")
 
 
+def sandbox_url_for_task(task_arn: str, *, cluster: str | None = None, port: int | None = None, ecs=None,
+                         timeout: float = 900) -> str:
+    """Address of a sandbox task started by the workflow, once it is running (ECS DescribeTasks)."""
+    import os
+    import time
+
+    if ecs is None:
+        import boto3
+
+        ecs = boto3.client("ecs")
+    cluster = cluster or os.environ.get("ALC_CLUSTER_ARN") or task_arn.split(":task/", 1)[-1].split("/", 1)[0]
+    port = port or int(os.environ.get("ALC_SANDBOX_PORT", "8888"))
+    deadline = time.monotonic() + timeout
+    while True:
+        tasks = ecs.describe_tasks(cluster=cluster, tasks=[task_arn])["tasks"]
+        task = tasks[0] if tasks else {}
+        status = task.get("lastStatus")
+        if status == "RUNNING":
+            ip = next((d["value"] for a in task.get("attachments", []) for d in a.get("details", [])
+                       if d.get("name") == "privateIPv4Address"), None)
+            if ip:
+                return f"http://{ip}:{port}"
+        if status in ("DEACTIVATING", "STOPPING", "DEPROVISIONING", "STOPPED"):
+            raise SystemExit(f"sandbox task stopped before the analysis: {task.get('stoppedReason', status)}")
+        if time.monotonic() > deadline:
+            raise SystemExit(f"sandbox task {task_arn} is still {status} after {timeout:.0f}s")
+        time.sleep(5)
+
+
+def _sandbox_url(a) -> str | None:
+    import os
+
+    if getattr(a, "sandbox_url", None):
+        return a.sandbox_url
+    arn = getattr(a, "sandbox_task_arn", None) or os.environ.get("ALC_SANDBOX_TASK_ARN")
+    return sandbox_url_for_task(arn) if arn else None
+
+
 def cmd_worker(a) -> None:
     """One step of a run in its own process (an ECS task started by the run's Step Functions execution)."""
     from .api.jobs import mark_failed
@@ -264,7 +302,7 @@ def cmd_worker(a) -> None:
 
 def _worker_step(a, svc) -> None:
     from .api.jobs import models, stop_requested
-    from .run import analyse, execute_replay, plan
+    from .run import analyse, execute_replay, plan, report_step, seal_step
 
     row = svc.catalog.run(a.run_id)
     if a.step == "plan":
@@ -275,12 +313,37 @@ def _worker_step(a, svc) -> None:
         q = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
         user = (q.get("plan") or {}).get("approved_by") or row["user_id"]
         out = analyse(svc, a.run_id, user=user, model=model, reviewer=reviewer,
-                      should_stop=lambda: stop_requested(svc, a.run_id))
+                      should_stop=lambda: stop_requested(svc, a.run_id), sandbox_url=_sandbox_url(a))
+    elif a.step == "report":
+        out = report_step(svc, a.run_id)
+    elif a.step == "seal":
+        out = seal_step(svc, a.run_id)
     else:
-        out = execute_replay(svc, a.run_id)
+        out = execute_replay(svc, a.run_id, sandbox_url=_sandbox_url(a))
     _print({k: v for k, v in out.items() if k in ("run_id", "status", "ended", "analysis_ended", "seal_sha256")})
-    if out["status"] in ("failed", "cancelled") or (a.step == "plan" and out["status"] != "awaiting_approval"):
+    failed = out["status"] in ("failed", "cancelled") and a.step != "seal"
+    if failed or (a.step == "plan" and out["status"] != "awaiting_approval"):
         sys.exit(1)  # ends the workflow instead of waiting for an approval that cannot come
+
+
+def cmd_sandbox(a) -> None:
+    from .sandbox_server import serve
+
+    serve(a.host, a.port)
+
+
+def cmd_broker(a) -> None:
+    """AWS credential_process for a separate sandbox's kernel: the broker's credentials for this run, as JSON."""
+    import os
+
+    from .credentials import BrokerDenied, credential_process
+
+    if a.run_id:
+        os.environ["ALC_RUN_ID"] = a.run_id
+    try:
+        print(json.dumps(credential_process()))
+    except BrokerDenied as e:
+        sys.exit(str(e))
 
 
 def main(argv=None) -> None:
@@ -366,10 +429,25 @@ def main(argv=None) -> None:
                     help="plan and analyse with the offline demo script instead of a model (demo question only)")
     sv.set_defaults(fn=cmd_serve)
 
-    w = sub.add_parser("worker", help="run one step of a run (planning, analysis or replay) in this process")
-    w.add_argument("step", choices=["plan", "analyse", "replay"])
+    w = sub.add_parser("worker", help="run one step of a run (planning, analysis, report, seal or replay) in this process")
+    w.add_argument("step", choices=["plan", "analyse", "report", "seal", "replay"])
     w.add_argument("--run-id", required=True)
+    w.add_argument("--sandbox-task-arn", help="analyse/replay on this separate sandbox task (ECS); default ALC_SANDBOX_TASK_ARN")
+    w.add_argument("--sandbox-url", help="analyse/replay on the sandbox kernel API at this address")
     w.set_defaults(fn=cmd_worker)
+
+    sb = sub.add_parser("sandbox", help="the analysis kernel as its own service (separate sandbox mode)")
+    sbsub = sb.add_subparsers(dest="sandbox_cmd", required=True)
+    sbs = sbsub.add_parser("serve", help="serve one run's kernel over HTTP for `worker analyse --sandbox-url`")
+    sbs.add_argument("--host", default="0.0.0.0")
+    sbs.add_argument("--port", type=int, default=8888)
+    sbs.set_defaults(fn=cmd_sandbox)
+
+    br = sub.add_parser("broker", help="credential broker client (separate sandbox mode)")
+    brsub = br.add_subparsers(dest="broker_cmd", required=True)
+    brc = brsub.add_parser("credentials", help="AWS credential_process: print this run's S3 credentials from the broker")
+    brc.add_argument("--run-id", help="default ALC_RUN_ID; the token comes from ALC_BROKER_TOKEN")
+    brc.set_defaults(fn=cmd_broker)
 
     pl = sub.add_parser("plugins", help="list loaded plugins, or show every registered extension")
     pl.add_argument("action", choices=["list", "show"], nargs="?", default="list")

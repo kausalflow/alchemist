@@ -40,7 +40,7 @@ flowchart TB
 | Only approved, registered datasets are queryable | views built from approved cards; SQL guard | same, plus the run role can only read registered prefixes |
 | Hidden and pseudonymised columns | dropped or keyed-hashed in the views | same, HMAC with a per-deployment secret |
 | Plant data goes only to approved model providers | `ALC_ALLOWED_PROVIDERS` allow-list | allow-list of inference profile ARNs; Bedrock reached through a VPC endpoint |
-| The kernel cannot reach the model or the internet | not enforced (local process) | separate Fargate task, no route to Bedrock, no NAT |
+| The kernel cannot reach the model or the internet | not enforced (local process); in AWS with `workflow.sandbox_mode: separate`, a separate Fargate task | separate Fargate task, no route to Bedrock, no NAT |
 | Sealed runs cannot change | SEALED written once (S3 conditional put), run credentials may not write it, SHA-256 tamper evidence | same |
 | Catalog and run index | SQLite | Aurora PostgreSQL + pgvector |
 | Document search | keyword ranking | hybrid (embeddings + full text) |
