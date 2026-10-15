@@ -76,7 +76,7 @@ class LocalLauncher:
 
             svc = self.services()  # one connection per thread: SQLite connections are not shared across threads
             model, _ = models(svc.settings, "plan")
-            plan(svc, run_id, model=model)
+            plan(svc, run_id, model=model, should_stop=lambda: stop_requested(svc, run_id))
         self._submit(run_id, go)
 
     def analyse(self, run_id: str, user: str) -> None:

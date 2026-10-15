@@ -55,7 +55,8 @@ def now() -> str:
 
 class Catalog:
     def __init__(self, db_path: str):
-        self.db = sqlite3.connect(db_path)
+        # Used by one request or one run step at a time, but those may hop threads (FastAPI runs sync code in a pool).
+        self.db = sqlite3.connect(db_path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         try:

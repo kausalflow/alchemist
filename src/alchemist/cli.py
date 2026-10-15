@@ -191,6 +191,18 @@ def cmd_demo_run(a) -> None:
     print(f"\nReport: {Path(res['path']) / 'report' / 'report.html'}")
 
 
+def cmd_serve(a) -> None:
+    import os
+
+    import uvicorn
+
+    if a.scripted:
+        os.environ["ALC_API_MODEL"] = "scripted"
+    from .api.app import create_app
+
+    uvicorn.run(create_app(), host=a.host, port=a.port, log_level="info")
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="alchemist", description="AI research system for process questions")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -256,6 +268,13 @@ def main(argv=None) -> None:
     v = sub.add_parser("verify", help="check a sealed run folder against its SEALED hashes")
     v.add_argument("run_id")
     v.set_defaults(fn=cmd_verify)
+
+    sv = sub.add_parser("serve", help="run the API and the web app")
+    sv.add_argument("--host", default="127.0.0.1")
+    sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--scripted", action="store_true",
+                    help="plan and analyse with the offline demo script instead of a model (demo question only)")
+    sv.set_defaults(fn=cmd_serve)
 
     a = p.parse_args(argv)
     a.fn(a)

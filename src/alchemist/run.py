@@ -271,7 +271,8 @@ def create(svc: Services, *, user: str, workspace: str, project: str, question: 
     return svc.catalog.run(rid)
 
 
-def plan(svc: Services, run_id: str, *, model: Model | None = None) -> dict:
+def plan(svc: Services, run_id: str, *, model: Model | None = None,
+         should_stop: Callable[[], bool] | None = None) -> dict:
     """The planning step of a created run: search, then submit a plan for approval."""
     s = svc.settings
     row = svc.catalog.run(run_id)
@@ -288,7 +289,7 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None) -> dict:
     try:
         ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS),
                          handlers=handlers, first_message=first, done=lambda: ctx.plan is not None, budget=budget,
-                         transcript=rdir / "logs" / "plan_transcript.jsonl")
+                         transcript=rdir / "logs" / "plan_transcript.jsonl", should_stop=should_stop)
     except Exception as e:  # a model or network failure leaves a failed run, not a run stuck in planning
         ended = f"error: {type(e).__name__}: {e}"
     status = "awaiting_approval" if ctx.plan else "failed"
