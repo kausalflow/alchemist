@@ -10,6 +10,7 @@ stateDiagram-v2
     planning --> failed: no plan within budget
     planning --> cancelled: stopped
     awaiting_approval --> running: alchemist approve
+    awaiting_approval --> planning: sent back with a note
     awaiting_approval --> cancelled: stopped
     awaiting_approval --> expired: not approved in time (AWS)
     running --> completed: report built
@@ -136,6 +137,29 @@ dropped from the notebook and any finding it recorded is removed, and the agent 
 With a separate sandbox, resume starts a new sandbox task with a new broker grant. A retry of `Analyse` reuses the
 running sandbox task, whose kernel is rebuilt the same way; if the sandbox task itself died, the retries fail and the
 run is paused for a person to resume.
+
+## Steering a run with notes
+
+The person who asked (or an admin) can tell the agent something while it works, without stopping it: "the melt-flow
+sensor drifted in March, check it against the lab values", "add the resin dryer as a cause". There are two ways.
+
+- **A note** (`POST /runs/{id}/notes`, the Steer the agent box on a planning, running or paused run). Notes are audit
+  events (`run.note`), so the API can add one whichever process runs the step. Before every model call the step
+  checks for new notes, as it checks for pause and stop, and appends them to the end of the conversation; the agent
+  takes them into account from that call on. A paused run receives its notes when it resumes, and a note left while
+  the plan waits for approval reaches the analysis when it starts. A note does not widen what the run may read.
+- **Send the plan back** (`POST /runs/{id}/plan:send-back`, Send back with a note on the approval screen). The run
+  returns to `planning`, and the planning step continues its saved conversation (`logs/plan_checkpoint.json`) with
+  the note, so the agent revises the plan rather than starting over. The next version comes back for approval with
+  `revises` set to the version it replaces; earlier versions are kept in `logs/plan_history.json`.
+
+Each note is delivered once. The step records every delivery in `logs/steering.json` (who wrote the note, its text,
+the phase, and the step and model call before which the agent read it) and in its checkpoint, so a note given in a
+turn that never completed is given again when the run resumes. The manifest's `steering` lists every note with its
+delivery, or `null` when the run ended before the agent read it; the report has a section for them, and the agent
+steps show each note where the agent received it. Notes steer the agent but are not evidence: the notebook and
+findings show what it computed after each note. A replay re-executes the notebook and never asks the model again, so
+the notes do not change a replay.
 
 ## Many people at once
 

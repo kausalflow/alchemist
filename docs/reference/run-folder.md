@@ -26,6 +26,9 @@ runs/<run-id>/
     plan_transcript.jsonl  planning model and tool calls
     transcript.jsonl       analysis model and tool calls
     checkpoint.json        conversation, budget and notebook position after the last step (pause, resume, recovery)
+    plan_checkpoint.json   the planning conversation, continued when a plan is sent back with a note
+    plan_history.json      earlier versions of the plan, when it was sent back
+    steering.json          notes people left, and the step and model call before which the agent read each
     citations.json         document passages returned to the agent
     review.json            the reviewer's verdict and issues
     report_input.json      what the agent passed to build_report
@@ -48,6 +51,7 @@ runs/<run-id>/
 | `cells` | id, kind and SHA-256 of every code cell |
 | `findings`, `result_hashes` | the findings file and `{finding id: value hash}` |
 | `usage` | budget use per step |
+| `steering` | every note left on the run: author, time, text, kind (`note` or `send_back`) and `delivered` (phase, step, model call, time) or `null` if the agent never read it |
 
 ## `findings.json`
 

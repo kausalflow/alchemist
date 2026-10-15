@@ -43,6 +43,9 @@ All paths are under `/api`.
 | `GET /runs?workspace=&project=&question_id=` | runs in the user's workspaces, newest first | members |
 | `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts | entitled viewer |
 | `POST /runs/{id}/plan:approve` | approve the plan, or send `{plan}` to approve an edited one; starts the analysis | who asked, or an admin |
+| `POST /runs/{id}/plan:send-back` | `{text}`: return the plan to planning with a note; a revised version comes back for approval | who asked, or an admin |
+| `POST /runs/{id}/notes` | `{text}`: leave a note the agent reads before its next model call (planning, waiting, running or paused runs) | run owner, admin |
+| `GET /runs/{id}/notes` | every note, with when the agent read it (`delivered`, or `null`) | entitled viewer |
 | `GET /runs/{id}/events` | live progress (server-sent events, below) | entitled viewer |
 | `POST /runs/{id}:pause` | pause a running analysis after its current step; it can be resumed later | run owner, admin |
 | `POST /runs/{id}:resume` | continue a paused run from its last step | run owner, admin |
@@ -111,13 +114,15 @@ Events are read from the run folder's transcripts, so they work whichever proces
 database row and the run folder, so in AWS a launcher that starts the run's Step Functions execution (and sends the
 task token on approval) can replace it with `ALC_LAUNCHER=package.module:factory`, where `factory(services_factory)`
 returns an object with `plan(run_id)`, `analyse(run_id, user)`, `replay(run_id)`, `cancel(run_id)` (a run cancelled
-while planning or waiting) and `resume(run_id)` (a paused run; its analysis step continues from the checkpoint) and `reconcile()` (close or pause
+while planning or waiting), `resume(run_id)` (a paused run; its analysis step continues from the checkpoint),
+`replan(run_id)` (a plan sent back with a note; its planning step continues with the note) and `reconcile()` (close or pause
 runs whose step died; called every `ALC_RECONCILE_SECONDS`).
 Starting a run, approving or replaying answers 429 when `ALC_MAX_ACTIVE_RUNS_PER_USER` or `ALC_MAX_ACTIVE_RUNS` is
 reached.
 
 The run lifecycle in `alchemist.run` is split the same way: `create` and `plan`, `start_approval` and `analyse`,
-`start_replay` and `execute_replay`. A stop request is an audit event that the agent loop checks between steps.
+`start_replay` and `execute_replay`. A stop request is an audit event that the agent loop checks between steps; so is
+a note (`note`, `send_back`), which the loop hands to the agent before its next model call.
 
 ## Extending the API and the web app
 

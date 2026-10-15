@@ -197,11 +197,32 @@ await shoot(eng, "approval-gate");
 await open(eng, "/");
 await shoot(eng, "board-needs-approval");
 
+// Send the plan back with a note; the agent revises it and it comes back as v2.
+await open(eng, `/runs/${runId}`);
+await eng.getByRole("button", { name: "Send back with a note" }).click();
+await eng.getByLabel("What should change in the plan?").fill("Also check the extruder screen pack: it was changed in early March.");
+await eng.getByRole("button", { name: "Send back to the agent" }).evaluate((el) => el.scrollIntoView({ block: "center" }));
+await shoot(eng, "approval-send-back");
+await eng.getByRole("button", { name: "Send back to the agent" }).click();
+await until("the revised plan", async () => {
+  const run = await api(eng, "GET", `/runs/${runId}`);
+  return run.run.status === "awaiting_approval" && run.plan.version === 2;
+});
+await open(eng, `/runs/${runId}`);
+await shoot(eng, "approval-revised");
+
 await api(eng, "POST", `/runs/${runId}/plan:approve`, {});
 await until("the first findings", async () => {
   const steps = await api(eng, "GET", `/runs/${runId}/steps`);
   return JSON.stringify(steps).includes("record_finding");
 });
+// Once the analysis is held (before its seventh model turn), leave the agent a note: it waits for the next step.
+await until("the hold", async () => {
+  const steps = await api(eng, "GET", `/runs/${runId}/steps`);
+  return steps.analysis.filter((s) => s.type === "model").length >= 6;
+});
+await new Promise((r) => setTimeout(r, 1500));
+await api(eng, "POST", `/runs/${runId}/notes`, { text: "The melt-flow sensor on line 2 drifted in March; check its readings against the lab values before using them." });
 await open(eng, `/runs/${runId}`);
 await shoot(eng, "running");
 if (HOLD && existsSync(HOLD)) rmSync(HOLD);
@@ -213,6 +234,8 @@ await tab(eng, "Data");
 await shoot(eng, "report-data");
 await tab(eng, "Methods and plan");
 await shoot(eng, "report-methods");
+await tab(eng, "Notes");
+await shoot(eng, "report-notes");
 await tab(eng, "Notebook");
 await shoot(eng, "report-notebook");
 await tab(eng, "Provenance");

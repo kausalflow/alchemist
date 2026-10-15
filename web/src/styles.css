@@ -546,6 +546,13 @@ pre.doc-text { white-space: pre-wrap; font-size: 13px; line-height: 20px; max-he
 .k-review, .k-report { background: var(--review-bg); color: var(--review); }
 .k-search { background: var(--warn-bg); color: var(--warn-text); }
 .k-note { background: transparent; color: var(--faint); padding-left: 0; }
+.k-steer { background: var(--accent); color: var(--accent-ink); }
+.log-row.steer { background: color-mix(in srgb, var(--accent-bg) 55%, transparent); }
+.steer-text { white-space: pre-wrap; }
+.notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.notes li { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 3px solid var(--accent-bg); }
+.notes li.waiting { border-left-color: var(--warn-bg); }
+.notes .note-text { white-space: pre-wrap; }
 .log-live { display: flex; align-items: center; gap: 10px; padding: 14px 16px; color: var(--accent-text); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }

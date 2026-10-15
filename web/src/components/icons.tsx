@@ -20,6 +20,7 @@ const PATHS: Record<string, string[]> = {
   external: ["M14 4h6v6", "M20 4 11 13", "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"],
   alert: ["M12 3 2 20h20L12 3z", "M12 10v4", "M12 17h.01"],
   trash: ["M4 7h16", "M10 11v6", "M14 11v6", "M6 7l1 13h10l1-13", "M9 7V4h6v3"],
+  note: ["M5 4h14v12l-4 4H5z", "M15 20v-4h4", "M9 9h6", "M9 13h3"],
   shield: ["M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3z"],
 };
 

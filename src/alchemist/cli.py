@@ -146,6 +146,25 @@ def cmd_approve(a) -> None:
     _report(res)
 
 
+def cmd_note(a) -> None:
+    from .run import note
+
+    svc = _svc()
+    note(svc, a.run_id, user=_user(a, svc), text=a.text)
+    print(f"Note left on run {a.run_id}; the agent reads it before its next step.")
+
+
+def cmd_send_back(a) -> None:
+    from .run import plan, send_back
+
+    svc = _svc()
+    send_back(svc, a.run_id, user=_user(a, svc), text=a.text)
+    out = plan(svc, a.run_id, model=_model(a.model, "plan"))
+    print(f"Run {out['run_id']}: {out['status']} ({out['ended']})")
+    if out["plan"]:
+        _print(out["plan"])
+
+
 def _report(res: dict) -> None:
     print(f"\nRun {res['run_id']}: {res['status']}")
     if res.get("conclusion"):
@@ -418,6 +437,22 @@ def main(argv=None) -> None:
     ap.add_argument("--model", default="default",
                    help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
     ap.set_defaults(fn=cmd_approve)
+
+    nt = sub.add_parser("note", help="leave a note the agent reads before its next step")
+    nt.add_argument("run_id")
+    nt.add_argument("text")
+    nt.add_argument("--user")
+    nt.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
+    nt.set_defaults(fn=cmd_note)
+
+    sb_ = sub.add_parser("send-back", help="send a plan back with a note; the agent revises it for approval")
+    sb_.add_argument("run_id")
+    sb_.add_argument("text")
+    sb_.add_argument("--user")
+    sb_.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
+    sb_.add_argument("--model", default="default",
+                     help="provider:model-id for the lead model, or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
+    sb_.set_defaults(fn=cmd_send_back)
 
     sub.add_parser("runs", help="list runs").set_defaults(fn=cmd_runs)
     st = sub.add_parser("status", help="show a run")

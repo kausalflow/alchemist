@@ -3,6 +3,7 @@
 
 import type { ReactNode } from "react";
 import { TERMINAL, type RunDetail } from "./api";
+import { NotesTab } from "./components/Steer";
 import { DataTab, FindingsTab, MethodsTab, NotebookTab, ProvenanceTab, ReportTab, StepsTab } from "./components/tabs";
 
 export interface RunTab {
@@ -26,6 +27,7 @@ export const runTabs: RunTab[] = [
     show: (r) => !!r.plan || !!r.knowledge?.citations.length || !!r.knowledge?.structured.length,
     render: (r) => <MethodsTab run={r} />,
   },
+  { id: "notes", label: "Notes", show: (r) => done(r) && !!r.notes?.length, render: (r) => <NotesTab run={r} /> },
   { id: "notebook", label: "Notebook", show: (r) => !!r.has_notebook, render: (r) => <NotebookTab run={r} /> },
   { id: "report", label: "Full report", show: (r) => !!r.has_report, render: (r) => <ReportTab run={r} /> },
   { id: "steps", label: "Agent steps", show: () => true, render: (r) => <StepsTab run={r} /> },

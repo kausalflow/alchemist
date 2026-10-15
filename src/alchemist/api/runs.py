@@ -70,7 +70,9 @@ def _transcript_steps(path) -> list[dict]:
             e = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if "tool" in e:
+        if "steering" in e:
+            steps.append({"at": e["at"], "type": "note", "notes": e["steering"]})
+        elif "tool" in e:
             steps.append({"at": e["at"], "type": "tool", "tool": e["tool"], "input": e.get("input"),
                           "is_error": e.get("is_error", False), "seconds": e.get("seconds"),
                           "output": (e.get("output") or "")[:2000], "images": e.get("images", 0)})
@@ -184,6 +186,7 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
     children = [_summary(svc, me, r) for r in svc.catalog.runs() if r["parent_run"] == run_id]
     is_owner = me.user.id == q["asker"] or me.user.is_admin
     owns = me.user.id == row["user_id"] or me.user.is_admin
+    from ..steering import NOTE_STATUSES, record
     return {
         "run": s,
         "entitled": True,
@@ -191,6 +194,8 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
         "plan": q["plan"],
         "permissions": {
             "approve": row["status"] == "awaiting_approval" and is_owner,
+            "send_back": row["status"] == "awaiting_approval" and is_owner,
+            "note": row["status"] in NOTE_STATUSES and row["mode"] == "live" and owns,
             "stop": row["status"] in ("planning", "awaiting_approval", "running", "paused") and owns,
             "pause": row["status"] == "running" and row["mode"] == "live" and owns,
             "resume": row["status"] == "paused" and owns,
@@ -200,6 +205,8 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
         "conclusion_md": conclusion_md,
         "conclusion_html": markdown.markdown(conclusion_md, extensions=["tables"]) if conclusion_md else None,
         "findings": findings,
+        "notes": record(svc, run_id, run),
+        "plan_history": _json(run / "logs" / "plan_history.json", []),
         "queries": [{"id": k, **v, "purpose": purposes.get(k, "")} for k, v in queries.items()],
         "datasets": [{"dataset": k, "card_version": v["card_version"], "plant": v["plant"], "format": v["format"],
                       "columns": v["columns"]} for k, v in (_json(run / "inputs" / "views.json", {}) or {}).items()],
@@ -436,6 +443,57 @@ def approve(run_id: str, body: ApproveBody, svc: Svc, me: Me, request: Request) 
         raise HTTPException(409, str(e)) from e
     _launch(svc, request, run_id, "analyse", me.user.id)
     return {"run_id": run_id, "status": "running", "plan": plan}
+
+
+class NoteBody(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+def _notes(svc, row) -> list[dict]:
+    from ..steering import record
+
+    return record(svc, row["run_id"], as_path(row["path"]))
+
+
+@router.post("/runs/{run_id}/notes", status_code=201)
+def add_note(run_id: str, body: NoteBody, svc: Svc, me: Me) -> dict:
+    """Leave a note for the agent ("the March sensor data drifted, exclude it"). A working run reads it before its
+    next model call; a paused run, or one waiting for approval, when its analysis resumes or starts. Every note is
+    kept in the run's record, and the report shows when the agent received it."""
+    from ..run import note
+
+    row = entitled_run(svc, me, run_id)
+    try:
+        note(svc, run_id, user=me.user, text=body.text)
+    except AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"run_id": run_id, "notes": _notes(svc, row)}
+
+
+@router.get("/runs/{run_id}/notes")
+def list_notes(run_id: str, svc: Svc, me: Me) -> list[dict]:
+    return _notes(svc, entitled_run(svc, me, run_id))
+
+
+@router.post("/runs/{run_id}/plan:send-back")
+def send_back(run_id: str, body: NoteBody, svc: Svc, me: Me, request: Request) -> dict:
+    """Send the proposed plan back with a note saying what to change; planning continues and a new version of the
+    plan comes back for approval."""
+    from ..run import RunLimit, send_back as send
+
+    row = entitled_run(svc, me, run_id)
+    try:
+        send(svc, run_id, user=me.user, text=body.text)
+    except AccessDenied as e:
+        raise access_error(e) from e
+    except RunLimit as e:
+        raise _limit_error(e) from e
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    _launch(svc, request, run_id, "replan")
+    return {"run_id": run_id, "status": "planning", "notes": _notes(svc, row)}
 
 
 @router.post("/runs/{run_id}:stop")

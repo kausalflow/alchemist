@@ -106,6 +106,19 @@ export interface Plan {
   approved_by?: string;
   approved_at?: string;
   submitted_at?: string;
+  revises?: number;
+}
+
+/** A note a person left for the agent, and when the agent received it (null: not yet, or the run ended first). */
+export interface RunNote {
+  id: number;
+  n: number;
+  at: string;
+  author: string;
+  text: string;
+  kind: "note" | "send_back";
+  status?: string;
+  delivered: { phase: string; step: number | null; model_call: number | null; at: string } | null;
 }
 
 export interface Finding {
@@ -139,7 +152,18 @@ export interface RunDetail {
   run: RunSummary;
   question?: { id: string; text: string; asker: string; scope: Record<string, unknown>; status: string; created_at: string };
   plan?: Plan | null;
-  permissions?: { approve: boolean; stop: boolean; pause?: boolean; resume?: boolean; replay: boolean; verdict: boolean };
+  permissions?: {
+    approve: boolean;
+    send_back?: boolean;
+    note?: boolean;
+    stop: boolean;
+    pause?: boolean;
+    resume?: boolean;
+    replay: boolean;
+    verdict: boolean;
+  };
+  notes?: RunNote[];
+  plan_history?: Plan[];
   conclusion_md?: string | null;
   conclusion_html?: string | null;
   findings?: Finding[];
@@ -161,7 +185,8 @@ export interface RunDetail {
 export interface Step {
   phase?: string;
   at: number;
-  type: "model" | "tool";
+  type: "model" | "tool" | "note";
+  notes?: { n: number; author: string; kind: string; text: string; at: string }[];
   tool?: string;
   input?: Record<string, unknown>;
   is_error?: boolean;

@@ -38,6 +38,8 @@ class Launcher(Protocol):
 
     def resume(self, run_id: str) -> None: ...
 
+    def replan(self, run_id: str) -> None: ...
+
     def cancel(self, run_id: str) -> None: ...
 
     def reconcile(self) -> None: ...
@@ -155,6 +157,9 @@ class LocalLauncher:
 
     def resume(self, run_id: str) -> None:
         self.analyse(run_id, approved_by(self.services, run_id))
+
+    def replan(self, run_id: str) -> None:
+        self.plan(run_id)  # the planning step continues its saved conversation with the note
 
     def analyse(self, run_id: str, user: str) -> None:
         def go():

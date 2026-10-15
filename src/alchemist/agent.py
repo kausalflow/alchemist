@@ -107,13 +107,16 @@ def strip_images(messages: list[dict]) -> list[dict]:
 def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str, Callable[[dict], ToolOutput]],
              first_message: str, done: Callable[[], bool], budget: Budget, transcript,
              max_nudges: int = 2, should_stop: "Callable[[], bool | str | None] | None" = None,
-             checkpoint: Callable[[dict], None] | None = None, resume: dict | None = None) -> str:
+             checkpoint: Callable[[dict], None] | None = None, resume: dict | None = None,
+             steer: "Callable[[], dict | None] | None" = None) -> str:
     """Run until `done()` is true, the budget runs out, the model stops, or `should_stop()` asks it to.
     Returns the reason it ended.
 
     `should_stop()` returns "pause" to pause (the run can resume later) or anything else truthy to stop.
     `checkpoint(state)` is called after every completed turn with the conversation so far; passing that state back
-    as `resume` continues the conversation where it left off (the transcript file is appended to)."""
+    as `resume` continues the conversation where it left off (the transcript file is appended to).
+    `steer()` is asked before every model call for notes from people following the run: {"text": ..., "notes": [...]}
+    or None. The text is added to the end of the conversation, so the model reads it on that call."""
     log = as_path(transcript)
     if resume:
         messages: list[dict] = list(resume["messages"])
@@ -137,6 +140,12 @@ def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str
         if request:
             flush()
             return "paused: pause requested by a user" if request == "pause" else "stopped: stop requested by a user"
+        note = steer() if steer else None
+        if note:
+            last = messages[-1]  # always the user's turn here: the question, a nudge, or tool results
+            blocks = [{"type": "text", "text": last["content"]}] if isinstance(last["content"], str) else list(last["content"])
+            messages[-1] = {**last, "content": blocks + [{"type": "text", "text": note["text"]}]}
+            lines.append(json.dumps({"at": time.time(), "steering": note["notes"]}))
         resp = model.create(system=system, tools=tools, messages=messages)
         budget.model_calls += 1
         budget.input_tokens += resp["usage"]["input_tokens"]

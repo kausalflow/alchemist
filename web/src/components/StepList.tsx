@@ -24,10 +24,13 @@ const KIND: Record<string, string> = {
   build_report: "report",
 };
 
-/** The badge a step gets in the activity log: query, compute, finding, search, plan, review, report, tool or note. */
-export const kindOf = (s: Step) => (s.type === "model" ? "note" : KIND[s.tool ?? ""] ?? "tool");
+/** The badge a step gets in the activity log: query, compute, finding, search, plan, review, report, tool, note
+ * (the model's own text) or steer (a note a person left, as the agent received it). */
+export const kindOf = (s: Step) => (s.type === "note" ? "steer" : s.type === "model" ? "note" : KIND[s.tool ?? ""] ?? "tool");
 
 export function describe(s: Step): string {
+  if (s.type === "note")
+    return (s.notes ?? []).map((n) => `${n.author} ${n.kind === "send_back" ? "sent the plan back" : "left a note"}: ${n.text}`).join("\n");
   if (s.type === "model") return s.text ?? "";
   const inp = s.input ?? {};
   const purpose = (inp.purpose as string) || (inp.query as string) || (inp.statement as string) || (inp.summary as string) || "";
@@ -40,7 +43,7 @@ export const isReviewing = (steps: Step[]) => steps.some((s) => s.tool === "fini
 
 /** Model turns and tool calls as an activity log, newest last. Code and SQL are shown in full; outputs are what the model saw. */
 export default function StepList({ steps, live = false, liveText }: { steps: Step[]; live?: boolean; liveText?: string }) {
-  const shown = steps.filter((s) => s.type === "tool" || (s.text && s.text.trim()));
+  const shown = steps.filter((s) => s.type !== "model" || (s.text && s.text.trim()));
   if (!shown.length && !live) return <p className="muted pad">No steps recorded.</p>;
   let n = 0;
   return (
@@ -51,11 +54,11 @@ export default function StepList({ steps, live = false, liveText }: { steps: Ste
         const sql = typeof s.input?.sql === "string" ? (s.input.sql as string).trim() : null;
         const code = typeof s.input?.code === "string" ? (s.input.code as string) : null;
         return (
-          <li key={i} className={`log-row ${s.is_error ? "err" : ""} ${kind === "note" ? "note" : ""}`}>
+          <li key={i} className={`log-row ${s.is_error ? "err" : ""} ${kind === "note" || kind === "steer" ? kind : ""}`}>
             <span className="mono faint small">{s.type === "tool" ? `#${n}` : ""}</span>
-            <span className={`kind k-${kind}`}>{kind === "note" ? "model" : kind}</span>
+            <span className={`kind k-${kind}`}>{kind === "note" ? "model" : kind === "steer" ? "person" : kind}</span>
             <div className="log-body">
-              <div className={kind === "note" ? "muted" : ""}>
+              <div className={kind === "note" ? "muted" : kind === "steer" ? "steer-text" : ""}>
                 {describe(s)}
                 {s.is_error && (
                   <>

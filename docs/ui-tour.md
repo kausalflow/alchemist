@@ -33,6 +33,21 @@ The agent drafts candidate causes, each with its method and data. Untick, edit, 
 ![Approve the plan](assets/ui/approval-gate-light.png#only-light)
 ![Approve the plan](assets/ui/approval-gate-dark.png#only-dark)
 
+### Send the plan back
+
+Instead of editing the plan yourself, say what should change. The agent revises it with your note and it comes back
+here as the next version; nothing reads the data lake in between.
+
+![Send the plan back](assets/ui/approval-send-back-light.png#only-light)
+![Send the plan back](assets/ui/approval-send-back-dark.png#only-dark)
+
+### Revised plan
+
+The revised plan says which version it replaces and the note it answered; earlier versions are one click away.
+
+![Revised plan](assets/ui/approval-revised-light.png#only-light)
+![Revised plan](assets/ui/approval-revised-dark.png#only-dark)
+
 ### Board: waiting on you
 
 Every question in the workspace sits in the column of its stage. A drafted plan waits under Needs approval until its owner acts.
@@ -42,7 +57,7 @@ Every question in the workspace sits in the column of its stage. A drafted plan 
 
 ### Running
 
-Each query, computation and finding appears as it happens, with the causes that already have findings and the run's limits. Pause or Stop are the only controls; each says what it will do.
+Each query, computation and finding appears as it happens, with the causes that already have findings and the run's limits. Pause and Stop each say what they will do. Steer the agent leaves it a note, such as a sensor you know drifted; the agent reads it before its next step, and each note shows whether it has been read.
 
 ![Running](assets/ui/running-light.png#only-light)
 ![Running](assets/ui/running-dark.png#only-dark)
@@ -67,6 +82,13 @@ The plan as approved and the document passages and reference facts the agent use
 
 ![Report: Methods and plan](assets/ui/report-methods-light.png#only-light)
 ![Report: Methods and plan](assets/ui/report-methods-dark.png#only-dark)
+
+### Report: Notes
+
+Every note people left for the agent, and when it read each one. The full report has the same list.
+
+![Report: Notes](assets/ui/report-notes-light.png#only-light)
+![Report: Notes](assets/ui/report-notes-dark.png#only-dark)
 
 ### Report: Notebook
 
