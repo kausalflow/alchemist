@@ -8,6 +8,14 @@ identical numbers.
 This repository is the MVP of the [technical design](https://claude.ai/code/artifact/22c0c2a8-5aa9-407b-9303-544974b79b6b)
 (product design: [here](https://claude.ai/code/artifact/860e0a60-e35c-4351-b5ec-2cfbb2053c95)).
 
+## Documentation
+
+The full documentation is in [`docs/`](docs/index.md) and builds with [Zensical](https://zensical.org):
+
+```bash
+uvx zensical serve   # preview on http://localhost:8000
+```
+
 ## Try it offline
 
 ```bash
