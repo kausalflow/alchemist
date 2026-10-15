@@ -100,7 +100,10 @@ The API's launcher (`alchemist.sfn_launcher`) starts one execution of `ALC_STATE
 
 Stopping and pausing are audit events (`run.stop`, `run.pause`) that workers check between steps; the API calls
 `StopExecution` only for a run cancelled while planning or waiting for approval, since it would end an analysis without
-a report. Resuming a paused run starts a new execution, `<run_id>-resume-<time>`, with `"mode": "resume"`.
+a report. Resuming a paused run starts a new execution, `<run_id>-resume-<time>`, with `"mode": "resume"`. Notes are
+audit events too (`run.note`), read by the worker before each model call. Sending a plan back deletes the stored
+approval token, stops the execution waiting for approval and starts a new one, `<run_id>-run-<time>`, which plans
+again from the saved planning conversation.
 
 ## Credential broker (separate mode)
 

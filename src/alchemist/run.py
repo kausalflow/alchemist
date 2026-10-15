@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from . import prompts
+from . import prompts, steering
 from .access import AccessDenied, User
 from .agent import Budget, Model, ToolOutput, run_loop
 from .llm import PydanticAIModel
@@ -136,6 +136,8 @@ class RunContext:
         self.plants = frozenset(json.loads(run_row["plants"]))
         self.citations: list[dict] = []
         self.plan: dict | None = self.question.get("plan")
+        self.revising: dict | None = None  # the plan a person sent back, while a new one is drafted
+        self.steering: steering.Steering | None = None
         self.sandbox: Sandbox | None = None
         self.query_n = self.finding_n = 0
         self.findings_done = self.review = self.report_out = None
@@ -173,7 +175,9 @@ class RunContext:
         unknown = sorted({ds.removeprefix("ds.") for h in inp["hypotheses"] for ds in h.get("datasets", [])} - datasets)
         if unknown:
             return ToolOutput(f"These datasets are not available to this run: {unknown}. Use search_catalog.", is_error=True)
-        self.plan = {"version": 1, **inp, "submitted_at": now()}
+        self.plan = {"version": (self.revising or {}).get("version", 0) + 1, **inp, "submitted_at": now()}
+        if self.revising:
+            self.plan["revises"] = self.revising.get("version", 1)
         update_question(self.qdir, plan=self.plan, status="awaiting_approval")
         return ToolOutput("Plan saved and sent to the user for approval.")
 
@@ -256,7 +260,8 @@ class RunContext:
         return {"run_id": self.row["run_id"], "created": self.row.get("created_at", ""), "asker": self.question["asker"],
                 "workspace": self.row["workspace"], "plants": sorted(self.plants), "question": self.question["text"],
                 "plan": self.plan or {"scope": {}, "hypotheses": []}, "review": self.review or {},
-                "citations": self.citations, "run_path": str(self.run), "env": environment(), "models": self.models}
+                "citations": self.citations, "run_path": str(self.run), "env": environment(), "models": self.models,
+                "steering": steering.record(self.svc, self.row["run_id"], self.run)}
 
     def write_manifest(self, status: str, usage: dict | None = None, extra: dict | None = None) -> dict:
         views_file = self.run / "inputs" / "views.json"
@@ -290,6 +295,7 @@ class RunContext:
             "cells": cells,
             "findings": "findings.json",
             "result_hashes": {f["id"]: f["value_sha256"] for f in self._findings()},
+            "steering": steering.record(self.svc, self.row["run_id"], self.run),
             "usage": usage or {},
             **(extra or {}),
         }
@@ -423,6 +429,36 @@ def resume(svc: Services, run_id: str, *, user: "str | User") -> None:
     update_question(as_path(row["path"]).parent.parent, status="running")
 
 
+def note(svc: Services, run_id: str, *, user: "str | User", text: str) -> None:
+    """Leave a note for the agent as the run's owner or an admin. A planning or analysing run receives it before its
+    next model call; a run waiting for approval or paused receives it when its analysis starts or resumes."""
+    row = svc.catalog.run(run_id)
+    u = _owner(svc, row, user, "steer")
+    if row["status"] not in steering.NOTE_STATUSES or row["mode"] != "live":
+        raise ValueError(f"run {run_id} is {row['status']}; notes reach only a run that is still working")
+    steering.add(svc, run_id, author=u.id, text=text)
+
+
+def send_back(svc: Services, run_id: str, *, user: "str | User", text: str) -> None:
+    """Return a proposed plan to planning with a note saying what to change; the caller hands the run to the
+    launcher's replan(), whose planning step continues its conversation with the note and submits a new version."""
+    row = svc.catalog.run(run_id)
+    if row["status"] != "awaiting_approval":
+        raise ValueError(f"run {run_id} is {row['status']}, not awaiting approval")
+    question = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
+    u = svc.access.resolve(user)
+    if u.id != question["asker"] and not u.is_admin:
+        raise AccessDenied("only the person who asked (or an admin) can send the plan back")
+    if not text.strip():
+        raise ValueError("say what should change in the plan")
+    check_capacity(svc, row["user_id"])
+    if not svc.catalog.transition(run_id, "awaiting_approval", "planning"):
+        raise ValueError(f"run {run_id} is {svc.catalog.run(run_id)['status']}, not awaiting approval")
+    steering.add(svc, run_id, author=u.id, text=text, kind="send_back", phase="awaiting_approval")
+    svc.catalog.audit(u.id, "plan.send_back", run_id, {"version": (question.get("plan") or {}).get("version")})
+    update_question(as_path(row["path"]).parent.parent, status="planning")
+
+
 def interrupted(svc: Services, run_id: str, reason: str) -> str | None:
     """A step died without saying so. An analysis with a checkpoint is paused, so it can be resumed from its last
     step; anything else fails. Returns the new status, or None if the run had already moved on."""
@@ -455,7 +491,10 @@ def create(svc: Services, *, user: "str | User", workspace: str, project: str, q
 
 def plan(svc: Services, run_id: str, *, model: Model | None = None,
          should_stop: Callable[[], bool] | None = None) -> dict:
-    """The planning step of a created run: search, then submit a plan for approval."""
+    """The planning step of a created run: search, then submit a plan for approval.
+
+    The step saves its conversation after every turn. When a person sends the plan back, the next planning step
+    continues that conversation with their note and submits the next version of the plan."""
     s = svc.settings
     row = svc.catalog.run(run_id)
     if row["status"] != "planning":  # cancelled before the step started
@@ -466,6 +505,13 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     model = model or PydanticAIModel(s)
     ctx.models["lead"] = model.name
     budget = Budget(s.max_steps, s.max_output_tokens_total)
+    saved = _read_checkpoint(rdir / PLAN_CHECKPOINT)
+    if ctx.plan:  # sent back: keep the earlier version, draft the next one
+        ctx.revising, ctx.plan = ctx.plan, None
+        history = rdir / "logs" / "plan_history.json"
+        write_json(history, (read_json(history) if history.exists() else []) + [ctx.revising])
+    steer = ctx.steering = steering.Steering(svc, run_id, rdir, phase="planning", budget=budget,
+                                             delivered=saved.get("steering") if saved else None)
     handlers = {"search_catalog": ctx.search_catalog, "search_knowledge": ctx.search_knowledge,
                 "submit_plan": ctx.submit_plan}
     extra_tools, extra_handlers = plugin_tools("plan", ctx)
@@ -475,7 +521,11 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     try:
         ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS, extra_tools),
                          handlers=handlers, first_message=first, done=lambda: ctx.plan is not None, budget=budget,
-                         transcript=rdir / "logs" / "plan_transcript.jsonl", should_stop=should_stop)
+                         transcript=rdir / "logs" / "plan_transcript.jsonl", should_stop=should_stop, steer=steer,
+                         checkpoint=lambda state: write_json(rdir / PLAN_CHECKPOINT, {
+                             "schema": "alchemist.checkpoint/v1", "phase": "planning", "at": now(), **state,
+                             "steering": steer.delivered}),
+                         resume=saved)
     except Exception as e:  # a model or network failure leaves a failed run, not a run stuck in planning
         ended = f"error: {type(e).__name__}: {e}"
     if ctx.plan:
@@ -550,12 +600,16 @@ def _record_approval(svc: Services, row: dict, user: str, plan: dict | None) -> 
 
 
 CHECKPOINT = "logs/checkpoint.json"
+PLAN_CHECKPOINT = "logs/plan_checkpoint.json"
 
 
 def checkpoint_of(run) -> dict | None:
     """The analysis checkpoint of a run folder: the conversation, budget and notebook position after its last
     completed turn. A run with one can be paused and resumed, and recovers from a crash or a timeout."""
-    f = as_path(run) / CHECKPOINT
+    return _read_checkpoint(as_path(run) / CHECKPOINT)
+
+
+def _read_checkpoint(f) -> dict | None:
     try:
         return read_json(f) if f.exists() else None
     except (json.JSONDecodeError, FileNotFoundError):
@@ -585,6 +639,11 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     ctx.models.update(lead=model.name, reviewer=reviewer.name)
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     saved = checkpoint_of(ctx.run)
+    # Notes are delivered once: a resumed step starts from its checkpoint's list (a note given in a turn that never
+    # completed is given again), a new one from the notes the planning step delivered.
+    delivered = saved.get("steering", steering.delivered_in(ctx.run)) if saved else [
+        d for d in steering.delivered_in(ctx.run) if d["phase"] == "planning"]
+    ctx.steering = steering.Steering(svc, run_id, ctx.run, phase="analysis", delivered=delivered, budget=budget)
     ended = "error"
     with svc.sandbox(ctx, views, run_mode="live", sandbox_url=sandbox_url) as sb:
         ctx.sandbox = sb
@@ -616,7 +675,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
             ended = run_loop(model, system=prompts.ANALYSIS_SYSTEM, tools=prompts.tool_list(prompts.ANALYSIS_TOOLS, extra_tools),
                              handlers=handlers, first_message=first, done=lambda: ctx.report_out is not None,
                              budget=budget, transcript=ctx.run / "logs" / "transcript.jsonl", should_stop=should_stop,
-                             checkpoint=lambda state: _save_checkpoint(ctx, sb, budget, state), resume=saved)
+                             checkpoint=lambda state: _save_checkpoint(ctx, sb, budget, state), resume=saved,
+                             steer=ctx.steering)
         except Exception as e:  # a model or network failure still ends in a sealed, partial run
             ended = f"error: {type(e).__name__}: {e}"
             if is_retryable(e) and checkpoint_of(ctx.run):  # the provider is down: keep the work, resume later
@@ -641,7 +701,8 @@ def _save_checkpoint(ctx: RunContext, sb: Sandbox, budget: Budget, state: dict) 
         "budget": budget.as_dict(),
         "context": {"query_n": ctx.query_n, "finding_n": ctx.finding_n, "review_requested": ctx.review_requested,
                     "review": ctx.review},
-        "notebook": {"cells": len(sb.nb.cells), "counter": sb.counter}})
+        "notebook": {"cells": len(sb.nb.cells), "counter": sb.counter},
+        "steering": ctx.steering.delivered if ctx.steering else []})
 
 
 def _restore(ctx: RunContext, sb: Sandbox, budget: Budget, model: Model, saved: dict) -> list[dict]:

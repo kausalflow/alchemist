@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { api, type DatasetSummary, type Hypothesis, type Plan, type RunDetail, type Step } from "../api";
 import { useApi, useSession } from "../session";
-import { Chip, Collapsible, ErrorNote, day } from "./bits";
+import { Chip, Collapsible, ErrorNote, day, when } from "./bits";
 import Icon from "./icons";
 import StepList, { clock, describe } from "./StepList";
 
@@ -16,6 +16,8 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
   const [dropped, setDropped] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [sendingBack, setSendingBack] = useState(false);
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { data: datasets } = useApi<DatasetSummary[]>("/datasets");
@@ -70,6 +72,17 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
       setBusy(false);
     }
   };
+  const sendBack = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/runs/${run.run.run_id}/plan:send-back`, { text: note });
+      onApproved();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
   const cancel = async () => {
     if (!onCancel) return;
     setBusy(true);
@@ -100,6 +113,7 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
             {edited && <Chip tone="info">Edited: saved as a new version when approved</Chip>}
           </div>
         </div>
+        {original.revises && <Revision run={run} />}
 
         <section aria-labelledby="causes" className="panel">
           <div className="panel-head">
@@ -234,6 +248,11 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
                 Revise the plan
               </button>
             )}
+            {run.permissions?.send_back && !sendingBack && !edited && (
+              <button type="button" className="outline lg" onClick={() => setSendingBack(true)} disabled={busy}>
+                <Icon name="note" /> Send back with a note
+              </button>
+            )}
             {canApprove && edited && (
               <button type="button" className="ghost lg" onClick={undo} disabled={busy}>
                 Undo edits
@@ -256,6 +275,30 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
               </span>
             )}
           </div>
+          {sendingBack && (
+            <div className="stack-sm">
+              <label className="field">
+                <span className="field-label">What should change in the plan?</span>
+                <textarea
+                  rows={3}
+                  value={note}
+                  maxLength={4000}
+                  autoFocus
+                  placeholder="For example: add the resin dryer as a candidate cause, and use 2024 Q4 as the baseline."
+                  onChange={(e) => setNote(e.target.value)}
+                />
+              </label>
+              <div className="row-center">
+                <button type="button" className="primary" onClick={sendBack} disabled={busy || !note.trim()}>
+                  {busy ? "Sending…" : "Send back to the agent"}
+                </button>
+                <button type="button" className="ghost" onClick={() => setSendingBack(false)} disabled={busy}>
+                  Keep this plan
+                </button>
+              </div>
+              <p className="muted small">The agent revises the plan with your note and it comes back here as a new version. Nothing is read from the data lake.</p>
+            </div>
+          )}
           {canApprove && (
             <p className="muted small">
               Approving lets the agent read the {reads.length} data {reads.length === 1 ? "source" : "sources"} listed
@@ -297,6 +340,38 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
         </section>
         <DraftTrail runId={run.run.run_id} />
       </aside>
+    </div>
+  );
+}
+
+/** What changed since the plan was sent back: the note, and the earlier versions' causes. */
+function Revision({ run }: { run: RunDetail }) {
+  const back = (run.notes ?? []).filter((n) => n.kind === "send_back");
+  const last = back[back.length - 1];
+  const earlier = run.plan_history ?? [];
+  return (
+    <div className="callout">
+      {last && (
+        <span>
+          Revised after {last.author} sent v{run.plan?.revises} back {when(last.at)}: <span className="strong">“{last.text}”</span>
+        </span>
+      )}
+      {earlier.length > 0 && (
+        <Collapsible title={<span className="small">Earlier {earlier.length === 1 ? "version" : "versions"}</span>}>
+          {earlier.map((p) => (
+            <div key={p.version} className="small">
+              <div className="strong">v{p.version}</div>
+              <ul>
+                {p.hypotheses.map((h) => (
+                  <li key={h.id}>
+                    {h.id}: {h.cause}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </Collapsible>
+      )}
     </div>
   );
 }

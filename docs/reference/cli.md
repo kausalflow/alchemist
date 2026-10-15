@@ -121,6 +121,18 @@ alchemist approve RUN_ID (--user USER | --claims FILE) [--plan-file FILE] [--mod
 Approves the plan (only the asker or an admin may), runs the analysis, review and report, and seals the run.
 `--plan-file` takes an edited plan JSON; its version is bumped.
 
+## `note`, `send-back`
+
+```text
+alchemist note RUN_ID TEXT (--user USER | --claims FILE)
+alchemist send-back RUN_ID TEXT (--user USER | --claims FILE) [--model SPEC]
+```
+
+`note` leaves a note for the agent on a planning, waiting, running or paused run (owner or admin); the step running
+it, in any process, reads it before its next model call. `send-back` returns a plan waiting for approval to planning
+with the note (asker or admin), plans again in this process and prints the revised plan. See
+[Steering a run with notes](../concepts/runs.md#steering-a-run-with-notes).
+
 ## `runs`, `status`
 
 | Command | Does |

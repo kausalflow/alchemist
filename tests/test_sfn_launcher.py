@@ -28,6 +28,9 @@ class FakeS3:
     def put_object(self, Bucket, Key, Body):
         self.objects[(Bucket, Key)] = Body
 
+    def delete_object(self, Bucket, Key):
+        self.objects.pop((Bucket, Key), None)
+
     def get_object(self, Bucket, Key):
         if (Bucket, Key) not in self.objects:
             raise NoSuchKey(Key)
@@ -38,7 +41,10 @@ class FakeSfn:
     exceptions = SimpleNamespace(TaskTimedOut=TaskTimedOut, InvalidToken=InvalidToken)
 
     def __init__(self, fail_send=False):
-        self.started, self.sent, self.fail_send = [], [], fail_send
+        self.started, self.sent, self.stopped, self.fail_send = [], [], [], fail_send
+
+    def stop_execution(self, executionArn, cause):
+        self.stopped.append((executionArn, cause))
 
     def start_execution(self, **kw):
         self.started.append(kw)
@@ -82,3 +88,15 @@ def test_a_token_already_released_is_not_an_error():
     l = launcher(sfn=FakeSfn(fail_send=True))
     l.s3.put_object(Bucket="ws", Key="_approvals/R1/token.json", Body=json.dumps({"task_token": "T"}).encode())
     l.analyse("R1", "eng_p1")
+
+
+def test_replan_drops_the_old_token_stops_the_waiting_execution_and_plans_again():
+    sfn, s3 = FakeSfn(), FakeS3()
+    l = launcher(sfn, s3)
+    l.plan("R1")
+    s3.put_object(Bucket="ws", Key="_approvals/R1/token.json", Body=b'{"task_token": "old"}')
+    l.replan("R1")
+    assert ("ws", "_approvals/R1/token.json") not in s3.objects
+    assert sfn.stopped == [(l._execution_arn("R1-run"), "plan sent back for revision")]
+    assert [json.loads(x["input"])["mode"] for x in sfn.started] == ["run", "run"]
+    assert sfn.started[1]["name"].startswith("R1-run-")  # execution names are unique

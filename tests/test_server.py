@@ -136,6 +136,34 @@ def test_only_the_asker_approves(client):
     assert client.post(f"/api/runs/{rid}/plan:approve", headers=as_user("eng_p1"), json={}).status_code == 409
 
 
+def test_send_back_and_notes(client):
+    h = as_user("eng_p1")
+    r = client.post("/api/questions", headers=h,
+                    json={"workspace": "quality", "project": "line2-api", "question": script.QUESTION, "scope": script.SCOPE})
+    rid = r.json()["run_id"]
+    run = client.get(f"/api/runs/{rid}", headers=h).json()
+    assert run["permissions"]["send_back"] and run["permissions"]["note"] and run["notes"] == []
+    assert client.post(f"/api/runs/{rid}/plan:send-back", headers=as_user("eng_p2"), json={"text": "x"}).status_code == 403
+    assert client.post(f"/api/runs/{rid}/plan:send-back", headers=h, json={"text": ""}).status_code == 422
+    r = client.post(f"/api/runs/{rid}/plan:send-back", headers=h, json={"text": "Add the resin dryer."})
+    assert r.status_code == 200, r.text
+    run = client.get(f"/api/runs/{rid}", headers=h).json()  # the inline launcher has planned again already
+    assert run["run"]["status"] == "awaiting_approval" and run["plan"]["version"] == 2
+    assert [p["version"] for p in run["plan_history"]] == [1]
+    assert run["notes"][0]["kind"] == "send_back" and run["notes"][0]["delivered"]["phase"] == "planning"
+    steps = client.get(f"/api/runs/{rid}/steps", headers=h).json()["planning"]
+    assert [s["notes"][0]["text"] for s in steps if s["type"] == "note"] == ["Add the resin dryer."]
+
+    assert client.post(f"/api/runs/{rid}/notes", headers=as_user("eng_p2"), json={"text": "x"}).status_code == 403
+    r = client.post(f"/api/runs/{rid}/notes", headers=h, json={"text": "Exclude March melt-flow readings."})
+    assert r.status_code == 201 and r.json()["notes"][-1]["delivered"] is None  # given when the analysis starts
+    assert client.post(f"/api/runs/{rid}/plan:approve", headers=h, json={}).status_code == 200
+    run = client.get(f"/api/runs/{rid}", headers=h).json()
+    assert run["run"]["status"] == "completed" and not run["permissions"]["note"]
+    assert run["notes"][-1]["delivered"]["phase"] == "analysis" and run["manifest"]["steering"][-1]["delivered"]
+    assert client.post(f"/api/runs/{rid}/notes", headers=h, json={"text": "late"}).status_code == 409
+
+
 def test_too_many_active_runs_is_429(client, svc):
     from alchemist.run import cancel, create
 

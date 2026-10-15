@@ -6,6 +6,8 @@ Selected with ALC_LAUNCHER=alchemist.sfn_launcher:StepFunctionsLauncher. The API
 - analyse(run_id, user) right after recording the approval: releases the waiting execution;
 - replay(run_id) right after creating a replay run: starts an execution in replay mode;
 - resume(run_id) after a paused run was resumed (or stopped, to seal it): starts an execution in resume mode;
+- replan(run_id) after a plan was sent back with a note: stops the execution waiting for approval and starts a new
+  one, whose planning step continues the saved conversation with the note;
 - cancel(run_id) after a run was cancelled while planning or waiting for approval: stops its execution;
 - reconcile() every ALC_RECONCILE_SECONDS: a run whose execution ended (a task killed or timed out, approval timed
   out) while the database still says it is busy is closed: expired if it was waiting for approval, paused if it
@@ -60,10 +62,10 @@ class StepFunctionsLauncher:
         # arn:aws:states:<region>:<account>:stateMachine:<name> -> ...:execution:<name>:<execution name>
         return self.state_machine_arn.replace(":stateMachine:", ":execution:", 1) + ":" + name
 
-    def _start(self, run_id: str, mode: str, token: str | None = None) -> None:
+    def _start(self, run_id: str, mode: str, token: str | None = None, *, again: bool = False) -> None:
         body = {"run_id": run_id, "mode": mode, **({"broker_token": token} if token else {})}
-        # Execution names are unique per state machine, and a run can be resumed many times.
-        name = self._name(run_id, mode if mode != "resume" else f"resume-{int(dt.datetime.now().timestamp())}")
+        # Execution names are unique per state machine, and a run can be resumed (or replanned) many times.
+        name = self._name(run_id, f"{mode}-{int(dt.datetime.now().timestamp())}" if again else mode)
         self.sfn.start_execution(stateMachineArn=self.state_machine_arn, name=name, input=json.dumps(body))
         if self.services:
             svc = self.services()
@@ -75,12 +77,33 @@ class StepFunctionsLauncher:
     def resume(self, run_id: str) -> None:
         """A paused run: a new execution goes straight to the analysis, which resumes from the checkpoint (with a
         separate sandbox, on a new sandbox task with a new broker grant)."""
-        self._start(run_id, "resume", self._new_grant(run_id, ready=True))
+        self._start(run_id, "resume", self._new_grant(run_id, ready=True), again=True)
+
+    def replan(self, run_id: str) -> None:
+        """A plan sent back: the waiting execution's approval token is dropped and the execution stopped, and a new
+        execution plans again and waits for approval of the next version."""
+        try:
+            self.s3.delete_object(Bucket=self.bucket, Key=f"{self.prefix}{run_id}/token.json")
+        except self.s3.exceptions.NoSuchKey:
+            pass
+        self._stop(run_id, "plan sent back for revision")
+        self._start(run_id, "run", self._new_grant(run_id, ready=False), again=True)
 
     def cancel(self, run_id: str) -> None:
+        self._stop(run_id, "cancelled in Alchemist")
+
+    def _stop(self, run_id: str, cause: str) -> None:
+        name = self._name(run_id, "run")
+        if self.services:  # a replanned run's current execution has its own name
+            from .api.jobs import last_launch
+
+            svc = self.services()
+            try:
+                name = (last_launch(svc, run_id) or {}).get("execution") or name
+            finally:
+                svc.catalog.db.close()
         try:
-            self.sfn.stop_execution(executionArn=self._execution_arn(self._name(run_id, "run")),
-                                    cause="cancelled in Alchemist")
+            self.sfn.stop_execution(executionArn=self._execution_arn(name), cause=cause)
         except self.sfn.exceptions.ExecutionDoesNotExist:
             pass
 

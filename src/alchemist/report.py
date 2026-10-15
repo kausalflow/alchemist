@@ -80,6 +80,13 @@ TEMPLATE = """<!doctype html>
 {% for h in plan.hypotheses %}<tr><td>{{ h.id }}: {{ h.cause }}</td><td>{{ h.method }}</td><td>{{ h.source or '' }}</td></tr>{% endfor %}</table>
 {% if method_notes %}<p>{{ method_notes }}</p>{% endif %}
 
+<h2>Notes from people during the run</h2>
+{% if steering %}<table><tr><th>#</th><th>Written</th><th>By</th><th>Note</th><th>Received by the agent</th></tr>
+{% for n in steering %}<tr><td>{{ n.n }}</td><td>{{ n.at }}{% if n.kind == 'send_back' %}<br><span class="muted">plan sent back</span>{% endif %}</td><td>{{ n.author }}</td><td>{{ n.text }}</td>
+<td>{% if n.delivered %}{{ n.delivered.phase }}, before model call {{ n.delivered.model_call }} ({{ n.delivered.at }}){% else %}not yet{% endif %}</td></tr>{% endfor %}</table>
+<p class="muted">Notes steer the agent; they are not evidence. The notebook and findings show what was computed after each note.</p>
+{% else %}<p>None: the agent worked from the approved plan alone.</p>{% endif %}
+
 <h2>Findings</h2>
 <table><tr><th>Finding</th><th>Hypothesis</th><th>Statement</th><th>Value</th><th>Verdict</th><th>Confidence</th><th>Evidence</th></tr>
 {% for f in findings %}<tr><td>{{ f.id }}</td><td>{{ f.hypothesis }}</td><td>{{ f.statement }}</td><td>{{ fmt(f.value, f.unit) }}</td>

@@ -7,6 +7,7 @@ import Icon from "../components/icons";
 import PlanEditor from "../components/PlanEditor";
 import StepList, { isReviewing } from "../components/StepList";
 import Stepper from "../components/Stepper";
+import { SteerPanel } from "../components/Steer";
 import { QuestionRuns, ReproducePanel, VerdictPanel, useReplay } from "../components/tabs";
 import { runTabs } from "../runTabs";
 
@@ -24,7 +25,11 @@ export default function RunPage() {
     setLive([]);
     const es = new EventSource(`/api/runs/${runId}/events`);
     source.current = es;
-    es.addEventListener("step", (e) => setLive((s) => [...s, JSON.parse((e as MessageEvent).data)]));
+    es.addEventListener("step", (e) => {
+      const step = JSON.parse((e as MessageEvent).data);
+      setLive((s) => [...s, step]);
+      if (step.type === "note") reload(); // the agent read a note: show it as read
+    });
     es.addEventListener("status", (e) => {
       if (JSON.parse((e as MessageEvent).data).status !== status) reload();
     });
@@ -115,12 +120,14 @@ export default function RunPage() {
       <Stepper run={run} reviewing={reviewing} />
 
       <div className="pad-page">
-        {status === "planning" && <PlanningView run={run} steps={live.filter((s) => s.phase === "planning")} onStop={act("stop")} />}
+        {status === "planning" && (
+          <PlanningView run={run} steps={live.filter((s) => s.phase === "planning")} onStop={act("stop")} reload={reload} />
+        )}
 
         {status === "awaiting_approval" && run.plan && <PlanEditor run={run} onApproved={reload} onCancel={act("stop")} />}
 
         {(status === "running" || status === "paused") && (
-          <RunningView run={run} steps={analysisSteps} reviewing={reviewing} act={act} />
+          <RunningView run={run} steps={analysisSteps} reviewing={reviewing} act={act} reload={reload} />
         )}
 
         {status && SEALED.has(status) && <ReportView run={run} reload={reload} />}
@@ -133,7 +140,8 @@ export default function RunPage() {
 
 // ------------------------------------------------------------------ planning
 
-function PlanningView({ run, steps, onStop }: { run: RunDetail; steps: Step[]; onStop: () => Promise<void> }) {
+function PlanningView({ run, steps, onStop, reload }: { run: RunDetail; steps: Step[]; onStop: () => Promise<void>; reload: () => void }) {
+  const revising = (run.notes ?? []).some((n) => n.kind === "send_back");
   return (
     <div className="split">
       <div className="split-main stack">
@@ -141,7 +149,7 @@ function PlanningView({ run, steps, onStop }: { run: RunDetail; steps: Step[]; o
         <section className="panel" aria-labelledby="planlog">
           <div className="panel-head">
             <h2 id="planlog" className="h-panel">
-              Drafting the plan
+              {revising ? "Revising the plan" : "Drafting the plan"}
             </h2>
             <span className="muted small">Searching the catalog and plant documents. Nothing is read from the data lake yet.</span>
           </div>
@@ -166,6 +174,7 @@ function PlanningView({ run, steps, onStop }: { run: RunDetail; steps: Step[]; o
             </>
           )}
         </section>
+        <SteerPanel run={run} reload={reload} />
       </aside>
     </div>
   );
@@ -178,11 +187,13 @@ function RunningView({
   steps,
   reviewing,
   act,
+  reload,
 }: {
   run: RunDetail;
   steps: Step[];
   reviewing: boolean;
   act: (a: "stop" | "pause" | "resume") => () => Promise<void>;
+  reload: () => void;
 }) {
   const { meta } = useSession();
   const r = run.run;
@@ -289,9 +300,10 @@ function RunningView({
             </>
           )}
           {!run.permissions?.pause && !run.permissions?.resume && !run.permissions?.stop && (
-            <p className="small muted">Only {r.user_id} or an admin can pause or stop this run.</p>
+            <p className="small muted">Only {r.user_id} or an admin can pause, stop or steer this run.</p>
           )}
         </section>
+        <SteerPanel run={run} reload={reload} />
         {limits.length > 0 && (
           <section aria-labelledby="lim" className="panel pad stack-sm">
             <h2 id="lim" className="h-panel">
