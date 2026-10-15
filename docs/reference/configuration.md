@@ -8,7 +8,11 @@ Alchemist reads its settings from environment variables, with local-friendly def
 | --- | --- | --- |
 | `ALC_HOME` | `./alchemist-home` | base folder for the defaults below and the demo data |
 | `ALC_WORKSPACE` | `$ALC_HOME/workspace` | root of the workspace store; `s3://alchemist-workspace` in production |
-| `ALC_DB` | `$ALC_HOME/alchemist.db` | catalog and run index (SQLite in the MVP) |
+| `ALC_DB` | `$ALC_HOME/alchemist.db` | app database (catalog, run index, audit): a SQLite file, or a `postgresql://` URL |
+| `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME`, `ALC_DB_USER` | unset, `5432`, `alchemist`, `alchemist` | PostgreSQL connection when `ALC_DB` is unset (the AWS stack sets these) |
+| `ALC_DB_PASSWORD` | unset | PostgreSQL password, added at connect time so it never appears in `ALC_DB` or logs |
+| `ALC_DB_SSLMODE` | `require` | libpq `sslmode` for the URL built from `ALC_DB_HOST` |
+| `ALC_DB_POOL_SIZE` | `10` | PostgreSQL connections per process |
 | `ALC_ACCESS` | `$ALC_HOME/access.yaml` | plants, workspaces, identity-provider group mapping, optional local users ([Access model](../concepts/access.md)) |
 | `ALC_KNOWLEDGE` | `$ALC_HOME/knowledge` | documents (`*.md`) and structured knowledge (`structured/*.yaml`) |
 

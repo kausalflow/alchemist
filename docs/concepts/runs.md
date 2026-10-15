@@ -148,8 +148,9 @@ they share:
   and `ALC_MAX_ACTIVE_RUNS` in total (default no limit); plans waiting for approval do not count. Over the limit the
   API answers 429.
 - **The database.** Status changes are compare-and-set, so a plan approved twice (two tabs, a double click) starts
-  once, and a cancel and an approval at the same moment cannot both win. SQLite on EFS is fine for a pilot but locks
-  the whole file on each write; move to Postgres before many runs write at once.
+  once, and a cancel and an approval at the same moment cannot both win. On AWS the database is Aurora
+  PostgreSQL, shared by every API and worker task; SQLite (the local default) locks the whole file on each write, so
+  keep it to one machine.
 
 ## Replay and rerun
 

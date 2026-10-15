@@ -1,3 +1,6 @@
+import os
+import uuid
+
 import pytest
 
 from alchemist.catalog import index_dataset
@@ -11,10 +14,40 @@ def home(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def svc(home):
+def db_target(home):
+    """The shared app database: SQLite in the test home, or a fresh PostgreSQL database when
+    ALC_TEST_DATABASE_URL points at a server (CI runs the suite both ways)."""
+    url = os.environ.get("ALC_TEST_DATABASE_URL")
+    if not url:
+        yield str(home / "alchemist.db")
+        return
+    yield from fresh_postgres(url)
+
+
+def fresh_postgres(url: str):
+    from urllib.parse import urlsplit
+
+    import psycopg
+
+    from alchemist.db import close_pools
+
+    name = f"alc_test_{uuid.uuid4().hex[:12]}"
+    admin = urlsplit(url)._replace(path="/postgres").geturl()
+    with psycopg.connect(admin, autocommit=True) as c:
+        c.execute(f"create database {name}")
+    try:
+        yield urlsplit(url)._replace(path=f"/{name}").geturl()
+    finally:
+        close_pools()
+        with psycopg.connect(admin, autocommit=True) as c:
+            c.execute(f"drop database if exists {name} with (force)")
+
+
+@pytest.fixture(scope="session")
+def svc(home, db_target):
     from alchemist.run import Services
 
-    s = Settings(workspace_root=str(home / "workspace"), db_path=str(home / "alchemist.db"),
+    s = Settings(workspace_root=str(home / "workspace"), db_path=db_target,
                  access_file=str(home / "access.yaml"), knowledge_root=str(home / "knowledge"))
     s.ensure_local_dirs()
     datasets = generate(home)

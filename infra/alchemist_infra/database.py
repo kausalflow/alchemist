@@ -1,7 +1,9 @@
 """Aurora PostgreSQL Serverless v2 for the catalog, knowledge passages (pgvector) and the run index.
 
-The database only indexes the workspace bucket, so it can be rebuilt from the run folders. The `vector` extension is
-created by the app's migration task (`alchemist db migrate`), not by CloudFormation.
+The database only indexes the workspace bucket, so it can be rebuilt from the run folders. API and worker tasks get
+ALC_DB_HOST/PORT/NAME plus the user and password from the generated secret, and the app applies its schema
+migrations when it first connects (`alchemist db migrate` does the same on demand). The `vector` extension will be
+created by an app migration when knowledge passages move here, not by CloudFormation.
 """
 
 from __future__ import annotations
