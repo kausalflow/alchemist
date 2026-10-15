@@ -338,15 +338,16 @@ def cmd_sandbox(a) -> None:
 
 
 def cmd_broker(a) -> None:
-    """AWS credential_process for a separate sandbox's kernel: the broker's credentials for this run, as JSON."""
+    """AWS credential_process for a run's kernel: this run's credentials, as JSON, from the broker Lambda (separate
+    sandbox) or from the file the worker keeps fresh (--file, in-process)."""
     import os
 
-    from .credentials import BrokerDenied, credential_process
+    from .credentials import BrokerDenied, credential_process, read_credentials_file
 
     if a.run_id:
         os.environ["ALC_RUN_ID"] = a.run_id
     try:
-        print(json.dumps(credential_process()))
+        print(json.dumps(read_credentials_file(a.file) if a.file else credential_process()))
     except BrokerDenied as e:
         sys.exit(str(e))
 
@@ -448,10 +449,11 @@ def main(argv=None) -> None:
     sbs.add_argument("--port", type=int, default=8888)
     sbs.set_defaults(fn=cmd_sandbox)
 
-    br = sub.add_parser("broker", help="credential broker client (separate sandbox mode)")
+    br = sub.add_parser("broker", help="credential_process for a run's kernel")
     brsub = br.add_subparsers(dest="broker_cmd", required=True)
     brc = brsub.add_parser("credentials", help="AWS credential_process: print this run's S3 credentials from the broker")
     brc.add_argument("--run-id", help="default ALC_RUN_ID; the token comes from ALC_BROKER_TOKEN")
+    brc.add_argument("--file", help="in-process: read the credentials the worker keeps fresh in this file instead")
     brc.set_defaults(fn=cmd_broker)
 
     pl = sub.add_parser("plugins", help="list loaded plugins, or show every registered extension")

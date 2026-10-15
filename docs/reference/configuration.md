@@ -17,7 +17,7 @@ Alchemist reads its settings from environment variables, with local-friendly def
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ALC_RUN_ROLE_ARN` | unset | role assumed once per run with a session policy limited to the run's data and folder; unset means the sandbox uses the process's credentials |
-| `ALC_RUN_CREDENTIAL_SECONDS` | `3600` | lifetime of a run's credentials (one hour at most with role chaining) |
+| `ALC_RUN_CREDENTIAL_SECONDS` | `3600` | lifetime of each of a run's credential sessions (one hour at most with role chaining); the worker issues a new one before it expires |
 | `AWS_ENDPOINT_URL_S3` | unset | custom S3 endpoint (MinIO, moto, LocalStack), used by boto3, cloudpathlib and DuckDB |
 
 ## Separate sandbox

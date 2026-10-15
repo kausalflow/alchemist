@@ -96,6 +96,7 @@ def test_run_used_scoped_credentials(s3_run):
     m = read_json(run / "manifest.json")
     cred = m["access"]["credentials"]
     assert cred["mode"] == "scoped" and cred["role"] == ROLE and cred["session"].startswith("alc-run-")
+    assert cred["refresh"] == "worker"  # re-issued before expiry, so the analysis is not limited to one hour
     assert m["access"]["user"] == "kim"
     policy = json.dumps(read_json(run / "logs" / "session_policy.json"))
     assert "plant=P01" in policy and "plant=P02" not in policy
