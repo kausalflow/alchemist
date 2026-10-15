@@ -10,7 +10,7 @@ This repository is the MVP of the [technical design](https://claude.ai/code/arti
 
 ## Documentation
 
-The full documentation is in [`docs/`](docs/index.md) and builds with [Zensical](https://zensical.org):
+The full documentation is at <https://kausalflow.com/alchemist/>. Its source is in [`docs/`](docs/index.md) and builds with [Zensical](https://zensical.org):
 
 ```bash
 uvx zensical serve   # preview on http://localhost:8000
