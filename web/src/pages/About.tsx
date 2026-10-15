@@ -5,52 +5,59 @@ export default function AboutPage() {
   const { meta, me } = useSession();
   if (!meta) return null;
   return (
-    <div className="narrow">
-      <h1>About this deployment</h1>
+    <div className="page">
+      <header className="page-head">
+        <div className="grow">
+          <div className="crumb">Alchemist {meta.version}</div>
+          <h1>About this deployment</h1>
+        </div>
+      </header>
+      <div className="section stack measure-wide">
+      <div className="table-wrap">
       <table className="table kv">
         <tbody>
           <tr>
-            <th>Version</th>
+            <th scope="row">Version</th>
             <td>{meta.version}</td>
           </tr>
           <tr>
-            <th>Lead model</th>
+            <th scope="row">Lead model</th>
             <td>{meta.models.scripted ? "offline demo script" : meta.models.lead}</td>
           </tr>
           <tr>
-            <th>Reviewer and card drafter</th>
+            <th scope="row">Reviewer and card drafter</th>
             <td>{meta.models.scripted ? "offline demo script" : meta.models.sub}</td>
           </tr>
           <tr>
-            <th>Providers allowed to receive plant data</th>
+            <th scope="row">Providers allowed to receive plant data</th>
             <td>{meta.models.allowed_providers.join(", ")}</td>
           </tr>
           <tr>
-            <th>Budget per step</th>
+            <th scope="row">Budget per step</th>
             <td>
               {meta.budgets.max_steps} tool calls, {meta.budgets.max_output_tokens.toLocaleString()} output tokens
             </td>
           </tr>
           <tr>
-            <th>Prompts and tools hash</th>
+            <th scope="row">Prompts and tools hash</th>
             <td>
               <code>{meta.prompts}</code>
             </td>
           </tr>
           <tr>
-            <th>Sign-in</th>
+            <th scope="row">Sign-in</th>
             <td>{meta.auth === "dev" ? "local development (pick a user)" : "corporate identity provider"}</td>
           </tr>
           <tr>
-            <th>Runs execute on</th>
+            <th scope="row">Runs execute on</th>
             <td>{meta.launcher}</td>
           </tr>
           <tr>
-            <th>Plugins</th>
+            <th scope="row">Plugins</th>
             <td>{meta.plugins.length ? meta.plugins.map((p) => (typeof p === "string" ? p : `${p.name}${p.version ? ` ${p.version}` : ""}`)).join(", ") : "none"}</td>
           </tr>
           <tr>
-            <th>You</th>
+            <th scope="row">You</th>
             <td>
               {me?.id} · plants {me?.readable_plants.join(", ")} · workspaces {me?.workspaces.join(", ")}
               {me?.admin && " · admin"}
@@ -59,7 +66,8 @@ export default function AboutPage() {
           </tr>
         </tbody>
       </table>
-      <h2>Agent tools</h2>
+      </div>
+      <h2 className="h-section">Agent tools</h2>
       <p className="muted small">The only things the agent can do. Planning tools cannot read data; analysis tools run in the sandbox.</p>
       {(["planning", "analysis"] as const).map((phase) => (
         <div key={phase}>
@@ -76,6 +84,7 @@ export default function AboutPage() {
       <p className="small">
         API reference: <a href="/api/docs">/api/docs</a> · OpenAPI: <a href="/api/openapi.json">/api/openapi.json</a>
       </p>
+      </div>
     </div>
   );
 }

@@ -1,70 +1,70 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import { SessionProvider, useSession } from "./session";
+import { WorkspaceProvider } from "./workspace";
+import Shell, { FocusLayout } from "./components/Shell";
+import BoardPage from "./pages/Board";
+import WaitingPage from "./pages/Waiting";
 import AskPage from "./pages/Ask";
-import HistoryPage from "./pages/History";
+import ReportsPage from "./pages/Reports";
 import RunPage from "./pages/Run";
 import CatalogPage from "./pages/Catalog";
 import DatasetPage from "./pages/Dataset";
-import CatalogAdminPage from "./pages/CatalogAdmin";
 import AboutPage from "./pages/About";
 import SignIn from "./pages/SignIn";
+import AdminLayout from "./pages/admin/AdminLayout";
+import AdminHome from "./pages/admin/AdminHome";
+import PlantLayout from "./pages/admin/PlantLayout";
+import PlantOverview from "./pages/admin/PlantOverview";
+import PlantData from "./pages/admin/PlantData";
+import PlantKnowledge from "./pages/admin/PlantKnowledge";
+import PlantLines from "./pages/admin/PlantLines";
+import { AccessPage, ModelsPage, WorkspacesPage } from "./pages/admin/Org";
 
 export default function App() {
   return (
     <SessionProvider>
-      <Shell />
+      <Gate />
     </SessionProvider>
   );
 }
 
-function Shell() {
-  const { me, meta, loading, signedOut, signOut } = useSession();
+function Gate() {
+  const { me, loading, signedOut } = useSession();
   if (loading && !me) return <div className="center muted">Loading…</div>;
   if (signedOut || !me) return <SignIn />;
   return (
-    <div className="app">
-      <header className="topbar">
-        <NavLink to="/" className="brand">
-          Alchemist
-        </NavLink>
-        <nav>
-          <NavLink to="/" end>
-            Ask
-          </NavLink>
-          <NavLink to="/runs">Runs</NavLink>
-          <NavLink to="/catalog">Catalog</NavLink>
-          {me.catalog_admin && <NavLink to="/catalog-admin">Catalog admin</NavLink>}
-          <NavLink to="/about">About</NavLink>
-        </nav>
-        <div className="who">
-          <span title={`Plants: ${me.readable_plants.join(", ")} · Workspaces: ${me.workspaces.join(", ")}`}>
-            {me.name}
-            <span className="muted"> · {me.global || me.admin ? "all plants" : me.readable_plants.join(", ")}</span>
-          </span>
-          {meta?.auth === "dev" && (
-            <button className="link" onClick={signOut}>
-              switch user
-            </button>
-          )}
-        </div>
-      </header>
-      {meta?.models.scripted && (
-        <div className="banner">
-          Demo mode: runs play the offline script for the demo question instead of calling a model.
-        </div>
-      )}
-      <main>
-        <Routes>
-          <Route path="/" element={<AskPage />} />
-          <Route path="/runs" element={<HistoryPage />} />
-          <Route path="/runs/:runId" element={<RunPage />} />
+    <WorkspaceProvider key={me.id}>
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+      <Routes>
+        <Route element={<Shell />}>
+          <Route path="/" element={<BoardPage />} />
+          <Route path="/waiting" element={<WaitingPage />} />
+          <Route path="/runs" element={<ReportsPage />} />
           <Route path="/catalog" element={<CatalogPage />} />
           <Route path="/catalog/:datasetId" element={<DatasetPage />} />
-          <Route path="/catalog-admin" element={<CatalogAdminPage />} />
+          <Route path="/catalog-admin" element={<Navigate to="/admin" replace />} />
           <Route path="/about" element={<AboutPage />} />
-          <Route path="*" element={<p>Page not found.</p>} />
-        </Routes>
-      </main>
-    </div>
+          <Route path="*" element={<p className="pad-page">Page not found.</p>} />
+        </Route>
+        <Route element={<FocusLayout />}>
+          <Route path="/ask" element={<AskPage />} />
+          <Route path="/runs/:runId" element={<RunPage />} />
+        </Route>
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route index element={<AdminHome />} />
+          <Route path="workspaces" element={<WorkspacesPage />} />
+          <Route path="access" element={<AccessPage />} />
+          <Route path="models" element={<ModelsPage />} />
+          <Route path="plants/:plantId" element={<PlantLayout />}>
+            <Route index element={<PlantOverview />} />
+            <Route path="data" element={<PlantData />} />
+            <Route path="knowledge" element={<PlantKnowledge />} />
+            <Route path="lines" element={<PlantLines />} />
+          </Route>
+        </Route>
+      </Routes>
+    </WorkspaceProvider>
   );
 }

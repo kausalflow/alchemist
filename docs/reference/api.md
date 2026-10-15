@@ -75,6 +75,23 @@ Reports are served with a content security policy that blocks scripts, since the
 | `GET /catalog/health` | approved version, waiting drafts, missing facts, sample checks per dataset | catalog admin |
 | `GET /catalog/suggestions` | all suggestions | catalog admin |
 
+### Admin area (plant catalogs)
+
+One catalog per plant, plus `global`, the shared catalog every plant's questions also search. Catalog admins and
+admins only.
+
+| Method and path | Does |
+| --- | --- |
+| `GET /admin/plants` | every plant (from `access.yaml` and those added here) with counts of datasets, waiting drafts, documents, overdue documents, fact tables and lines |
+| `POST /admin/plants` | add or rename a plant: `{id, name, description}`. Who may read its data is still decided by the `alc-plant-<id>` group |
+| `GET /admin/plants/{plant}` | the plant's datasets (with card status), documents, fact tables, lines and open suggestions |
+| `PUT /admin/plants/{plant}/lines` | replace the plant's lines `{lines: [{id, name, description}]}`; also writes the searchable document `LINES-<plant>` |
+| `POST /admin/plants/{plant}/preview` | `{question}`: what an agent on a question scoped to that plant would find (catalog search, knowledge search, fact tables, lines) |
+| `GET /admin/documents/{id}` | a document's details and Markdown body |
+| `POST /admin/documents` | save a document `{id?, plant, title, type, lines, review_date, content}`; an existing id gets the next version |
+| `GET /admin/facts/{name}` | a reference fact table as YAML |
+| `POST /admin/facts` | save a fact table `{name, plant, description, content}` (YAML mapping); an existing name gets the next version |
+
 ## Progress events
 
 `GET /runs/{id}/events` is a `text/event-stream`:

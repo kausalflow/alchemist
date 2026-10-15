@@ -29,6 +29,7 @@ from .. import __version__, prompts
 from ..access import AccessDenied
 from ..config import Settings, load_settings
 from ..paths import as_path, read_yaml
+from . import admin as admin_api
 from . import catalog as catalog_api
 from . import runs as runs_api
 from .deps import Me, Svc, in_workspace
@@ -71,6 +72,12 @@ def services_factory_for(settings: Settings, ttl: float | None = None):
                 return svc
             return Services(settings, access=cache["access"], knowledge=cache["knowledge"], broker=cache["broker"])
 
+    def invalidate():
+        """Rebuild the shared services on the next call (the admin area calls this after editing knowledge)."""
+        with lock:
+            cache.clear()
+
+    factory.invalidate = invalidate
     return factory
 
 
@@ -225,7 +232,7 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
     app.state.launcher = launcher
     app.state.plugins = []
 
-    for r in (core, runs_api.router, catalog_api.router):
+    for r in (core, runs_api.router, catalog_api.router, admin_api.router):
         app.include_router(r, prefix="/api")
     for name, r in plugin_routers():
         app.include_router(r, prefix=f"/api/ext/{name}")

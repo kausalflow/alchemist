@@ -2,86 +2,88 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, fileUrl, type NotebookCell, type RunDetail, type RunSummary, type Step } from "../api";
 import { useApi } from "../session";
-import { Chip, Code, Collapsible, ErrorNote, StatusChip, fmtValue, when } from "./bits";
+import { Chip, Code, Collapsible, ErrorNote, StatusChip, day, fmtValue, shortId, statusLabel, when } from "./bits";
+import Icon from "./icons";
 import StepList from "./StepList";
 
 // ------------------------------------------------------------------ answer
 
-export function AnswerTab({ run, reload }: { run: RunDetail; reload: () => void }) {
+/** Replays and reruns: how the re-executed findings compared with the original. */
+export function ResultCheck({ run }: { run: RunDetail }) {
+  const check = run.result_check?.status;
+  if (run.run.mode === "live" || !check) return null;
+  return (
+    <div className={`callout ${check.mismatches ? "warn" : "ok"}`}>
+      <strong>
+        {run.run.mode === "replay" ? "Replay on the stored snapshots" : "Rerun on current data"}: {check.compared} findings compared,{" "}
+        {check.mismatches} {check.mismatches === 1 ? "mismatch" : "mismatches"}.
+      </strong>
+      <p className="muted small">
+        {run.run.mode === "replay"
+          ? "The original notebook was re-executed in a fresh kernel on the data the original run read; every finding is compared by value."
+          : "The original notebook was re-executed against the data as it is now; a difference means the data changed."}
+      </p>
+      {!!run.manifest?.plugin_drift?.length && (
+        <p className="small warn-text">Plugins changed since the original run: {(run.manifest.plugin_drift as string[]).join("; ")}</p>
+      )}
+    </div>
+  );
+}
+
+export function FindingsTab({ run }: { run: RunDetail }) {
   const findings = run.findings ?? [];
   const [, setParams] = useSearchParams();
-  const check = run.result_check?.status;
+  const replay = run.run.mode !== "live";
   return (
-    <div>
-      {run.run.mode !== "live" && check && (
-        <div className={`card ${check.mismatches ? "warn" : "okbox"}`}>
-          <strong>
-            {run.run.mode === "replay" ? "Replay on the stored snapshots" : "Rerun on current data"}: {check.compared} findings compared,{" "}
-            {check.mismatches} {check.mismatches === 1 ? "mismatch" : "mismatches"}.
-          </strong>
-          <p className="muted small">
-            {run.run.mode === "replay"
-              ? "The original notebook was re-executed in a fresh kernel on the data the original run read; every finding is compared by value."
-              : "The original notebook was re-executed against the data as it is now; a difference means the data changed."}
-          </p>
-          {!!run.manifest?.plugin_drift?.length && (
-            <p className="small warn">
-              Plugins changed since the original run: {(run.manifest.plugin_drift as string[]).join("; ")}
-            </p>
-          )}
+    <div className="stack">
+      <ResultCheck run={run} />
+      <p className="muted small">
+        Every number in the answer is filled in from these findings, each computed in a notebook cell. Open a finding to see its cell.
+      </p>
+      {findings.length === 0 ? (
+        <p className="muted">No findings were recorded.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="table findings">
+            <thead>
+              <tr>
+                <th scope="col">Cause</th>
+                <th scope="col">Finding</th>
+                <th scope="col" className="num">
+                  Value
+                </th>
+                <th scope="col">Verdict</th>
+                <th scope="col">Confidence</th>
+                <th scope="col">Evidence</th>
+                {replay && <th scope="col">Matches original</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {findings.map((f) => (
+                <tr key={f.id}>
+                  <td className="nowrap mono accent-text">{f.hypothesis}</td>
+                  <td>{f.statement}</td>
+                  <td className="num mono nowrap">{fmtValue(f.value, f.unit)}</td>
+                  <td>
+                    <span className={`pill verdict-${f.verdict}`}>{f.verdict}</span>
+                  </td>
+                  <td>{f.confidence}</td>
+                  <td className="mono small">
+                    <button type="button" className="link chiplink" onClick={() => setParams({ tab: "notebook", cell: f.id })}>
+                      {f.id}
+                    </button>
+                    {(f.evidence ?? []).map((e) => (
+                      <Evidence key={e} run={run} id={e} />
+                    ))}
+                  </td>
+                  {replay && <td>{f.matches_original === undefined ? "" : f.matches_original ? "yes" : <strong className="bad-text">NO</strong>}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-      {run.conclusion_html ? (
-        <article className="card conclusion" dangerouslySetInnerHTML={{ __html: run.conclusion_html }} />
-      ) : (
-        run.run.mode === "live" && <p className="muted">No conclusion was written for this run.</p>
-      )}
-      <h3>Findings</h3>
-      <p className="muted small">
-        Every number in the conclusion is filled in from these findings, each computed in a notebook cell. Click a finding to see its
-        cell.
-      </p>
-      <table className="table findings">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Cause</th>
-            <th>Finding</th>
-            <th>Value</th>
-            <th>Verdict</th>
-            <th>Confidence</th>
-            <th>Evidence</th>
-            {run.run.mode !== "live" && <th>Matches original</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {findings.map((f) => (
-            <tr key={f.id}>
-              <td>
-                <button className="link" onClick={() => setParams({ tab: "notebook", cell: f.id })}>
-                  {f.id}
-                </button>
-              </td>
-              <td>{f.hypothesis}</td>
-              <td>{f.statement}</td>
-              <td className="nowrap">
-                <strong>{fmtValue(f.value, f.unit)}</strong>
-              </td>
-              <td>
-                <span className={`verdict ${f.verdict}`}>{f.verdict}</span>
-              </td>
-              <td>{f.confidence}</td>
-              <td className="small">
-                {(f.evidence ?? []).map((e) => (
-                  <Evidence key={e} run={run} id={e} />
-                ))}
-              </td>
-              {run.run.mode !== "live" && <td>{f.matches_original === undefined ? "" : f.matches_original ? "yes" : "NO"}</td>}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {run.run.mode === "live" && run.permissions?.verdict && <VerdictForm run={run} reload={reload} />}
+      {run.review && <ReviewTab run={run} />}
     </div>
   );
 }
@@ -90,7 +92,7 @@ function Evidence({ run, id }: { run: RunDetail; id: string }) {
   const [, setParams] = useSearchParams();
   if (/^q\d+$/.test(id))
     return (
-      <button className="link chiplink" onClick={() => setParams({ tab: "data", query: id })}>
+      <button type="button" className="link chiplink" onClick={() => setParams({ tab: "data", query: id })}>
         {id}
       </button>
     );
@@ -101,19 +103,27 @@ function Evidence({ run, id }: { run: RunDetail; id: string }) {
       </a>
     );
   return (
-    <button className="link chiplink" onClick={() => setParams({ tab: "knowledge" })}>
+    <button type="button" className="link chiplink" onClick={() => setParams({ tab: "plan" })}>
       {id}
     </button>
   );
 }
 
-function VerdictForm({ run, reload }: { run: RunDetail; reload: () => void }) {
-  const [verdict, setVerdict] = useState("confirmed");
+const VERDICTS = [
+  { id: "confirmed", label: "Confirm", tone: "approve" },
+  { id: "partly_confirmed", label: "Partly", tone: "outline" },
+  { id: "rejected", label: "Reject", tone: "danger" },
+];
+
+/** The owner's (or a workspace member's) judgement of the answer, kept with the run for later questions to find. */
+export function VerdictPanel({ run, reload }: { run: RunDetail; reload: () => void }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const submit = async () => {
+  const verdicts = run.verdicts ?? [];
+  const submit = async (verdict: string) => {
     setBusy(true);
+    setError(null);
     try {
       await api.post(`/runs/${run.run.run_id}/verdict`, { verdict, note });
       setNote("");
@@ -125,26 +135,35 @@ function VerdictForm({ run, reload }: { run: RunDetail; reload: () => void }) {
     }
   };
   return (
-    <section className="card">
-      <h3>Your verdict</h3>
-      <p className="muted small">Confirmed answers become past investigations that later questions can find.</p>
-      {(run.verdicts ?? []).map((v, i) => (
+    <section aria-labelledby="verdict" className="dock">
+      <h2 id="verdict" className="h-panel warn-text">
+        {verdicts.length ? "Verdicts" : "Your verdict"}
+      </h2>
+      {verdicts.map((v, i) => (
         <p key={i} className="small">
           <strong>{v.actor}</strong> {v.verdict.replace("_", " ")} · {when(v.at)}
           {v.note && <> · “{v.note}”</>}
         </p>
       ))}
-      <div className="row">
-        <select value={verdict} onChange={(e) => setVerdict(e.target.value)}>
-          <option value="confirmed">Confirmed</option>
-          <option value="partly_confirmed">Partly confirmed</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <input className="grow" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you check? (optional)" />
-        <button onClick={submit} disabled={busy}>
-          Record verdict
-        </button>
-      </div>
+      {run.permissions?.verdict && (
+        <>
+          <p className="small muted">
+            Does this answer hold up against what you know of the line? Confirmed answers become past investigations that later questions can
+            find.
+          </p>
+          <label className="field">
+            <span className="field-label">Note (optional)</span>
+            <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you check?" />
+          </label>
+          <div className="row-center">
+            {VERDICTS.map((v) => (
+              <button key={v.id} type="button" className={`${v.tone} grow-btn`} onClick={() => submit(v.id)} disabled={busy}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <ErrorNote error={error} />
     </section>
   );
@@ -152,10 +171,22 @@ function VerdictForm({ run, reload }: { run: RunDetail; reload: () => void }) {
 
 // ------------------------------------------------------------------ plan (as approved)
 
+/** Methods and plan: the plan as approved, plus the plant knowledge the agent read. */
+export function MethodsTab({ run }: { run: RunDetail }) {
+  const hasKnowledge = !!run.knowledge?.citations.length || !!run.knowledge?.structured.length;
+  return (
+    <div className="stack">
+      {run.plan ? <PlanTab run={run} /> : <p className="muted">No plan was recorded.</p>}
+      {hasKnowledge && <KnowledgeTab run={run} />}
+    </div>
+  );
+}
+
 export function PlanTab({ run }: { run: RunDetail }) {
   const p = run.plan!;
   return (
     <div>
+      <h3>Plan</h3>
       <p className="muted small">
         Plan v{p.version ?? 1}
         {p.approved_by && (
@@ -504,19 +535,18 @@ export function ReportTab({ run }: { run: RunDetail }) {
 
 // ------------------------------------------------------------------ provenance
 
-export function ProvenanceTab({ run, reload }: { run: RunDetail; reload: () => void }) {
-  const m = run.manifest!;
+type SealCheck = { ok: boolean; files?: number; problems: string[]; seal_sha256?: string };
+
+/** Start a replay (same snapshots) or rerun (current data) of a sealed run, then open it. */
+export function useReplay(run: RunDetail, reload: () => void) {
   const nav = useNavigate();
-  const [check, setCheck] = useState<{ ok: boolean; files?: number; problems: string[]; seal_sha256?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const id = run.run.run_id;
-
-  const doReplay = async (mode: "replay" | "rerun") => {
+  const start = async (mode: "replay" | "rerun") => {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<RunSummary>(`/runs/${id}:replay`, { mode });
+      const r = await api.post<RunSummary>(`/runs/${run.run.run_id}:replay`, { mode });
       nav(`/runs/${r.run_id}`);
       reload();
     } catch (e) {
@@ -525,37 +555,171 @@ export function ProvenanceTab({ run, reload }: { run: RunDetail; reload: () => v
       setBusy(false);
     }
   };
+  return { start, busy, error };
+}
+
+function useVerify(runId: string) {
+  const [check, setCheck] = useState<SealCheck | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const verify = () =>
+    api
+      .get<SealCheck>(`/runs/${runId}/verify`)
+      .then(setCheck)
+      .catch((e) => setError((e as Error).message));
+  return { check, error, verify };
+}
+
+function SealResult({ check }: { check: SealCheck | null }) {
+  if (!check) return null;
+  return (
+    <p className={`small ${check.ok ? "ok-text" : "error"}`} role="status">
+      {check.ok
+        ? `Seal verified: ${check.files} files match the SHA-256 list in SEALED.`
+        : `Verification failed: ${check.problems.slice(0, 5).join("; ")}`}
+    </p>
+  );
+}
+
+/** Side panel on a sealed run: what pins it down, and whether a replay has matched. */
+export function ReproducePanel({ run }: { run: RunDetail }) {
+  const [, setParams] = useSearchParams();
+  const { check, error, verify } = useVerify(run.run.run_id);
+  const m = run.manifest ?? {};
+  const p = run.plan;
+  const replays = (run.children ?? []).filter((c) => c.mode === "replay" && ["completed", "mismatch"].includes(c.status));
+  const lastReplay = replays[replays.length - 1];
+  const rc = run.run.mode !== "live" ? run.result_check?.status : undefined;
+  return (
+    <section aria-labelledby="prov" className="panel pad stack-sm">
+      <h2 id="prov" className="h-panel">
+        How to reproduce this
+      </h2>
+      <dl className="facts">
+        {p && (
+          <>
+            <dt>Plan</dt>
+            <dd>
+              v{p.version ?? 1}
+              {p.approved_by && `, approved by ${p.approved_by}`}
+              {p.approved_at && `, ${when(p.approved_at)}`}
+            </dd>
+          </>
+        )}
+        <dt>Data</dt>
+        <dd className="mono small">
+          {(run.queries ?? []).length} {(run.queries ?? []).length === 1 ? "snapshot" : "snapshots"}, pinned by ETag
+        </dd>
+        <dt>Code</dt>
+        <dd className="mono small">{run.has_notebook ? "notebook.ipynb" : "no notebook"}</dd>
+        {m.model && (
+          <>
+            <dt>Models</dt>
+            <dd className="mono small">
+              {m.model.lead}
+              {m.model.reviewer && ` + reviewer ${m.model.reviewer}`}
+            </dd>
+          </>
+        )}
+        <dt>Seal</dt>
+        <dd className="mono small">
+          {run.run.sealed ? (check?.seal_sha256 ? `sha256 ${check.seal_sha256.slice(0, 8)}…${check.seal_sha256.slice(-4)}` : "sealed") : "not sealed"}
+        </dd>
+      </dl>
+      {rc && (
+        <div className={`callout small ${rc.mismatches ? "warn" : "ok"}`}>
+          This {run.run.mode}: {rc.compared} findings compared, {rc.mismatches} {rc.mismatches === 1 ? "mismatch" : "mismatches"}
+        </div>
+      )}
+      {lastReplay && (
+        <div className={`callout small ${lastReplay.status === "mismatch" ? "warn" : "ok"}`}>
+          {lastReplay.status === "mismatch" ? <Icon name="alert" size={14} /> : <Icon name="check" size={14} />}
+          Replayed {day(lastReplay.created_at)}: {lastReplay.status === "mismatch" ? "values did not match" : "all values matched"}
+        </div>
+      )}
+      <div className="row-center">
+        {run.run.sealed && (
+          <button type="button" className="ghost small" onClick={verify}>
+            Verify seal
+          </button>
+        )}
+        {run.manifest && (
+          <button type="button" className="link small" onClick={() => setParams({ tab: "provenance" })}>
+            Full provenance manifest
+          </button>
+        )}
+      </div>
+      <SealResult check={check} />
+      <ErrorNote error={error} />
+    </section>
+  );
+}
+
+/** Side panel: the original run of this question and its replays and reruns. */
+export function QuestionRuns({ run }: { run: RunDetail }) {
+  const qid = run.run.question_id;
+  const { data } = useApi<RunSummary[]>(qid ? `/runs?question_id=${encodeURIComponent(qid)}` : null);
+  const runs = (data ?? (run.children ? [run.run, ...run.children] : [run.run])).slice().sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+  return (
+    <section aria-labelledby="qruns" className="panel pad stack-sm">
+      <h2 id="qruns" className="h-panel">
+        Runs of this question
+      </h2>
+      <div className="small muted">
+        Project <span className="mono">{run.run.project}</span> · workspace {run.run.workspace} · visible to its members who can read{" "}
+        <span className="mono">{run.run.plants?.join(", ") || "its plants"}</span>
+      </div>
+      <ol className="trail">
+        {runs.map((r) => (
+          <li key={r.run_id}>
+            <span className={`small ${r.mode === "live" ? "accent-text" : "muted"}`}>{r.mode === "live" ? "Original" : r.mode === "replay" ? "Replay" : "Rerun"}</span>
+            <span className="small">
+              {r.run_id === run.run.run_id ? (
+                <>this run · {statusLabel(r.status).toLowerCase()}</>
+              ) : (
+                <Link to={`/runs/${r.run_id}`}>
+                  run {shortId(r.run_id)} · {day(r.created_at)} · {statusLabel(r.status).toLowerCase()}
+                </Link>
+              )}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+export function ProvenanceTab({ run, reload }: { run: RunDetail; reload: () => void }) {
+  const m = run.manifest!;
+  const { start, busy, error } = useReplay(run, reload);
+  const { check, error: verr, verify } = useVerify(run.run.run_id);
+  const id = run.run.run_id;
 
   return (
-    <div>
-      <section className="card">
+    <div className="stack">
+      <section className="panel pad">
         <h3>Reproduce this run</h3>
         <p className="muted small">
           A replay re-executes the notebook on the stored snapshots and compares every finding; a rerun does the same on current data to
           show whether the answer still holds.
         </p>
         {run.permissions?.replay && (
-          <div className="buttons">
-            <button onClick={() => doReplay("replay")} disabled={busy}>
+          <div className="row-center">
+            <button type="button" onClick={() => start("replay")} disabled={busy}>
               Replay on snapshots
             </button>
-            <button onClick={() => doReplay("rerun")} disabled={busy}>
+            <button type="button" onClick={() => start("rerun")} disabled={busy}>
               Rerun on current data
             </button>
-            <button onClick={() => api.get<typeof check>(`/runs/${id}/verify`).then(setCheck)}>Verify seal</button>
+            <button type="button" onClick={verify}>
+              Verify seal
+            </button>
             <a className="button" href={`/api/runs/${id}/bundle`}>
               Download run folder (zip)
             </a>
           </div>
         )}
-        <ErrorNote error={error} />
-        {check && (
-          <p className={check.ok ? "ok" : "error"}>
-            {check.ok
-              ? `Seal verified: ${check.files} files match the SHA-256 list in SEALED.`
-              : `Verification failed: ${check.problems.slice(0, 5).join("; ")}`}
-          </p>
-        )}
+        <ErrorNote error={error ?? verr} />
+        <SealResult check={check} />
         {(run.children ?? []).length > 0 && (
           <>
             <h4>Replays and reruns</h4>
@@ -563,7 +727,7 @@ export function ProvenanceTab({ run, reload }: { run: RunDetail; reload: () => v
               {run.children!.map((c) => (
                 <li key={c.run_id}>
                   <Link to={`/runs/${c.run_id}`}>
-                    {c.mode} {c.run_id.slice(-8)}
+                    {c.mode} {shortId(c.run_id)}
                   </Link>{" "}
                   <StatusChip status={c.status} /> <span className="muted small">by {c.user_id} · {when(c.created_at)}</span>
                 </li>
@@ -572,53 +736,56 @@ export function ProvenanceTab({ run, reload }: { run: RunDetail; reload: () => v
           </>
         )}
       </section>
-      <table className="table kv">
-        <tbody>
-          <tr>
-            <th>Lead model</th>
-            <td>{m.model?.lead}</td>
-          </tr>
-          <tr>
-            <th>Reviewer model</th>
-            <td>{m.model?.reviewer}</td>
-          </tr>
-          <tr>
-            <th>Prompts and tools</th>
-            <td>
-              <code>{m.model?.prompts}</code>
-            </td>
-          </tr>
-          <tr>
-            <th>Python and packages</th>
-            <td className="small">
-              Python {m.environment?.python} ·{" "}
-              {Object.entries(m.environment?.packages ?? {})
-                .map(([k, v]) => `${k} ${v ?? "-"}`)
-                .join(", ")}
-            </td>
-          </tr>
-          <tr>
-            <th>Lockfile</th>
-            <td>
-              <code>{m.environment?.uv_lock_sha256?.slice(0, 16)}</code>
-            </td>
-          </tr>
-          <tr>
-            <th>Access</th>
-            <td>
-              {m.access?.user} · {m.access?.workspace}/{m.access?.project} · plants {m.access?.plants?.join(", ")}
-            </td>
-          </tr>
-          <tr>
-            <th>Budget used</th>
-            <td>{JSON.stringify(m.usage)}</td>
-          </tr>
-          <tr>
-            <th>Ended</th>
-            <td>{m.analysis_ended ?? m.planning_ended ?? m.status}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div className="table-wrap">
+        <table className="table kv">
+          <tbody>
+            <tr>
+              <th scope="row">Lead model</th>
+              <td className="mono">{m.model?.lead}</td>
+            </tr>
+            <tr>
+              <th scope="row">Reviewer model</th>
+              <td className="mono">{m.model?.reviewer}</td>
+            </tr>
+            <tr>
+              <th scope="row">Prompts and tools</th>
+              <td>
+                <code>{m.model?.prompts}</code>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Python and packages</th>
+              <td className="small mono">
+                Python {m.environment?.python} ·{" "}
+                {Object.entries(m.environment?.packages ?? {})
+                  .map(([k, v]) => `${k} ${v ?? "-"}`)
+                  .join(", ")}
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Lockfile</th>
+              <td>
+                <code>{m.environment?.uv_lock_sha256?.slice(0, 16)}</code>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Access</th>
+              <td>
+                {m.access?.user} · <span className="mono">{m.access?.workspace}/{m.access?.project}</span> · plants{" "}
+                <span className="mono">{m.access?.plants?.join(", ")}</span>
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">Budget used</th>
+              <td className="mono small">{JSON.stringify(m.usage)}</td>
+            </tr>
+            <tr>
+              <th scope="row">Ended</th>
+              <td>{m.analysis_ended ?? m.planning_ended ?? m.status}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <Collapsible title="manifest.json">
         <Code>{JSON.stringify(m, null, 2)}</Code>
       </Collapsible>

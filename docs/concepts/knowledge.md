@@ -56,6 +56,16 @@ validated_line_speed_mpm: [38, 46]
 At approval, the files for the run's plants are copied into `inputs/knowledge/<name>.json`, so code reads them with
 `alc.knowledge("line2_process")` and a replay sees exactly the same values.
 
+## Editing knowledge in the web app
+
+Catalog admins can also add and edit documents and fact tables in the web app's admin area, per plant. It writes the
+same files: a new document goes to `plants/<plant>/<ID>.md`, a new fact table to `structured/<name>.yaml`, and an
+edit keeps the file where it is, bumps `version` and records `updated_at` and `updated_by`. The previous version is
+kept under `.history/`, which search ignores. Documents and facts from plugin knowledge packs are read-only there.
+
+Documents saved there may also carry `type` (SOP, FMEA, incident report, ...) and `lines` (the lines they apply to).
+Saving a plant's lines writes a generated document, `LINES-<plant>`, so the agent finds line names and what they make.
+
 ## Documents are data
 
 Shift logs, documents and data values are treated as data, never as instructions. The agent has no write, email or web
