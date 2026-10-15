@@ -45,3 +45,7 @@ Code the agent runs can use these helpers from `alchemist.nb`, imported as `alc`
 | `alc.effect(a, b)` | difference in means, Welch's t-test p-value and Cohen's d |
 | `alc.knowledge(name)` | structured knowledge copied into the run |
 | `alc.check_results()` | compare findings with the parent run |
+| `alc.methods.<name>(...)` | an analysis method added by a plugin; `alc.methods.list()` shows them |
+
+Plugins can also add agent tools for either step; they are listed in `alchemist plugins show`, and the analysis
+step's first message names the available `alc.methods`. See [Plugins](../guides/plugins.md).

@@ -75,7 +75,7 @@ def cmd_catalog(a) -> None:
     elif a.action == "index":
         ids = [a.id] if a.id else [d["id"] for d in svc.catalog.datasets()]
         for i in ids:
-            _print(index_dataset(svc.catalog, s, i, use_model=a.use_model, force=a.force))
+            _print(index_dataset(svc.catalog, s, i, use_model=a.use_model, force=a.force, drafter=a.drafter))
     elif a.action == "show":
         _print(svc.catalog.latest_card(a.id, status=None))
     elif a.action == "approve":
@@ -172,6 +172,16 @@ def cmd_verify(a) -> None:
         sys.exit(1)
 
 
+def cmd_plugins(a) -> None:
+    from .plugins import KINDS, get_registry
+
+    reg = get_registry()
+    if a.action == "list":
+        _print(reg.summary())
+    else:
+        _print({k: {n: getattr(reg, k).provided_by(n) for n in getattr(reg, k).names()} for k in KINDS})
+
+
 def cmd_demo_run(a) -> None:
     """Whole loop offline: ask, approve, replay, verify."""
     from .run import approve, ask, replay
@@ -209,13 +219,14 @@ def main(argv=None) -> None:
     c.add_argument("--version", type=int)
     c.add_argument("--prefix")
     c.add_argument("--glob", default="*.parquet")
-    c.add_argument("--format", default="parquet")
+    c.add_argument("--format", default="parquet", help="a registered data format (see `alchemist plugins show`)")
     c.add_argument("--plant")
     c.add_argument("--metadata")
     c.add_argument("--owner")
     c.add_argument("--card-file", help="edited card JSON to approve")
     c.add_argument("--user", default="data_admin")
     c.add_argument("--use-model", action="store_true")
+    c.add_argument("--drafter", help="registered card drafter for `index` (default: heuristic, or model with --use-model)")
     c.add_argument("--force", action="store_true")
     c.set_defaults(fn=cmd_catalog)
 
@@ -256,6 +267,18 @@ def main(argv=None) -> None:
     v = sub.add_parser("verify", help="check a sealed run folder against its SEALED hashes")
     v.add_argument("run_id")
     v.set_defaults(fn=cmd_verify)
+
+    pl = sub.add_parser("plugins", help="list loaded plugins, or show every registered extension")
+    pl.add_argument("action", choices=["list", "show"], nargs="?", default="list")
+    pl.set_defaults(fn=cmd_plugins)
+
+    from .plugins import get_registry
+
+    for command in get_registry().cli_commands:
+        cp = sub.add_parser(command.name, help=f"{command.help} (plugin {get_registry().cli_commands.provided_by(command.name)})")
+        if command.add_arguments:
+            command.add_arguments(cp)
+        cp.set_defaults(fn=command.run)
 
     a = p.parse_args(argv)
     a.fn(a)

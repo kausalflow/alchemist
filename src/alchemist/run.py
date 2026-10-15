@@ -14,12 +14,13 @@ import re
 from pathlib import Path
 
 from . import prompts
-from .access import AccessDenied, AccessModel
+from .access import AccessDenied
 from .agent import Budget, Model, ToolOutput, run_loop
 from .llm import PydanticAIModel
 from .catalog import Catalog, now
 from .knowledge import Knowledge
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json
+from .plugins import get_registry
 from .report import ReportError, render
 from .sandbox import Sandbox, finding_cell, query_cell
 from .workspace import (create_question, create_run, ensure_project, seal, update_question, verify)
@@ -44,10 +45,27 @@ def environment() -> dict:
 
 class Services:
     def __init__(self, settings):
+        reg = get_registry()
         self.settings = settings
         self.catalog = Catalog(settings.db_path)
-        self.access = AccessModel.load(settings.access_file)
-        self.knowledge = Knowledge(settings.knowledge_root)
+        self.access = reg.access_providers.get(settings.access_provider).load(settings)
+        self.knowledge = Knowledge(settings.knowledge_root, packs=list(reg.knowledge_packs))
+
+
+def plugin_tools(phase: str, ctx: "RunContext") -> tuple[list, dict]:
+    """Plugin tools for a phase, and handlers bound to the run context."""
+    tools = get_registry().tools_for(phase)
+    clash = sorted({t.name for t in tools} & set(prompts.TOOLS))
+    if clash:
+        raise ValueError(f"plugin tools may not reuse built-in tool names: {clash}")
+
+    def bind(tool):
+        def handler(inp: dict) -> ToolOutput:
+            out = tool.handler(ctx, inp)
+            return out if isinstance(out, ToolOutput) else ToolOutput(str(out))
+        return handler
+
+    return tools, {t.name: bind(t) for t in tools}
 
 
 class RunContext:
@@ -79,13 +97,17 @@ class RunContext:
             return ToolOutput("No close match. Datasets available to this run:\n" + json.dumps(hits, indent=1))
         return ToolOutput(json.dumps(hits, indent=1, default=str))
 
+    def cite(self, doc: str, version: str, title: str, section: str, stale: bool = False) -> None:
+        """Add a source to the run's citations (shown in the report); plugin tools use this too."""
+        key = (doc, version, section)
+        if key not in {(c["doc"], c["version"], c["section"]) for c in self.citations}:
+            self.citations.append({"doc": doc, "version": version, "title": title, "section": section, "stale": stale})
+        write_json(self.run / "logs" / "citations.json", self.citations)
+
     def search_knowledge(self, inp: dict) -> ToolOutput:
         hits = self.svc.knowledge.search(inp["query"], self.plants)
         for h in hits:
-            key = (h["doc"], h["version"], h["section"])
-            if key not in {(c["doc"], c["version"], c["section"]) for c in self.citations}:
-                self.citations.append({k: h[k] for k in ("doc", "version", "title", "section", "stale")})
-        write_json(self.run / "logs" / "citations.json", self.citations)
+            self.cite(h["doc"], h["version"], h["title"], h["section"], h["stale"])
         return ToolOutput(json.dumps(hits, indent=1) if hits else "No matching passages.")
 
     # ---------- planning ----------
@@ -154,6 +176,12 @@ class RunContext:
         except ReportError as e:
             return ToolOutput(f"Report rejected: {e}", is_error=True)
         write_json(self.run / "logs" / "report_input.json", inp)
+        extra = []
+        for r in get_registry().report_renderers:  # plugin outputs, written before the run is sealed
+            extra += r.render(self.run, {"ctx": self.report_ctx(), "report_input": inp, "findings": self._findings(),
+                                         "queries": self._queries(), "conclusion_text": out["conclusion_text"]})
+        if extra:
+            out["extra"] = extra
         self.report_out = out
         return ToolOutput(f"Report built.\n\n{out['conclusion_text']}")
 
@@ -195,6 +223,7 @@ class RunContext:
                        "plants": sorted(self.plants)},
             "environment": environment(),
             "model": self.models,
+            "plugins": get_registry().summary(),
             "catalog": [{"dataset": k, "card_version": v["card_version"]} for k, v in sorted(views.items())],
             "knowledge": {"citations": self.citations,
                           "structured": read_json(self.run / "inputs" / "knowledge_index.json")
@@ -275,9 +304,11 @@ def ask(svc: Services, *, user: str, workspace: str, project: str, question: str
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     handlers = {"search_catalog": ctx.search_catalog, "search_knowledge": ctx.search_knowledge,
                 "submit_plan": ctx.submit_plan}
+    extra_tools, extra_handlers = plugin_tools("plan", ctx)
+    handlers.update(extra_handlers)
     first = (f"Question from {user}: {question}\nScope given by the user: {json.dumps(scope)}\n"
              f"Plants this run may read: {sorted(plants)}")
-    ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS), handlers=handlers,
+    ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS, extra_tools), handlers=handlers,
                      first_message=first, done=lambda: ctx.plan is not None, budget=budget,
                      transcript=rdir / "logs" / "plan_transcript.jsonl")
     status = "awaiting_approval" if ctx.plan else "failed"
@@ -330,11 +361,16 @@ def approve(svc: Services, run_id: str, *, user: str, plan: dict | None = None, 
                     "suggest_catalog_fix": ctx.suggest_catalog_fix,
                     "finish_analysis": lambda inp: ctx.finish_analysis(inp, reviewer),
                     "build_report": ctx.build_report}
+        extra_tools, extra_handlers = plugin_tools("analysis", ctx)
+        handlers.update(extra_handlers)
         first = (f"Question: {question['text']}\n\nApproved plan:\n{json.dumps(ctx.plan, indent=1)}\n\n"
                  f"Datasets you may query: {sorted(views)}. Structured knowledge available via alc.knowledge(name): "
                  f"{[k['name'] for k in read_json(ctx.run / 'inputs' / 'knowledge_index.json')]}.")
+        methods = get_registry().method_docs()
+        if methods:
+            first += f"\nAnalysis methods available in the kernel as alc.methods.<name>(...): {json.dumps(methods)}"
         try:
-            ended = run_loop(model, system=prompts.ANALYSIS_SYSTEM, tools=prompts.tool_list(prompts.ANALYSIS_TOOLS),
+            ended = run_loop(model, system=prompts.ANALYSIS_SYSTEM, tools=prompts.tool_list(prompts.ANALYSIS_TOOLS, extra_tools),
                              handlers=handlers, first_message=first, done=lambda: ctx.report_out is not None,
                              budget=budget, transcript=ctx.run / "logs" / "transcript.jsonl")
         finally:
@@ -404,9 +440,19 @@ def replay(svc: Services, run_id: str, *, user: str, mode: str = "replay") -> di
         if not any(c.get("metadata", {}).get("alchemist", {}).get("kind") == "check" for c in cells):
             sb.execute("alc.check_results()", kind="check")
     result_check = read_json(rdir / "work" / "result_check.json")
+    drift = plugin_drift(read_json(prun / "manifest.json").get("plugins", []), get_registry().summary())
     status = "completed" if not errors and result_check["status"]["mismatches"] == 0 else "mismatch"
     if mode == "rerun":
         status = "completed" if not errors else "failed"
     out = _finish(svc, ctx, status, usage={}, extra={"parent_run": run_id, "result_check": result_check,
-                                                     "cell_errors": errors})
+                                                     "cell_errors": errors, "plugin_drift": drift})
+    return out
+
+
+def plugin_drift(then: list[dict], now_: list[dict]) -> list[str]:
+    """Plugins added, removed or at another version since the parent run; replays report them."""
+    a = {p["name"]: p.get("version") for p in then if p["name"] != "builtin"}
+    b = {p["name"]: p.get("version") for p in now_ if p["name"] != "builtin"}
+    out = [f"{n} removed" for n in sorted(set(a) - set(b))] + [f"{n} added" for n in sorted(set(b) - set(a))]
+    out += [f"{n} {a[n]} -> {b[n]}" for n in sorted(set(a) & set(b)) if a[n] != b[n]]
     return out
