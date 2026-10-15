@@ -71,6 +71,6 @@ Governed
 
 !!! note "This is the MVP"
 
-    This repository implements the core run loop with a command line. The web app, REST API, AWS infrastructure and
-    the separate sandbox container described in the design documents are not built yet. See
+    This repository implements the core run loop, a command line, the REST API and the web app. The AWS
+    infrastructure and the separate sandbox container described in the design documents are not built yet. See
     [MVP and target design](design.md) for what is enforced where today.

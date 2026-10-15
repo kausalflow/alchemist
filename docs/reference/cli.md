@@ -14,6 +14,27 @@ printed as JSON.
 | `alchemist demo setup [--use-model] [--no-approve] [--lake URI]` | generate the synthetic plant under `ALC_HOME`, register its datasets and index them. `--use-model` drafts cards with `ALC_SUB_MODEL`; `--no-approve` leaves drafts for review; `--lake s3://...` uploads the lake there and registers it on S3 |
 | `alchemist demo run` | ask, approve, replay and verify the demo question offline, with the scripted model |
 
+## `serve`
+
+```text
+alchemist serve [--host 127.0.0.1] [--port 8000] [--scripted]
+```
+
+Runs the [REST API](api.md) under `/api` and, when `web/dist` has been built, the [web app](../guides/web-app.md) at
+`/`. `--scripted` plays the offline demo script instead of calling a model.
+
+`alchemist api` is the same command (the name the container deployment uses).
+
+## `worker`
+
+```text
+alchemist worker {plan,analyse,replay} --run-id RUN
+```
+
+Runs one step of an existing run in this process and exits: planning of a created run, the analysis of an approved
+run (report and seal included), or a replay created by the API. In AWS each step is an ECS task started by the run's
+Step Functions execution; locally the API runs the same steps on a thread pool.
+
 ## `catalog`
 
 ```text
