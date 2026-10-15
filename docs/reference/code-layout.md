@@ -21,6 +21,22 @@ src/alchemist/
     generate.py synthetic plant with a planted root cause
     script.py   the scripted investigation used by `demo run` and the tests
 tests/          pytest suite, including an end-to-end run, replay and verify
+infra/          AWS CDK app (its own pyproject), see guides/deploy-aws.md
+  app.py        entry point: `cdk synth -c env=dev` reads config/dev.yaml
+  config/       one YAML file per environment; every account-specific value lives here
+  alchemist_infra/
+    config.py        validated settings (pydantic)
+    stack.py         one stack per environment wiring the constructs below
+    network.py       VPC tiers, security groups, VPC endpoints and their policies
+    storage.py       KMS key, workspace/knowledge/web/log buckets, sealing bucket policy
+    database.py      Aurora PostgreSQL Serverless v2
+    bedrock.py       guardrail, invocation logging, model allow-list
+    services.py      ECS cluster, image, roles, task definitions, API service and ALB, broker, indexers
+    workflow.py      Step Functions run workflow
+    edge.py          CloudFront for the SPA and the API
+    observability.py alarms, CloudTrail, break-glass role
+    lambdas/broker/  per-run credential broker (boto3 only)
+  tests/        template security checks and broker tests
 ```
 
 ## How the pieces call each other

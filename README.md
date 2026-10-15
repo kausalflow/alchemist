@@ -66,6 +66,17 @@ uv run alchemist replay <run-id> --user eng_p1 --mode rerun   # same code on cur
 uv run alchemist verify <run-id>
 ```
 
+## Deploy to AWS
+
+The CDK app in [`infra/`](infra) deploys the target architecture (VPC without NAT, Aurora, ECS Fargate, Step Functions
+per run, credential broker, CloudFront and an ALB with OIDC). Every account-specific value is in
+`infra/config/<env>.yaml`; see [Deploy to AWS](docs/guides/deploy-aws.md).
+
+```bash
+cd infra && uv sync --extra dev && uv run pytest -q
+npx aws-cdk@2 synth -c env=dev --quiet   # no AWS credentials needed
+```
+
 ## How a run works
 
 1. **Plan.** The agent searches the catalog and the documents and submits a plan: metric, scope, baseline, hypotheses

@@ -49,8 +49,10 @@ flowchart TB
 ## Not in the MVP yet
 
 - Web app and REST API.
-- Step Functions orchestration and the AWS infrastructure code (CDK).
-- The separate sandbox container and the credential broker.
+- Deployment: the AWS infrastructure (CDK in `infra/`, see [Deploy to AWS](guides/deploy-aws.md)) is written and
+  synthesizes, including Step Functions orchestration and the credential broker Lambda, but has not been deployed yet.
+  The app commands it runs (`api`, `worker ...`, `sandbox serve`) are in progress.
+- The separate sandbox image.
 - pgvector search and knowledge ingestion from PDFs.
 - PDF reports.
 - Rerunning on a new scope (`rescope` mode).

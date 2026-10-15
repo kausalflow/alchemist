@@ -1,0 +1,145 @@
+# Deploy to AWS
+
+The infrastructure is an [AWS CDK](https://docs.aws.amazon.com/cdk/) app in Python under `infra/`. One stack per
+environment (`Alchemist-dev`, `Alchemist-staging`, `Alchemist-prod`) holds everything in the
+[technical design](https://claude.ai/code/artifact/22c0c2a8-5aa9-407b-9303-544974b79b6b): the VPC and endpoints,
+buckets and KMS key, Aurora PostgreSQL, the ECS services and tasks, the Step Functions run workflow, the credential
+broker, CloudFront and the ALB, and alarms.
+
+!!! note
+
+    The code is written and checked with `cdk synth` and tests, but it has not been deployed to an account yet.
+    Treat the first deployment to a dev account as part of phase 1 (Foundations) and run the S3 gate below.
+
+## What gets deployed
+
+```mermaid
+flowchart TB
+    U[Engineer's browser] --> CF[CloudFront]
+    CF -->|/| WEB[(S3: SPA)]
+    CF -->|/api/*, /oauth2/*<br/>origin header| ALB[ALB + OIDC]
+    ALB --> API[API service<br/>Fargate, app subnets]
+    API --> SF[Step Functions<br/>one execution per run]
+    SF --> PLAN[Plan task]
+    SF --> SBX[Sandbox task<br/>sandbox subnets]
+    SF --> AN[Analyse / Report tasks]
+    SF --> SEAL[Seal task]
+    PLAN & AN -->|VPC endpoint| BR[(Bedrock)]
+    AN -->|kernel port| SBX
+    SBX -->|invoke| BROKER[Broker Lambda]
+    BROKER -->|AssumeRole + session policy| RUN[run role]
+    SBX -->|run credentials| LAKE[(Lake S3)]
+    SBX --> WS[(Workspace S3, KMS)]
+    API & PLAN & AN & SEAL --> PG[(Aurora PostgreSQL<br/>data subnets)]
+```
+
+| Piece | Where it is | Notes |
+| --- | --- | --- |
+| VPC | `network.py` | public (ALB), app, sandbox and data subnets; no NAT gateway; interface endpoints for ECR, logs, Lambda, Secrets Manager, Bedrock, STS, Step Functions, ECS, KMS, CloudWatch; S3 gateway endpoint limited to Alchemist's buckets, the lake and the ECR layer bucket |
+| Buckets and key | `storage.py` | workspace, knowledge, Bedrock invocation logs (all SSE-KMS with one customer key), web (SPA), logs |
+| Database | `database.py` | Aurora PostgreSQL 17 Serverless v2, encrypted, in the data subnets |
+| Bedrock | `bedrock.py` | guardrail with a sensitive-information filter, invocation logging to the Alchemist bucket, model allow-list on roles and on the VPC endpoint |
+| Services | `services.py` | ECS cluster, image, roles, task definitions (api, orchestrator, sandbox, sealer, indexer), API service behind the ALB, broker Lambda, nightly indexers |
+| Run workflow | `workflow.py` | Prepare, Plan (waits for approval), StartSandbox, Analyse, Report, StopSandbox, Seal |
+| Edge | `edge.py` | CloudFront with the SPA and `/api/*`, `/oauth2/*` routed to the ALB; optional Route 53 records |
+| Operations | `observability.py` | alarms to an SNS topic, CloudTrail with S3 data events on the workspace bucket, optional break-glass role whose every use alarms |
+
+## How the design's rules are enforced
+
+| Rule | Enforced by |
+| --- | --- |
+| The orchestrator calls Bedrock but cannot read the lake | the orchestrator role has no lake permission and is denied `inputs/` and `work/` in run folders |
+| The sandbox reads the lake but cannot call Bedrock or the internet | no NAT; the Bedrock endpoint's security group admits only app security groups; the sandbox role can only invoke the broker |
+| A run reads only its user's plants and writes only its own folder | the broker assumes the run role with a session policy built from the run's grant |
+| Sealed runs cannot change | workspace bucket policy: only the run, orchestrator and sealer roles (and break-glass) may write in run folders; run credentials expire; no role may write `SEALED` except the sealer; optional Object Lock |
+| Only approved models | allow-listed ARNs on the roles and on the Bedrock endpoint policy |
+| Only CloudFront reaches the API | the ALB answers 403 unless the request carries the origin secret header, then authenticates with OIDC |
+
+## Prerequisites
+
+- An AWS account per environment, with Bedrock model access granted for the models you allow-list, and application
+  inference profiles for the lead and sub models in one geography.
+- Node.js 20+ for the CDK CLI (`npx aws-cdk@2`), [uv](https://docs.astral.sh/uv/), and Docker for building the image
+  (or a pushed image, see below).
+- An OIDC app in your identity provider with the callback URL `https://<domain.name>/oauth2/idpresponse` and a
+  `groups` claim carrying the `alc-plant-<code>`, `alc-global`, `alc-ws-<area>`, `alc-catalog-admin` and `alc-admin`
+  groups ([Access](../concepts/access.md)). Store its client secret in Secrets Manager under the name in
+  `oidc.client_secret_name`.
+- Two ACM certificates: one in `us-east-1` for `domain.name` (CloudFront), and one in the stack's region covering both
+  `domain.name` and `domain.api_origin_name` (ALB).
+- The data team's agreement that the lake buckets' KMS keys allow the run and indexer roles to decrypt (open
+  question 7).
+
+## Configure an environment
+
+Copy `infra/config/dev.yaml` to `infra/config/<env>.yaml` and replace every value marked `placeholder`. The file is
+validated on load, so a typo fails at synth time. The main sections:
+
+| Section | Holds |
+| --- | --- |
+| `account`, `region` | the target account and region |
+| `network` | the CIDR and zones of a new VPC, or `existing:` subnet and route-table ids of a landing-zone VPC (see `config/example-existing-vpc.yaml`) |
+| `lake` | lake bucket names, their KMS key ARNs, and `plant_prefix_template` |
+| `storage` | bucket names, versioning and Object Lock (open question 1), `work/` expiry, whether data is retained on stack deletion |
+| `oidc` | issuer, endpoints, client id, client-secret name, scope, group claim |
+| `domain` | the user-facing name, the ALB origin name, certificates, optional Route 53 zone and CloudFront prefix list |
+| `bedrock` | `lead_model`, `sub_model` (inference profile ARNs), embedding model, `allowed_model_arns`, invocation logging, guardrail |
+| `image` | empty to build from the repository `Dockerfile`, or `ecr_repository_arn` and `digest` for a scanned image |
+| `sizes`, `database`, `workflow` | task sizes, Aurora capacity, approval and analysis timeouts, the nightly index schedule |
+| `commands` | the container commands; see [Deployment contract](../reference/deployment.md) |
+| `operations` | alarm e-mail, log retention, CloudTrail, break-glass principals |
+
+!!! warning
+
+    `bedrock.invocation_logging` sets the account-wide invocation-logging configuration of the region. Turn it off
+    if other teams use Bedrock in the same account and already configure logging.
+
+## Synthesize and test
+
+```bash
+cd infra
+uv sync --extra dev
+uv run pytest -q                               # template security checks and broker tests
+npx aws-cdk@2 synth -c env=dev --quiet         # needs no AWS credentials
+npx aws-cdk@2 synth -c config=path/to/other.yaml
+```
+
+CI runs both on every pull request.
+
+## Deploy
+
+```bash
+cd infra
+npx aws-cdk@2 bootstrap aws://<account>/<region>     # once per account and region
+npx aws-cdk@2 diff   -c env=dev
+npx aws-cdk@2 deploy -c env=dev
+```
+
+After the first deployment:
+
+1. **Database.** Run the migration task once (it creates the schema and `CREATE EXTENSION vector`):
+   `aws ecs run-task --cluster <ClusterName> --task-definition <IndexerTaskDefinition> --launch-type FARGATE
+   --network-configuration ... --overrides '{"containerOverrides":[{"name":"indexer","command":["db","migrate"]}]}'`.
+   The stack outputs carry the cluster and task definition names.
+2. **DNS.** Without `domain.hosted_zone_id`, create `domain.name` as an alias to `DistributionDomain` and
+   `domain.api_origin_name` as an alias to `AlbDns`.
+3. **Alarms.** Confirm the SNS e-mail subscription if `operations.alarm_email` is set.
+4. **Gate for phase 1.** Start a run as a user of plant A only and check at S3 (CloudTrail data events) that its
+   sandbox is denied when reading a plant-B prefix.
+
+## Promote to staging and prod
+
+The same code deploys each environment from its own config file. A release reaches prod only after the benchmark
+passes in staging (technical design, Operations). Pin the image by digest (`image.ecr_repository_arn` and
+`image.digest`) in staging and prod so a manifest's image digest names exactly what ran.
+
+## Known gaps
+
+- The app side of the contract (the `api`, `worker`, `sandbox serve`, `db migrate` and `knowledge ingest` commands,
+  the broker client, Postgres) is being built in parallel; until it lands, those tasks fail at start.
+- The broker token travels in the execution input and the sandbox task's environment, so people who can read
+  execution history or describe ECS tasks can see it. It is bound to one run and expires with the grant.
+- WAF on CloudFront, Bedrock Guardrails being passed on each model call, S3 Access Grants (for lakes not split by
+  plant prefix), cross-region replication, and an alarm for writes to sealed prefixes are not in this stack yet.
+- The ALB's OIDC header is trusted because only the ALB can reach the API; verifying its signature needs the ALB public
+  key endpoint, which is on the internet.
