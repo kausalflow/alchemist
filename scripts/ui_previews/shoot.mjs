@@ -6,7 +6,9 @@
 //   OUT          where the PNGs go (default docs/assets/ui)
 
 import { chromium } from "playwright";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 const BASE = process.env.ALC_URL ?? "http://127.0.0.1:8123";
 const OUT = process.env.OUT ?? "docs/assets/ui";
@@ -49,6 +51,34 @@ function steady(text) {
 
 const real = (url) => url.replace(/01DEMO\d{20}/g, (f) => toReal.get(f) ?? f);
 
+// The app loads IBM Plex from Google Fonts. Serve the same fonts from @fontsource instead and keep everything else
+// off the network, so a screenshot does not depend on the network or on the machine's installed fonts.
+const require = createRequire(import.meta.url);
+const FONTS = [
+  ["IBM Plex Sans", "ibm-plex-sans", [400, 500, 600, 700]],
+  ["IBM Plex Mono", "ibm-plex-mono", [400, 500]],
+];
+const fontDir = (pkg) => join(dirname(require.resolve(`@fontsource/${pkg}/package.json`)), "files");
+const FONT_CSS = FONTS.flatMap(([family, pkg, weights]) =>
+  weights.flatMap((w) =>
+    ["latin", "latin-ext"].map(
+      (subset) =>
+        `@font-face{font-family:"${family}";font-style:normal;font-weight:${w};font-display:block;` +
+        `src:url(https://fonts.local/${pkg}/${pkg}-${subset}-${w}-normal.woff2) format("woff2")}`,
+    ),
+  ),
+).join("\n");
+
+async function offline(route) {
+  const url = new URL(route.request().url());
+  if (url.host === "fonts.googleapis.com") return route.fulfill({ contentType: "text/css", body: FONT_CSS });
+  if (url.host === "fonts.local") {
+    const [, pkg, file] = url.pathname.split("/");
+    return route.fulfill({ contentType: "font/woff2", body: readFileSync(join(fontDir(pkg), file)) });
+  }
+  return route.abort();
+}
+
 async function steadyRoute(route) {
   const url = real(route.request().url());
   if (url.includes("/events")) return route.continue({ url });
@@ -61,6 +91,7 @@ async function steadyRoute(route) {
 async function session(user) {
   const ctx = await browser.newContext({ viewport: VIEWPORT, reducedMotion: "reduce", locale: "en-GB", timezoneId: "UTC" });
   if (user) await ctx.addCookies([{ name: "alc_user", value: user, url: BASE }]);
+  await ctx.route((url) => !url.href.startsWith(BASE), offline);
   await ctx.route(`${BASE}/api/**`, steadyRoute);
   const page = await ctx.newPage();
   await page.clock.setFixedTime(FIXED + 10 * 60_000);

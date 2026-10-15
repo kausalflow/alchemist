@@ -28,8 +28,13 @@ The [UI tour](ui-tour.md) shows screenshots from `docs/assets/ui`. When you chan
 and commit the images that changed:
 
 ```bash
-scripts/ui_previews/run.sh      # needs uv, Node 20+ and Playwright's Chromium (npx playwright install chromium)
+scripts/ui_previews/run.sh      # needs uv, Node 20+ and Docker
 ```
+
+The browser runs in Playwright's Docker image (`mcr.microsoft.com/playwright`, the same version as the `playwright`
+package), with the app's fonts served from `@fontsource` instead of Google Fonts, so a laptop and CI produce the same
+pixels. Without Docker, `ALC_PREVIEW_DOCKER=0` uses a local Chromium; its text rendering can differ slightly, which
+marks every image as changed.
 
 The script builds the web app, sets up the demo in a temporary folder, starts `alchemist serve --scripted` on port
 8123 (`ALC_PREVIEW_PORT`) and walks it with Playwright (`scripts/ui_previews/shoot.mjs`): ask, approve the plan, a

@@ -27,10 +27,9 @@ jobs:
             web/package-lock.json
             scripts/ui_previews/package-lock.json
       - run: uv sync --locked
-      - name: Install Chromium for Playwright
-        working-directory: scripts/ui_previews
-        run: npm ci --no-audit --no-fund && npx playwright install --with-deps chromium
       - run: scripts/ui_previews/run.sh
+        env:
+          ALC_PREVIEW_DOCKER: "1"  # Playwright's image, the same renderer as a local run
       - name: Compare with the committed screenshots
         run: |
           changed="$(git status --porcelain -- docs/assets/ui)"
