@@ -57,7 +57,8 @@ def now() -> str:
 class Catalog:
     def __init__(self, db_path: str):
         # Used by one request or one run step at a time, but those may hop threads (FastAPI runs sync code in a pool).
-        self.db = sqlite3.connect(db_path, check_same_thread=False)
+        # Run steps in other tasks write here too, so wait for a lock rather than fail on "database is locked".
+        self.db = sqlite3.connect(db_path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
         try:
@@ -221,6 +222,26 @@ class Catalog:
 
     def runs(self) -> list[dict]:
         return [dict(r) for r in self.db.execute("select * from runs order by created_at")]
+
+    def transition(self, run_id: str, from_status: "str | tuple[str, ...]", to_status: str, **fields) -> bool:
+        """Move a run from one status to another in one statement; False if it was in neither `from_status`.
+
+        Two people (or a double click) acting on the same run at once: only one of them wins."""
+        froms = (from_status,) if isinstance(from_status, str) else tuple(from_status)
+        fields = {"status": to_status, "updated_at": now(), **fields}
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        cur = self.db.execute(f"update runs set {sets} where run_id = ? and status in ({', '.join('?' * len(froms))})",
+                              [*fields.values(), run_id, *froms])
+        self.db.commit()
+        return cur.rowcount == 1
+
+    def active_runs(self, statuses=("planning", "running"), user_id: str | None = None) -> list[dict]:
+        q = f"select * from runs where status in ({', '.join('?' * len(statuses))})"
+        args = list(statuses)
+        if user_id:
+            q += " and user_id = ?"
+            args.append(user_id)
+        return [dict(r) for r in self.db.execute(q + " order by created_at", args)]
 
 
 # ---------------------------------------------------------------- cards

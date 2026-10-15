@@ -113,6 +113,7 @@ def test_replay_and_verdict(client, finished):
     r = client.post(f"/api/runs/{finished}:replay", headers=h, json={"mode": "replay"})
     assert r.status_code == 201, r.text
     rep = client.get(f"/api/runs/{r.json()['run_id']}", headers=h).json()
+    assert client.get(f"/api/runs/{finished}", headers=h).json()["question"]["status"] == "completed"  # not the replay's
     assert rep["run"]["status"] == "completed" and rep["result_check"]["status"]["mismatches"] == 0
     assert any(c["run_id"] == rep["run"]["run_id"] for c in client.get(f"/api/runs/{finished}", headers=h).json()["children"])
     v = client.post(f"/api/runs/{finished}/verdict", headers=h, json={"verdict": "confirmed", "note": "matches the lab"})
@@ -126,7 +127,30 @@ def test_only_the_asker_approves(client):
     assert client.post(f"/api/runs/{rid}/plan:approve", headers=as_user("eng_p2"), json={}).status_code == 403
     bad = dict(script.PLAN, hypotheses=[dict(script.PLAN["hypotheses"][0], datasets=["historian_line5"])])
     assert client.post(f"/api/runs/{rid}/plan:approve", headers=as_user("eng_p1"), json={"plan": bad}).status_code == 422
-    assert client.post(f"/api/runs/{rid}:stop", headers=as_user("eng_p1")).status_code == 409  # waiting, not running
+    assert client.post(f"/api/runs/{rid}:stop", headers=as_user("eng_p2")).status_code == 403
+    r = client.post(f"/api/runs/{rid}:stop", headers=as_user("eng_p1"))  # waiting for approval: cancelled at once
+    assert r.status_code == 200 and r.json()["result"] == "cancelled"
+    run = client.get(f"/api/runs/{rid}", headers=as_user("eng_p1")).json()
+    assert run["run"]["status"] == "cancelled" and run["closed"]["actor"] == "eng_p1"
+    assert not run["permissions"]["stop"] and not run["permissions"]["approve"]
+    assert client.post(f"/api/runs/{rid}/plan:approve", headers=as_user("eng_p1"), json={}).status_code == 409
+
+
+def test_too_many_active_runs_is_429(client, svc):
+    from alchemist.run import cancel, create
+
+    held = create(svc, user="eng_p2", workspace="quality", project="line2-api", question="Holds a run slot",
+                  scope={})["run_id"]
+    before = svc.settings.max_active_runs
+    svc.settings.max_active_runs = len(svc.catalog.active_runs())  # full
+    try:
+        r = client.post("/api/questions", headers=as_user("eng_p1"),
+                        json={"workspace": "quality", "project": "line2-api", "question": script.QUESTION,
+                              "scope": script.SCOPE})
+        assert r.status_code == 429
+    finally:
+        svc.settings.max_active_runs = before
+        cancel(svc, held, user="eng_p2")
 
 
 def test_asking_outside_your_plants_is_refused(client):

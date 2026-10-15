@@ -4,7 +4,10 @@ Selected with ALC_LAUNCHER=alchemist.sfn_launcher:StepFunctionsLauncher. The API
 
 - plan(run_id) right after creating a run: starts the execution, which plans and then waits for approval;
 - analyse(run_id, user) right after recording the approval: releases the waiting execution;
-- replay(run_id) right after creating a replay run: starts an execution in replay mode.
+- replay(run_id) right after creating a replay run: starts an execution in replay mode;
+- cancel(run_id) after a run was cancelled while planning or waiting for approval: stops its execution;
+- reconcile() every ALC_RECONCILE_SECONDS: a run whose execution ended (a task killed or timed out, approval timed
+  out) while the database still says it is busy is closed as failed, or expired if it was waiting for approval.
 
 Approval is a task token the workflow stores at <ALC_APPROVALS><run_id>/token.json. This launcher writes
 approved.json next to it and sends the token; if the token is not stored yet (approval came before planning
@@ -39,9 +42,55 @@ class StepFunctionsLauncher:
             s3 = s3 or boto3.client("s3")
         self.sfn, self.s3 = sfn, s3
 
+    def _name(self, run_id: str, mode: str) -> str:
+        return f"{run_id}-{mode}"[:80]
+
+    def _execution_arn(self, run_id: str, mode: str) -> str:
+        # arn:aws:states:<region>:<account>:stateMachine:<name> -> ...:execution:<name>:<execution name>
+        return self.state_machine_arn.replace(":stateMachine:", ":execution:", 1) + ":" + self._name(run_id, mode)
+
     def _start(self, run_id: str, mode: str) -> None:
-        self.sfn.start_execution(stateMachineArn=self.state_machine_arn, name=f"{run_id}-{mode}"[:80],
+        self.sfn.start_execution(stateMachineArn=self.state_machine_arn, name=self._name(run_id, mode),
                                  input=json.dumps({"run_id": run_id, "mode": mode}))
+        if self.services:
+            svc = self.services()
+            try:
+                svc.catalog.audit("system", "run.launch", run_id, {"launcher": "sfn", "mode": mode})
+            finally:
+                svc.catalog.db.close()
+
+    def cancel(self, run_id: str) -> None:
+        try:
+            self.sfn.stop_execution(executionArn=self._execution_arn(run_id, "run"), cause="cancelled in Alchemist")
+        except self.sfn.exceptions.ExecutionDoesNotExist:
+            pass
+
+    def reconcile(self) -> None:
+        if not self.services:
+            return
+        from .api.jobs import last_launch
+        from .run import OPEN, end_run
+
+        svc = self.services()
+        try:
+            for row in svc.catalog.active_runs(OPEN):
+                launch = last_launch(svc, row["run_id"])
+                if not launch or launch.get("launcher") != "sfn":
+                    continue  # started some other way (the CLI): not ours to judge
+                try:
+                    ex = self.sfn.describe_execution(executionArn=self._execution_arn(row["run_id"], launch["mode"]))
+                except self.sfn.exceptions.ExecutionDoesNotExist:
+                    continue
+                if ex["status"] == "RUNNING":
+                    continue
+                why = f"workflow {ex['status'].lower()}: {ex.get('error') or ''} {ex.get('cause') or ''}".strip()
+                if row["status"] == "awaiting_approval":
+                    end_run(svc, row["run_id"], "expired", actor="system", reason=f"plan was not approved in time ({why})",
+                            from_status=("awaiting_approval",))
+                else:
+                    end_run(svc, row["run_id"], "failed", actor="system", reason=why, from_status=("planning", "running"))
+        finally:
+            svc.catalog.db.close()
 
     def plan(self, run_id: str) -> None:
         self._start(run_id, "run")

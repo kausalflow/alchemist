@@ -8,9 +8,13 @@ stateDiagram-v2
     [*] --> planning: alchemist ask
     planning --> awaiting_approval: plan submitted
     planning --> failed: no plan within budget
+    planning --> cancelled: stopped
     awaiting_approval --> running: alchemist approve
+    awaiting_approval --> cancelled: stopped
+    awaiting_approval --> expired: not approved in time (AWS)
     running --> completed: report built
-    running --> partial: budget stop or error
+    running --> partial: budget stop, stop, or error
+    running --> failed: the step died (task killed, timed out)
     completed --> [*]: sealed
     partial --> [*]: sealed
 ```
@@ -87,6 +91,38 @@ database and the audit log. `alchemist verify <run-id>` checks a folder against 
 Each step of a run has a tool-call budget (`ALC_MAX_STEPS`, default 60) and an output-token budget (`ALC_MAX_OUTPUT_TOKENS`, default
 400,000). If the analysis stops early, the run still builds a partial report from the findings recorded so far, says
 why it stopped, and is sealed with status `partial`.
+
+## Stopping, pausing and failures
+
+Stop (`POST /runs/{id}:stop`, the Stop or Cancel button) depends on where the run is:
+
+| Status | What stop does |
+| --- | --- |
+| `planning`, `awaiting_approval` | the run is `cancelled` at once; nothing was read from the lake yet. In AWS its workflow execution is stopped too |
+| `running` | the agent stops after its current step (a cell can take up to 15 minutes), builds a partial report of the findings so far and seals the run as `partial` |
+
+The only pause is the wait for plan approval: the plan waits for its owner (in AWS for up to
+`workflow.approval_timeout_days`, at no cost, then the run is `expired`). There is no pause in the middle of an
+analysis. The kernel's state and the model's conversation live in one process, so a stopped analysis is sealed as
+`partial`; to go further, ask again (the plan can reuse the earlier one) or `rerun` it.
+
+A step that dies without saying so (the API restarted under a local thread, an ECS task was killed, ran out of memory
+or hit `workflow.analysis_timeout_hours`) is closed as `failed` by the API's reconciler, which runs every
+`ALC_RECONCILE_SECONDS`. A worker that raises marks its run failed itself, so in AWS a failed task shows at once.
+
+## Many people at once
+
+Every run has its own folder, kernel and (in AWS) its own tasks and credentials, so runs do not see each other. What
+they share:
+
+- **The model quota.** All runs call the same Bedrock account. Throttled calls are retried with backoff for up to
+  `ALC_MODEL_RETRY_SECONDS` (default 300) before the step ends; ask for a quota increase before a wider rollout.
+- **Capacity and cost.** At most `ALC_MAX_ACTIVE_RUNS_PER_USER` (default 3) runs per person plan or analyse at once,
+  and `ALC_MAX_ACTIVE_RUNS` in total (default no limit); plans waiting for approval do not count. Over the limit the
+  API answers 429.
+- **The database.** Status changes are compare-and-set, so a plan approved twice (two tabs, a double click) starts
+  once, and a cancel and an approval at the same moment cannot both win. SQLite on EFS is fine for a pilot but locks
+  the whole file on each write; move to Postgres before many runs write at once.
 
 ## Replay and rerun
 

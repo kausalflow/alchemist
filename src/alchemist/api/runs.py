@@ -25,7 +25,7 @@ from .deps import Me, Svc, access_error, entitled, entitled_run, in_workspace, r
 
 router = APIRouter(tags=["runs"])
 
-TERMINAL = {"completed", "partial", "failed", "mismatch"}
+TERMINAL = {"completed", "partial", "failed", "mismatch", "cancelled", "expired"}
 
 
 # ------------------------------------------------------------------ helpers
@@ -85,6 +85,21 @@ def _launcher(request: Request):
     return request.app.state.launcher
 
 
+def _launch(svc, request: Request, run_id: str, step: str, *args) -> None:
+    """Hand a step to the launcher; if that fails, close the run instead of leaving it looking busy."""
+    from .jobs import mark_failed
+
+    try:
+        getattr(_launcher(request), step)(run_id, *args)
+    except Exception as e:
+        mark_failed(svc, run_id, f"could not start the {step} step: {type(e).__name__}: {e}")
+        raise HTTPException(503, f"could not start the run's {step} step; try again") from e
+
+
+def _limit_error(e) -> HTTPException:
+    return HTTPException(429, str(e))
+
+
 # ------------------------------------------------------------------ ask
 
 class AskBody(BaseModel):
@@ -97,14 +112,16 @@ class AskBody(BaseModel):
 @router.post("/questions", status_code=201)
 def ask(body: AskBody, svc: Svc, me: Me, request: Request) -> dict:
     """Create a question and its first run, and start planning. The plan then waits for approval."""
-    from ..run import create
+    from ..run import RunLimit, create
 
     try:
         row = create(svc, user=me.user, workspace=body.workspace, project=body.project, question=body.question,
                      scope=body.scope)
     except AccessDenied as e:
         raise access_error(e) from e
-    _launcher(request).plan(row["run_id"])
+    except RunLimit as e:
+        raise _limit_error(e) from e
+    _launch(svc, request, row["run_id"], "plan")
     return _summary(svc, me, row)
 
 
@@ -172,7 +189,8 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
         "plan": q["plan"],
         "permissions": {
             "approve": row["status"] == "awaiting_approval" and is_owner,
-            "stop": row["status"] in ("planning", "running") and (me.user.id == row["user_id"] or me.user.is_admin),
+            "stop": row["status"] in ("planning", "awaiting_approval", "running")
+            and (me.user.id == row["user_id"] or me.user.is_admin),
             "replay": bool(row["seal_sha256"]),
             "verdict": bool(row["seal_sha256"]) and in_workspace(me, row["workspace"]),
         },
@@ -193,6 +211,7 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
         "children": children,
         "verdicts": _verdicts(svc, run_id),
         "failure": _failure(svc, run_id),
+        "closed": _closed(svc, run_id),
     }
 
 
@@ -221,6 +240,12 @@ def _verdicts(svc, run_id: str) -> list[dict]:
 def _failure(svc, run_id: str) -> dict | None:
     rows = _audit(svc, run_id, "run.fail")
     return rows[-1] if rows else None
+
+
+def _closed(svc, run_id: str) -> dict | None:
+    """Why a run was cancelled or expired (who, when, reason)."""
+    rows = _audit(svc, run_id, "run.cancel") + _audit(svc, run_id, "run.expire")
+    return sorted(rows, key=lambda r: r["at"])[-1] if rows else None
 
 
 @router.get("/runs/{run_id}/steps")
@@ -340,14 +365,16 @@ async def events(run_id: str, request: Request, svc: Svc, me: Me, poll: float = 
     Progress is read from the run folder's transcripts, so it works whichever process runs the step."""
     row = entitled_run(svc, me, run_id)
     run = as_path(row["path"])
-    factory = request.app.state.services_factory
+    db_path = request.app.state.settings.db_path
 
     def snapshot_state():
-        s = factory()
+        from ..catalog import Catalog
+
+        cat = Catalog(db_path)  # only the status: cheaper than full services once a second per viewer
         try:
-            r = s.catalog.run(run_id)
+            r = cat.run(run_id)
         finally:
-            s.catalog.db.close()
+            cat.db.close()
         st = _transcript_steps(run / "logs" / "plan_transcript.jsonl")
         sa = _transcript_steps(run / "logs" / "transcript.jsonl")
         return r["status"], [("planning", x) for x in st] + [("analysis", x) for x in sa]
@@ -386,7 +413,7 @@ class ApproveBody(BaseModel):
 @router.post("/runs/{run_id}/plan:approve")
 def approve(run_id: str, body: ApproveBody, svc: Svc, me: Me, request: Request) -> dict:
     """Approve (or edit and approve) the plan; the analysis starts."""
-    from ..run import start_approval
+    from ..run import RunLimit, start_approval
 
     row = entitled_run(svc, me, run_id)
     if body.plan is not None and not body.plan.get("hypotheses"):
@@ -400,22 +427,34 @@ def approve(run_id: str, body: ApproveBody, svc: Svc, me: Me, request: Request) 
         plan = start_approval(svc, run_id, user=me.user, plan=body.plan)
     except AccessDenied as e:
         raise access_error(e) from e
+    except RunLimit as e:
+        raise _limit_error(e) from e
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
-    _launcher(request).analyse(run_id, me.user.id)
+    _launch(svc, request, run_id, "analyse", me.user.id)
     return {"run_id": run_id, "status": "running", "plan": plan}
 
 
 @router.post("/runs/{run_id}:stop")
-def stop(run_id: str, svc: Svc, me: Me) -> dict:
-    """Ask a running analysis to stop after its current step; a partial report is still built and sealed."""
-    row = entitled_run(svc, me, run_id)
-    if me.user.id != row["user_id"] and not me.user.is_admin:
-        raise HTTPException(403, "only the run's owner or an admin can stop it")
-    if row["status"] not in ("planning", "running"):
-        raise HTTPException(409, f"run is {row['status']}")
-    svc.catalog.audit(me.user.id, "run.stop", run_id)
-    return {"run_id": run_id, "stop_requested": True}
+def stop(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
+    """Stop a run. Planning or waiting for approval: it is cancelled now (nothing was read from the lake yet).
+    Analysing: it stops after its current step, and a partial report of the findings so far is built and sealed."""
+    from ..run import cancel
+
+    entitled_run(svc, me, run_id)
+    try:
+        result = cancel(svc, run_id, user=me.user)
+    except AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    if result == "cancelled":
+        try:
+            _launcher(request).cancel(run_id)
+        except Exception:  # the run is closed either way; reconcile() ends a workflow left behind
+            pass
+    return {"run_id": run_id, "stop_requested": True, "result": result,
+            "status": svc.catalog.run(run_id)["status"]}
 
 
 class ReplayBody(BaseModel):
@@ -425,15 +464,17 @@ class ReplayBody(BaseModel):
 @router.post("/runs/{run_id}:replay", status_code=201)
 def replay(run_id: str, body: ReplayBody, svc: Svc, me: Me, request: Request) -> dict:
     """A new run that re-executes this run's notebook on its snapshots (replay) or on current data (rerun)."""
-    from ..run import start_replay
+    from ..run import RunLimit, start_replay
 
     try:
         row = start_replay(svc, run_id, user=me.user, mode=body.mode)
     except AccessDenied as e:
         raise access_error(e) from e
+    except RunLimit as e:
+        raise _limit_error(e) from e
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
-    _launcher(request).replay(row["run_id"])
+    _launch(svc, request, row["run_id"], "replay")
     return _summary(svc, me, row)
 
 

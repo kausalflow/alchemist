@@ -252,10 +252,20 @@ def cmd_serve(a) -> None:
 
 def cmd_worker(a) -> None:
     """One step of a run in its own process (an ECS task started by the run's Step Functions execution)."""
+    from .api.jobs import mark_failed
+
+    svc = _svc()
+    try:
+        _worker_step(a, svc)
+    except Exception as e:  # say so in the database now, not when the API next reconciles
+        mark_failed(svc, a.run_id, e)
+        raise
+
+
+def _worker_step(a, svc) -> None:
     from .api.jobs import models, stop_requested
     from .run import analyse, execute_replay, plan
 
-    svc = _svc()
     row = svc.catalog.run(a.run_id)
     if a.step == "plan":
         model, _ = models(svc.settings, "plan")
@@ -269,8 +279,8 @@ def cmd_worker(a) -> None:
     else:
         out = execute_replay(svc, a.run_id)
     _print({k: v for k, v in out.items() if k in ("run_id", "status", "ended", "analysis_ended", "seal_sha256")})
-    if out["status"] == "failed":
-        sys.exit(1)
+    if out["status"] in ("failed", "cancelled") or (a.step == "plan" and out["status"] != "awaiting_approval"):
+        sys.exit(1)  # ends the workflow instead of waiting for an approval that cannot come
 
 
 def main(argv=None) -> None:

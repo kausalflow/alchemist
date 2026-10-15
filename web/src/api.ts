@@ -154,6 +154,7 @@ export interface RunDetail {
   children?: RunSummary[];
   verdicts?: { at: string; actor: string; verdict: string; note: string; findings: Record<string, string> }[];
   failure?: { at: string; error: string } | null;
+  closed?: { at: string; actor: string; reason: string } | null;
 }
 
 export interface Step {
@@ -194,4 +195,4 @@ export interface DatasetSummary {
   missing_facts?: string[];
 }
 
-export const TERMINAL = new Set(["completed", "partial", "failed", "mismatch"]);
+export const TERMINAL = new Set(["completed", "partial", "failed", "mismatch", "cancelled", "expired"]);

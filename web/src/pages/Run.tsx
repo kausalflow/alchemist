@@ -78,7 +78,12 @@ export default function RunPage() {
         </div>
       </div>
 
-      {run.failure && <p className="error">This run failed: {run.failure.error}</p>}
+      {r.status === "failed" && run.failure && <p className="error">This run failed: {run.failure.error}</p>}
+      {(r.status === "cancelled" || r.status === "expired") && run.closed && (
+        <p className="muted">
+          {r.status === "cancelled" ? "Cancelled" : "Expired"} {when(run.closed.at)}: {run.closed.reason}
+        </p>
+      )}
 
       {status === "planning" && (
         <section className="card">
@@ -94,7 +99,16 @@ export default function RunPage() {
       )}
 
       {status === "awaiting_approval" && run.plan && (
-        <PlanEditor run={run} onApproved={reload} />
+        <>
+          <PlanEditor run={run} onApproved={reload} />
+          {run.permissions?.stop && (
+            <p>
+              <button className="danger" onClick={stop} title="Discards the plan; nothing has been read from the data lake">
+                Cancel run
+              </button>
+            </p>
+          )}
+        </>
       )}
 
       {status === "running" && (

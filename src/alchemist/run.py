@@ -27,6 +27,14 @@ from .report import ReportError, render
 from .sandbox import Sandbox, finding_cell, query_cell
 from .workspace import (create_question, create_run, ensure_project, seal, update_question, verify)
 
+ACTIVE = ("planning", "running")  # a step is (or should be) working on the run
+OPEN = ACTIVE + ("awaiting_approval",)  # not finished yet
+
+
+class RunLimit(Exception):
+    """Too many runs planning or analysing at once (ALC_MAX_ACTIVE_RUNS_PER_USER, ALC_MAX_ACTIVE_RUNS)."""
+
+
 PACKAGES = ("duckdb", "pandas", "numpy", "scipy", "pyarrow", "matplotlib", "cloudpathlib", "anthropic", "alchemist")
 
 
@@ -303,12 +311,57 @@ class ScriptedReviewer:
 
 # ------------------------------------------------------------------ lifecycle
 
+def check_capacity(svc: Services, user: str) -> None:
+    """Refuse a new planning or analysis step while the user (or everyone together) is at the limit."""
+    s = svc.settings
+    if s.max_active_runs_per_user and len(svc.catalog.active_runs(user_id=user)) >= s.max_active_runs_per_user:
+        raise RunLimit(f"you already have {s.max_active_runs_per_user} runs planning or running; wait for one to "
+                       "finish or stop one")
+    if s.max_active_runs and len(svc.catalog.active_runs()) >= s.max_active_runs:
+        raise RunLimit(f"{s.max_active_runs} runs are planning or running already; try again when one finishes")
+
+
+def end_run(svc: Services, run_id: str, status: str, *, actor: str, reason: str,
+            from_status: tuple[str, ...] = OPEN) -> bool:
+    """Close a run that will not be sealed (cancelled, failed, expired), if it is still open. False if it was not."""
+    row = svc.catalog.run(run_id)
+    if not svc.catalog.transition(run_id, from_status, status):
+        return False
+    action = {"cancelled": "run.cancel", "expired": "run.expire"}.get(status, "run.fail")
+    svc.catalog.audit(actor, action, run_id, {"error" if action == "run.fail" else "reason": reason[:1000],
+                                              "from": row["status"]})
+    if row["mode"] == "live":
+        try:
+            update_question(as_path(row["path"]).parent.parent, status=status)
+        except (FileNotFoundError, OSError):
+            pass
+    return True
+
+
+def cancel(svc: Services, run_id: str, *, user: "str | User") -> str:
+    """Stop a run as its owner or an admin. Planning or waiting for approval: the run is cancelled at once (nothing
+    was read from the lake yet). Analysing: it stops after the current step and seals a partial report.
+    Returns what happened: "cancelled" or "stopping"."""
+    u = svc.access.resolve(user)
+    row = svc.catalog.run(run_id)
+    if u.id != row["user_id"] and not u.is_admin:
+        raise AccessDenied("only the run's owner or an admin can stop it")
+    if row["status"] not in OPEN:
+        raise ValueError(f"run {run_id} is {row['status']}")
+    svc.catalog.audit(u.id, "run.stop", run_id)  # the running step sees this between model turns
+    if row["status"] != "running" and end_run(svc, run_id, "cancelled", actor=u.id, reason=f"cancelled by {u.id}",
+                                             from_status=("planning", "awaiting_approval")):
+        return "cancelled"
+    return "stopping"
+
+
 def create(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict) -> dict:
     """Check access, create the question and run folders and index the run. Returns the run row."""
     s, acc = svc.settings, svc.access
     u = svc.access.resolve(user)
     user = u.id
     plants = acc.run_plants(u, workspace, scope.get("plants"))
+    check_capacity(svc, user)
     ensure_project(s.workspace_root, workspace, project, owner=user, plants=sorted(plants))
     qid, qdir = create_question(s.workspace_root, workspace, project, text=question, asker=user, scope=scope)
     rid, rdir = create_run(qdir)
@@ -324,6 +377,8 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     """The planning step of a created run: search, then submit a plan for approval."""
     s = svc.settings
     row = svc.catalog.run(run_id)
+    if row["status"] != "planning":  # cancelled before the step started
+        return {"run_id": run_id, "status": row["status"], "plan": None, "ended": "not planning", "path": row["path"]}
     user = row["user_id"]
     ctx = RunContext(svc, row, user=user)
     rdir = ctx.run
@@ -342,10 +397,18 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
                          transcript=rdir / "logs" / "plan_transcript.jsonl", should_stop=should_stop)
     except Exception as e:  # a model or network failure leaves a failed run, not a run stuck in planning
         ended = f"error: {type(e).__name__}: {e}"
-    status = "awaiting_approval" if ctx.plan else "failed"
-    svc.catalog.upsert_run(run_id=run_id, status=status)
-    if status == "failed":
-        update_question(ctx.qdir, status="failed")
+    if ctx.plan:
+        status = "awaiting_approval"
+        if not svc.catalog.transition(run_id, "planning", "awaiting_approval"):
+            status = svc.catalog.run(run_id)["status"]  # cancelled (or failed) while planning: keep that
+            update_question(ctx.qdir, status=status)
+    elif ended.startswith("stopped: stop requested"):
+        end_run(svc, run_id, "cancelled", actor=user, reason="stopped while planning", from_status=("planning",))
+        status = svc.catalog.run(run_id)["status"]
+    else:
+        end_run(svc, run_id, "failed", actor="system", reason=f"planning ended without a plan: {ended}",
+                from_status=("planning",))
+        status = svc.catalog.run(run_id)["status"]
     ctx.write_manifest(status, usage={"planning": budget.as_dict()}, extra={"planning_ended": ended})
     return {"run_id": run_id, "status": status, "plan": ctx.plan, "ended": ended, "path": str(rdir)}
 
@@ -373,12 +436,24 @@ def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict
     user = u.id
     if user != question["asker"] and not u.is_admin:
         raise AccessDenied("only the person who asked (or an admin) can approve the plan")
+    check_capacity(svc, row["user_id"])
+    if not svc.catalog.transition(run_id, "awaiting_approval", "running"):  # approved twice at once, or cancelled
+        raise ValueError(f"run {run_id} is {svc.catalog.run(run_id)['status']}, not awaiting approval")
+    try:
+        return _record_approval(svc, row, user, plan)
+    except Exception as e:  # the run must not look busy when nothing will run it
+        end_run(svc, run_id, "failed", actor="system", reason=f"approval failed: {type(e).__name__}: {e}",
+                from_status=("running",))
+        raise
+
+
+def _record_approval(svc: Services, row: dict, user: str, plan: dict | None) -> dict:
+    run_id = row["run_id"]
     ctx = RunContext(svc, row, user=user)
     if plan is not None:  # the user edited the plan
         ctx.plan = {**plan, "version": (ctx.plan or {}).get("version", 1) + 1}
     ctx.plan = {**ctx.plan, "approved_by": user, "approved_at": now()}
     update_question(ctx.qdir, plan=ctx.plan, status="running")
-    svc.catalog.upsert_run(run_id=run_id, status="running")
     svc.catalog.audit(user, "plan.approve", run_id)
 
     # Pin what this run may read: approved card versions for its plants, and structured knowledge.
@@ -447,7 +522,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
 
 def _finish(svc: Services, ctx: RunContext, status: str, usage: dict, extra: dict | None = None) -> dict:
     ctx.write_manifest(status, usage=usage, extra=extra)
-    update_question(ctx.qdir, status=status)
+    if ctx.row.get("mode", "live") == "live":  # replays share the question; its status is the live run's
+        update_question(ctx.qdir, status=status)
     seal_sha = seal(ctx.run, ctx.row["run_id"])
     svc.catalog.upsert_run(run_id=ctx.row["run_id"], status=status, seal_sha256=seal_sha)
     svc.catalog.audit(ctx.user_id, "run.seal", ctx.row["run_id"], {"status": status, "seal_sha256": seal_sha})
@@ -473,6 +549,7 @@ def start_replay(svc: Services, run_id: str, *, user: "str | User", mode: str = 
     plants = json.loads(parent["plants"])
     if not svc.access.can_view_run(u, parent["workspace"], plants):
         raise AccessDenied(f"{user} may not open run {run_id}")
+    check_capacity(svc, user)
     check = verify(parent["path"], parent["seal_sha256"])
     if not check["ok"]:
         raise ValueError(f"parent run failed verification: {check['problems'][:3]}")

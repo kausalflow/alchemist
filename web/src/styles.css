@@ -116,7 +116,7 @@ legend { font-size: 0.85rem; color: var(--muted); }
 }
 .chip.ok, .status-completed { background: var(--ok-bg); color: var(--ok); }
 .chip.warn, .status-awaiting_approval, .status-partial { background: var(--warn-bg); color: var(--warn); }
-.chip.bad, .status-failed, .status-mismatch { background: var(--bad-bg); color: var(--bad); }
+.chip.bad, .status-failed, .status-mismatch, .status-expired { background: var(--bad-bg); color: var(--bad); }
 .chip.info, .status-running, .status-planning { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
 .chiplink { margin-right: 0.4rem; font-size: 0.8rem; }
 
