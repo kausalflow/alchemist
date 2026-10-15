@@ -28,12 +28,48 @@ Runs the [REST API](api.md) under `/api` and, when `web/dist` has been built, th
 ## `worker`
 
 ```text
-alchemist worker {plan,analyse,replay} --run-id RUN
+alchemist worker {plan,analyse,report,seal,replay} --run-id RUN [--sandbox-task-arn ARN | --sandbox-url URL]
 ```
 
 Runs one step of an existing run in this process and exits: planning of a created run, the analysis of an approved
-run (report and seal included), or a replay created by the API. In AWS each step is an ECS task started by the run's
-Step Functions execution; locally the API runs the same steps on a thread pool.
+run, or a replay created by the API. In AWS each step is an ECS task started by the run's Step Functions execution;
+locally the API runs the same steps on a thread pool.
+
+With the default `ALC_SANDBOX_MODE=in_process` the kernel is a child of the worker, and `analyse` and `replay` also
+report and seal the run. With `ALC_SANDBOX_MODE=separate` they drive the kernel of a separate sandbox task, found by
+its ECS task ARN (`--sandbox-task-arn`, or `ALC_SANDBOX_TASK_ARN`; the worker waits for it to run and looks up its
+address in `ALC_CLUSTER_ARN` on `ALC_SANDBOX_PORT`) or given directly (`--sandbox-url`), and leave sealing to two more
+steps:
+
+| Step | Does |
+| --- | --- |
+| `report` | after `analyse`: if the analysis died before reporting, writes the manifest and, when there are findings, a partial report; otherwise does nothing |
+| `seal` | writes `SEALED` and indexes its hash; a run still marked running is marked failed. Safe to retry |
+
+## `sandbox serve`
+
+```text
+alchemist sandbox serve [--host 0.0.0.0] [--port 8888]
+```
+
+The analysis kernel as its own service, for `ALC_SANDBOX_MODE=separate`. It serves one run's kernel over a small
+HTTP API (`GET /healthz`, `POST /start`, `POST /execute`, `POST /stop`) that `worker analyse --sandbox-url` uses, and
+builds the kernel's environment itself. With `ALC_BROKER_FUNCTION` set, the kernel has no AWS keys: its AWS profile's
+`credential_process` is `alchemist broker credentials`, so boto3, cloudpathlib and DuckDB get the run's credentials
+from the broker and fetch new ones when they expire. With `ALC_RUN_ID` set it serves only that run's folder. Without
+`ALC_BROKER_FUNCTION` (a laptop) the kernel uses the ambient credentials. The API has no authentication of its own;
+in AWS only the orchestrator's security group can reach the port.
+
+## `broker credentials`
+
+```text
+alchemist broker credentials [--run-id RUN]
+```
+
+An AWS `credential_process`: invokes the broker Lambda (`ALC_BROKER_FUNCTION`) with the run id (`ALC_RUN_ID`) and its
+token (`ALC_BROKER_TOKEN`) and prints the credential-process JSON, or exits non-zero if the broker refuses. It ignores
+`AWS_PROFILE` and `AWS_CONFIG_FILE`, so it calls the Lambda with the sandbox task's own role rather than through the
+profile that runs it.
 
 ## `catalog`
 

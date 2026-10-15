@@ -23,6 +23,13 @@ class Settings:
     # Unset: the sandbox uses the process's own AWS credentials (laptops, tests).
     run_role_arn: str | None = field(default_factory=lambda: os.environ.get("ALC_RUN_ROLE_ARN") or None)
     run_credential_seconds: int = field(default_factory=lambda: int(os.environ.get("ALC_RUN_CREDENTIAL_SECONDS", "3600")))
+    # in_process: the analysis kernel is a child of the worker, which also reports and seals the run. separate: the
+    # kernel runs in its own sandbox task (`alchemist sandbox serve`) that gets data credentials from the broker
+    # Lambda; workers drive it (--sandbox-task-arn / --sandbox-url) and separate `worker report` / `worker seal`
+    # steps finish the run. The API's launcher also writes each run's broker grant in this mode.
+    sandbox_mode: str = field(default_factory=lambda: os.environ.get("ALC_SANDBOX_MODE", "in_process"))
+    # How long a run's broker grant stays valid after approval (separate mode): the analysis timeout plus slack.
+    grant_hours: int = field(default_factory=lambda: int(os.environ.get("ALC_GRANT_HOURS", "8")))
     # Which registered access provider supplies users, plant groups and workspaces ("yaml" reads access_file).
     access_provider: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS_PROVIDER", "yaml"))
     # Searchable domain documents (markdown with front matter).

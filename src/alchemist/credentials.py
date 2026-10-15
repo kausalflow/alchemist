@@ -166,3 +166,116 @@ class CredentialBroker:
         return RunCredentials(access_key_id=c["AccessKeyId"], secret_access_key=c["SecretAccessKey"],
                               session_token=c["SessionToken"], expiration=exp, role_arn=self.role_arn,
                               session_name=session, policy_sha256=hashlib.sha256(text.encode()).hexdigest())
+
+
+# ------------------------------------------------------------------ separate sandbox: grants and the broker Lambda
+#
+# With workflow.sandbox_mode = separate the orchestrator never holds data credentials. The API writes a grant for
+# each run (below); the sandbox's AWS credential_process (`alchemist broker credentials`) calls the broker Lambda
+# with the run's token, and the Lambda (infra/alchemist_infra/lambdas/broker) checks the grant and returns scoped
+# credentials. boto3 and DuckDB call the process again when the credentials expire, so a run is not limited to the
+# one hour a chained role session lasts.
+
+GRANT_SCHEMA = "alchemist.grant/v1"
+PROFILE = "alchemist-run"
+# Variables that would make boto3 or DuckDB use keys other than the broker's.
+STATIC_AWS_VARS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_DEFAULT_PROFILE",
+                   "AWS_SHARED_CREDENTIALS_FILE")
+
+
+class BrokerDenied(Exception):
+    pass
+
+
+def new_token() -> str:
+    import secrets
+
+    return secrets.token_urlsafe(32)
+
+
+def read_prefixes(read_globs: list[str]) -> list[str]:
+    """Grant read prefixes (s3://bucket/key/) for dataset globs, the same prefixes run_policy allows."""
+    by_bucket: dict[str, set[str]] = {}
+    for g in read_globs:
+        if g.startswith("s3://"):
+            bucket, key = _split(_glob_prefix(g))
+            by_bucket.setdefault(bucket, set()).add(key)
+    return [f"s3://{b}/{k}/" for b, keys in sorted(by_bucket.items()) for k in _minimal(keys)]
+
+
+def make_grant(*, run_id: str, user: str, plants: list[str], run_dir: str, read_globs: list[str], token_sha256: str,
+               expires_at: dt.datetime) -> dict:
+    """The grant the broker Lambda checks before it issues credentials for a run (alchemist.grant/v1)."""
+    run_prefix = str(run_dir).rstrip("/") + "/"
+    return {"schema": GRANT_SCHEMA, "run_id": run_id, "user": user, "plants": sorted(plants),
+            "read_prefixes": read_prefixes(read_globs), "knowledge_prefixes": [],
+            "run_prefix": run_prefix, "token_sha256": token_sha256,
+            "expires_at": expires_at.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+def token_sha256(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+class LambdaBroker:
+    """Client of the broker Lambda: turns a run id and its token into credential_process JSON."""
+
+    def __init__(self, function: str, *, region: str | None = None, client=None):
+        self.function = function
+        self.region = region
+        self._client = client
+
+    def client(self):
+        if self._client is None:
+            import boto3
+
+            self._client = boto3.client("lambda", region_name=self.region)
+        return self._client
+
+    def fetch(self, run_id: str, token: str) -> dict:
+        resp = self.client().invoke(FunctionName=self.function, InvocationType="RequestResponse",
+                                    Payload=json.dumps({"run_id": run_id, "token": token}).encode())
+        body = json.loads(resp["Payload"].read() or b"{}")
+        if resp.get("FunctionError") or "error" in body or "AccessKeyId" not in body:
+            raise BrokerDenied(f"the credential broker refused run {run_id}: {body.get('error') or body}")
+        return body
+
+    def record(self) -> dict:
+        """What the manifest keeps."""
+        return {"mode": "broker", "function": self.function}
+
+
+def credential_process(env: dict | None = None, *, broker: LambdaBroker | None = None) -> dict:
+    """Body of `alchemist broker credentials`: ask the broker for this run's credentials.
+
+    Runs as the kernel's AWS credential_process, so it must not resolve credentials through the profile that calls
+    it: the Lambda is invoked with the sandbox task's own role, which may do nothing but invoke the broker.
+    """
+    import os
+
+    env = os.environ if env is None else env
+    for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", *STATIC_AWS_VARS):
+        env.pop(k, None)
+    run_id, token = env.get("ALC_RUN_ID"), env.get("ALC_BROKER_TOKEN")
+    if not (run_id and token and (broker or env.get("ALC_BROKER_FUNCTION"))):
+        raise BrokerDenied("ALC_RUN_ID, ALC_BROKER_TOKEN and ALC_BROKER_FUNCTION must be set")
+    broker = broker or LambdaBroker(env["ALC_BROKER_FUNCTION"], region=env.get("AWS_REGION"))
+    return broker.fetch(run_id, token)
+
+
+def process_profile_env(config_dir: str, command: list[str]) -> dict[str, str | None]:
+    """Kernel environment that resolves S3 credentials only through `command` (a credential_process).
+
+    Writes an AWS config file with one profile and returns the variables pointing boto3 and DuckDB at it; None
+    removes a variable. boto3 refreshes credential_process credentials before they expire; DuckDB's secret is created
+    with `refresh auto` (paths.duckdb_s3_secret).
+    """
+    import shlex
+    from pathlib import Path
+
+    path = Path(config_dir) / "aws-config"
+    path.write_text(f"[profile {PROFILE}]\ncredential_process = {shlex.join(command)}\n")
+    path.chmod(0o600)
+    return {"AWS_CONFIG_FILE": str(path), "AWS_PROFILE": PROFILE, "AWS_SDK_LOAD_CONFIG": "1",
+            "ALC_S3_CREDENTIALS": "process", "AWS_EC2_METADATA_DISABLED": "true",
+            **{k: None for k in STATIC_AWS_VARS}}

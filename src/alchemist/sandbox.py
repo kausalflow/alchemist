@@ -2,9 +2,11 @@
 
 Every piece of code the agent runs, including each query and each finding,
 becomes a notebook cell with its outputs, saved to the run folder after every
-cell. The kernel gets the run's own scoped S3 credentials when a run role is set
-(credentials.py). In production it also runs in its own container with no
-network route to Bedrock; in the MVP it is a local process.
+cell. The kernel is either a local process (`LocalKernel`, the default; it gets
+the run's own scoped S3 credentials when a run role is set, see credentials.py)
+or runs in a separate sandbox task (`RemoteKernel`, talking to
+`alchemist sandbox serve`, see sandbox_server.py), which has no route to Bedrock
+and gets its S3 credentials from the broker.
 """
 
 from __future__ import annotations
@@ -15,6 +17,9 @@ import os
 import re
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import nbformat
@@ -55,23 +60,23 @@ class CellResult:
         return text.strip()
 
 
-class Sandbox:
-    def __init__(self, run_dir: str, *, run_mode: str = "live", seed: int = 1729, extra_env: dict | None = None):
-        self.run = as_path(run_dir)
-        self.run_mode = run_mode
-        self.seed = seed
-        env = {**os.environ, "ALC_RUN_DIR": str(self.run), "MPLBACKEND": "module://matplotlib_inline.backend_inline",
-               "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
-               **(extra_env or {})}
-        self.env = {k: v for k, v in env.items() if v is not None}  # None in extra_env removes a variable
-        self.nb = nbformat.v4.new_notebook()
-        self.nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
-        self.nb.metadata["alchemist"] = {"run_mode": run_mode}
+def kernel_env(run_dir: str, extra_env: dict | None = None, base: dict | None = None) -> dict[str, str]:
+    """Environment of a run's kernel; None in extra_env removes a variable."""
+    env = {**(os.environ if base is None else base), "ALC_RUN_DIR": str(run_dir),
+           "MPLBACKEND": "module://matplotlib_inline.backend_inline", "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1",
+           "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", **(extra_env or {})}
+    return {k: v for k, v in env.items() if v is not None}
+
+
+class LocalKernel:
+    """A Jupyter kernel in a child process of this one."""
+
+    def __init__(self, env: dict[str, str]):
+        self.env = env
         self.km: KernelManager | None = None
         self.kc = None
-        self.counter = 0
+        self.credentials: dict | None = None
 
-    # ---------- lifecycle ----------
     def start(self) -> None:
         ksm = KernelSpecManager(kernel_dirs=[_kernel_spec_dir()])
         self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, transport="ipc",
@@ -86,6 +91,85 @@ class Sandbox:
             self.kc.stop_channels()
         if self.km:
             self.km.shutdown_kernel(now=True)
+
+    def execute_interactive(self, code: str, *, output_hook, timeout: float) -> dict:
+        return self.kc.execute_interactive(code, output_hook=output_hook, timeout=timeout, allow_stdin=False)
+
+
+class SandboxUnavailable(RuntimeError):
+    pass
+
+
+class RemoteKernel:
+    """The kernel of a separate sandbox task, over `alchemist sandbox serve`'s HTTP API.
+
+    The sandbox builds the kernel's environment itself (its pseudonym key, its broker credentials); this side only
+    says which run folder, mode and seed to use.
+    """
+
+    def __init__(self, url: str, *, run_dir: str, run_mode: str, seed: int, ready_timeout: float = 600):
+        self.url = url.rstrip("/")
+        self.start_body = {"run_dir": str(run_dir), "run_mode": run_mode, "seed": seed}
+        self.ready_timeout = ready_timeout
+        self.credentials: dict | None = None
+
+    def _call(self, method: str, path: str, body: dict | None = None, timeout: float = 60) -> dict:
+        req = urllib.request.Request(self.url + path, method=method,
+                                     data=None if body is None else json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:2000]
+            raise SandboxUnavailable(f"sandbox {method} {path} failed: HTTP {e.code}: {detail}") from None
+
+    def wait_ready(self) -> None:
+        deadline, last = time.monotonic() + self.ready_timeout, None
+        while time.monotonic() < deadline:
+            try:
+                if self._call("GET", "/healthz", timeout=5).get("ok"):
+                    return
+            except (OSError, SandboxUnavailable) as e:
+                last = e
+            time.sleep(2)
+        raise SandboxUnavailable(f"sandbox at {self.url} did not become ready: {last}")
+
+    def start(self) -> None:
+        self.wait_ready()
+        self.credentials = self._call("POST", "/start", self.start_body, timeout=120).get("credentials")
+
+    def stop(self) -> None:
+        try:
+            self._call("POST", "/stop", {}, timeout=30)
+        except (OSError, SandboxUnavailable):
+            pass  # the workflow stops the task anyway
+
+    def execute_interactive(self, code: str, *, output_hook, timeout: float) -> dict:
+        out = self._call("POST", "/execute", {"code": code, "timeout": timeout}, timeout=timeout + 60)
+        for msg in out["messages"]:
+            output_hook(msg)
+        return {"content": out["reply"]}
+
+
+class Sandbox:
+    def __init__(self, run_dir: str, *, run_mode: str = "live", seed: int = 1729, extra_env: dict | None = None,
+                 kernel=None):
+        self.run = as_path(run_dir)
+        self.run_mode = run_mode
+        self.seed = seed
+        self.kernel = kernel or LocalKernel(kernel_env(str(self.run), extra_env))
+        self.nb = nbformat.v4.new_notebook()
+        self.nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
+        self.nb.metadata["alchemist"] = {"run_mode": run_mode}
+        self.counter = 0
+
+    # ---------- lifecycle ----------
+    def start(self) -> None:
+        self.kernel.start()
+
+    def stop(self) -> None:
+        self.kernel.stop()
 
     def __enter__(self):
         self.start()
@@ -147,7 +231,7 @@ class Sandbox:
                 res.outputs.append(nbformat.v4.new_output("error", ename=c["ename"], evalue=c["evalue"],
                                                           traceback=c.get("traceback", [])))
 
-        reply = self.kc.execute_interactive(code, output_hook=hook, timeout=timeout, allow_stdin=False)
+        reply = self.kernel.execute_interactive(code, output_hook=hook, timeout=timeout)
         if reply["content"].get("status") == "error" and res.error is None:
             res.error = f"{reply['content'].get('ename')}: {reply['content'].get('evalue')}"
 

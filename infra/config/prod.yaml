@@ -70,7 +70,7 @@ database:
   deletion_protection: true
 
 workflow:
-  sandbox_mode: in_process        # what the app supports today; `separate` is the target design
+  sandbox_mode: in_process        # `separate`: kernel in its own task with broker credentials (try in dev first)
   approval_timeout_days: 14
 
 operations:
