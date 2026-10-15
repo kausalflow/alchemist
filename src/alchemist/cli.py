@@ -33,12 +33,16 @@ def _model(name: str, phase: str):
     return PydanticAIModel(load_settings(), None if name in ("bedrock", "default") else name)
 
 
-def _reviewer(name: str):
+def _reviewer(name: str, spec: str | None = None):
     if name == "scripted":
         from .demo import script
         from .run import ScriptedReviewer
 
         return ScriptedReviewer(script.REVIEW)
+    if spec:
+        from .llm import PydanticAIModel
+
+        return PydanticAIModel(load_settings(), spec, effort="medium")
     return None
 
 
@@ -107,7 +111,7 @@ def cmd_ask(a) -> None:
     if out["plan"]:
         _print(out["plan"])
     if a.auto_approve and out["status"] == "awaiting_approval":
-        res = approve(svc, out["run_id"], user=a.user, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model))
+        res = approve(svc, out["run_id"], user=a.user, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model, a.reviewer_model))
         _report(res)
     elif out["status"] == "awaiting_approval":
         print(f"\nReview the plan, then: alchemist approve {out['run_id']} --user {a.user}")
@@ -117,7 +121,7 @@ def cmd_approve(a) -> None:
     from .run import approve
 
     plan = json.loads(Path(a.plan_file).read_text()) if a.plan_file else None
-    res = approve(_svc(), a.run_id, user=a.user, plan=plan, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model))
+    res = approve(_svc(), a.run_id, user=a.user, plan=plan, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model, a.reviewer_model))
     _report(res)
 
 
@@ -224,12 +228,14 @@ def main(argv=None) -> None:
     k.add_argument("--scope", help='JSON, e.g. {"line": "L2", "period": ["2026-08-03", "2026-08-09"]}')
     k.add_argument("--model", default="default",
                    help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
+    k.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default ALC_SUB_MODEL")
     k.add_argument("--auto-approve", action="store_true")
     k.set_defaults(fn=cmd_ask)
 
     ap = sub.add_parser("approve", help="approve (optionally edit) a plan and run the analysis")
     ap.add_argument("run_id")
     ap.add_argument("--user", required=True)
+    ap.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default ALC_SUB_MODEL")
     ap.add_argument("--plan-file", help="edited plan JSON")
     ap.add_argument("--model", default="default",
                    help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default ALC_LEAD_MODEL")

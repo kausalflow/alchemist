@@ -38,6 +38,7 @@ export ALC_LEAD_MODEL=bedrock:anthropic.claude-opus-5-5   # plans and analyses
 export ALC_SUB_MODEL=bedrock:anthropic.claude-sonnet-5-5  # reviewer and catalog-card drafter
 export ALC_ALLOWED_PROVIDERS=bedrock                      # default; plant data goes only to listed providers
 alchemist ask "..." --model google-gla:gemini-3-pro ...   # per-run override (provider must be allowed)
+alchemist ask ... --reviewer-model openai:gpt-5           # review with a different provider than the lead
 ```
 
 Because plant data is private, any provider other than Bedrock is refused until it is added to `ALC_ALLOWED_PROVIDERS`
