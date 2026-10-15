@@ -44,12 +44,15 @@ def environment() -> dict:
 
 
 class Services:
-    def __init__(self, settings):
+    """The backends a run uses. Each can be replaced by passing another implementation (a plugin):
+    `access` needs resolve/user_from_claims/run_plants/can_view_run, `broker` needs issue() (credentials.Broker)."""
+
+    def __init__(self, settings, *, catalog=None, access=None, knowledge=None, broker=None):
         self.settings = settings
-        self.catalog = Catalog(settings.db_path)
-        self.access = AccessModel.load(settings.access_file)
-        self.knowledge = Knowledge(settings.knowledge_root)
-        self.broker = CredentialBroker.from_settings(settings)
+        self.catalog = catalog or Catalog(settings.db_path)
+        self.access = access or AccessModel.load(settings.access_file)
+        self.knowledge = knowledge or Knowledge(settings.knowledge_root)
+        self.broker = broker or CredentialBroker.from_settings(settings)
 
     def sandbox_env(self, ctx: "RunContext", views: dict) -> dict:
         """Kernel environment: the pseudonym key, and the run's own S3 credentials when a run role is set."""

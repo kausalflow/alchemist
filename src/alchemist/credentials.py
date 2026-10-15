@@ -20,6 +20,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import Protocol
 from urllib.parse import urlparse
 
 # STS limit on the packed session policy; the JSON text is a close, conservative proxy.
@@ -107,6 +108,13 @@ def run_policy(run_dir: str, read_globs: list[str]) -> dict:
 def _tag(value: str, limit: int = 256) -> str:
     """STS tag values and session names allow letters, digits, spaces and _.:/=+-@ only."""
     return re.sub(r"[^\w .:/=+@-]", "_", value)[:limit]
+
+
+class Broker(Protocol):
+    """What run.py needs from a credential broker; another implementation (e.g. a broker service) can replace STS."""
+
+    def issue(self, *, run_id: str, user_id: str, workspace: str, run_dir: str, read_globs: list[str],
+              policy_out=None) -> RunCredentials | None: ...
 
 
 class CredentialBroker:
