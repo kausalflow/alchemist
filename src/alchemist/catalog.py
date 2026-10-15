@@ -5,47 +5,21 @@ its owner likes. The catalog registers datasets (admins), drafts a standard
 catalog card from each metadata file plus a data sample (a model, or a
 heuristic offline), and only approved cards are searchable and queryable.
 
-SQLite in the MVP; the tables map one to one onto the Aurora PostgreSQL schema
-in the technical design.
+Stored in the app database (`db.py`): SQLite locally, Aurora PostgreSQL on AWS.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import time
 from typing import Any
 
 import duckdb
 
+from .db import connect
 from .paths import as_path, expand_glob, object_info
 from .plugins import DraftRequest, get_registry
-
-SCHEMA = """
-create table if not exists datasets (
-  id text primary key, name text, s3_prefix text not null, file_glob text not null,
-  metadata_uri text, file_format text not null, plant text not null, sensitivity text,
-  owner text, status text not null default 'active', created_by text, created_at text
-);
-create table if not exists catalog_cards (
-  dataset_id text not null, version integer not null, card text not null, source_etag text,
-  drafted_by text, status text not null, checks text, reviewed_by text, reviewed_at text,
-  created_at text, primary key (dataset_id, version)
-);
-create table if not exists suggestions (
-  id integer primary key autoincrement, dataset_id text, raised_by text, kind text, text text,
-  status text default 'open', created_at text
-);
-create table if not exists runs (
-  run_id text primary key, question_id text, project text, workspace text, user_id text,
-  path text not null, mode text, parent_run text, status text, plants text, seal_sha256 text,
-  created_at text, updated_at text
-);
-create table if not exists audit_events (
-  id integer primary key autoincrement, at text, actor text, action text, target text, detail text
-);
-"""
 
 EXPOSURES = ("model", "pseudonymise", "never_to_model")
 
@@ -56,17 +30,9 @@ def now() -> str:
 
 class Catalog:
     def __init__(self, db_path: str):
-        # Used by one request or one run step at a time, but those may hop threads (FastAPI runs sync code in a pool).
-        # Run steps in other tasks write here too, so wait for a lock rather than fail on "database is locked".
-        self.db = sqlite3.connect(db_path, check_same_thread=False, timeout=30)
-        self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
-        try:
-            self.db.execute("create virtual table if not exists card_search using fts5(dataset_id, version, body)")
-            self.fts = True
-        except sqlite3.OperationalError:
-            self.fts = False
-        self.db.commit()
+        """`db_path` is a SQLite file path or a PostgreSQL URL (see db.database_url)."""
+        self.db = connect(db_path)
+        self.fts = self.db.fts
 
     # ---------- audit ----------
     def audit(self, actor: str, action: str, target: str, detail: Any = None) -> None:
@@ -81,9 +47,12 @@ class Catalog:
         formats = get_registry().data_formats
         if file_format not in formats:
             raise ValueError(f"file_format must be one of {', '.join(formats.names())}")
+        cols = ("name", "s3_prefix", "file_glob", "metadata_uri", "file_format", "plant", "sensitivity", "owner",
+                "status", "created_by", "created_at")
         self.db.execute(
-            "insert or replace into datasets(id, name, s3_prefix, file_glob, metadata_uri, file_format, plant,"
-            " sensitivity, owner, status, created_by, created_at) values (?,?,?,?,?,?,?,?,?, 'active', ?, ?)",
+            "insert into datasets(id, name, s3_prefix, file_glob, metadata_uri, file_format, plant,"
+            " sensitivity, owner, status, created_by, created_at) values (?,?,?,?,?,?,?,?,?, 'active', ?, ?)"
+            " on conflict (id) do update set " + ", ".join(f"{c} = excluded.{c}" for c in cols),
             (id, name or id, s3_prefix.rstrip("/"), file_glob, metadata_uri, file_format, plant, sensitivity,
              owner, actor, now()))
         self.db.commit()
@@ -125,9 +94,9 @@ class Catalog:
         return [dict(r) for r in self.db.execute(q + " order by dataset_id, version", args)]
 
     def add_draft(self, dataset_id: str, card: dict, source_etag: str, drafted_by: str, checks: list) -> int:
-        row = self.db.execute("select coalesce(max(version), 0) from catalog_cards where dataset_id = ?",
+        row = self.db.execute("select coalesce(max(version), 0) as v from catalog_cards where dataset_id = ?",
                               (dataset_id,)).fetchone()
-        version = row[0] + 1
+        version = row["v"] + 1
         self.db.execute(
             "insert into catalog_cards(dataset_id, version, card, source_etag, drafted_by, status, checks, created_at)"
             " values (?,?,?,?,?, 'draft', ?, ?)",
@@ -138,19 +107,20 @@ class Catalog:
     def approve(self, dataset_id: str, version: int, reviewer: str, card: dict | None = None) -> None:
         if card is not None:
             validate_card(card)
-            self.db.execute("update catalog_cards set card = ? where dataset_id = ? and version = ? and status = 'draft'",
-                            (json.dumps(card), dataset_id, version))
-        cur = self.db.execute(
-            "update catalog_cards set status = 'approved', reviewed_by = ?, reviewed_at = ?"
-            " where dataset_id = ? and version = ? and status = 'draft'", (reviewer, now(), dataset_id, version))
-        if cur.rowcount != 1:
-            raise ValueError(f"no draft {dataset_id}@{version}")
-        approved = self.latest_card(dataset_id)
-        if self.fts:
-            self.db.execute("delete from card_search where dataset_id = ?", (dataset_id,))
-            self.db.execute("insert into card_search(dataset_id, version, body) values (?,?,?)",
-                            (dataset_id, version, card_text(dataset_id, approved["card"])))
-        self.db.commit()
+        with self.db.transaction():
+            if card is not None:
+                self.db.execute("update catalog_cards set card = ? where dataset_id = ? and version = ? and status = 'draft'",
+                                (json.dumps(card), dataset_id, version))
+            cur = self.db.execute(
+                "update catalog_cards set status = 'approved', reviewed_by = ?, reviewed_at = ?"
+                " where dataset_id = ? and version = ? and status = 'draft'", (reviewer, now(), dataset_id, version))
+            if cur.rowcount != 1:
+                raise ValueError(f"no draft {dataset_id}@{version}")
+            approved = self.latest_card(dataset_id)
+            if self.fts:
+                self.db.execute("delete from card_search where dataset_id = ?", (dataset_id,))
+                self.db.execute("insert into card_search(dataset_id, version, body) values (?,?,?)",
+                                (dataset_id, version, card_text(dataset_id, approved["card"])))
         self.audit(reviewer, "card.approve", f"{dataset_id}@{version}")
 
     def reject(self, dataset_id: str, version: int, reviewer: str) -> None:
@@ -178,10 +148,16 @@ class Catalog:
         scores: dict[str, float] = {}
         words = [w for w in re.findall(r"[A-Za-z0-9_]+", text.lower()) if len(w) > 1]
         if self.fts and words:
-            q = " OR ".join(f'"{w}"' for w in words)
-            for r in self.db.execute("select dataset_id, bm25(card_search) as s from card_search where card_search match ?", (q,)):
+            if self.db.dialect == "postgres":
+                rows = self.db.execute("select dataset_id, ts_rank(tsv, q) as s from card_search,"
+                                       " websearch_to_tsquery('english', ?) q where tsv @@ q", (" or ".join(words),))
+            else:
+                q = " OR ".join(f'"{w}"' for w in words)
+                rows = self.db.execute("select dataset_id, -bm25(card_search) as s from card_search"
+                                       " where card_search match ?", (q,))
+            for r in rows:
                 if r["dataset_id"] in allowed:
-                    scores[r["dataset_id"]] = -r["s"]
+                    scores[r["dataset_id"]] = r["s"]
         if not scores:  # fall back to word overlap
             for ds_id, d in allowed.items():
                 body = card_text(ds_id, d["card"]).lower()
@@ -193,25 +169,25 @@ class Catalog:
 
     # ---------- suggestions ----------
     def suggest(self, dataset_id: str, raised_by: str, kind: str, text: str) -> int:
-        cur = self.db.execute("insert into suggestions(dataset_id, raised_by, kind, text, created_at) values (?,?,?,?,?)",
-                              (dataset_id, raised_by, kind, text, now()))
+        row = self.db.execute("insert into suggestions(dataset_id, raised_by, kind, text, created_at)"
+                              " values (?,?,?,?,?) returning id", (dataset_id, raised_by, kind, text, now())).fetchone()
         self.db.commit()
-        return cur.lastrowid
+        return row["id"]
 
     def suggestions(self) -> list[dict]:
         return [dict(r) for r in self.db.execute("select * from suggestions order by id")]
 
     # ---------- runs index ----------
     def upsert_run(self, **row) -> None:
+        """Update the given fields of a run, or insert it if it is new (then `path` is required)."""
         row.setdefault("updated_at", now())
-        existing = self.db.execute("select run_id from runs where run_id = ?", (row["run_id"],)).fetchone()
-        if existing:
-            sets = ", ".join(f"{k} = ?" for k in row if k != "run_id")
-            self.db.execute(f"update runs set {sets} where run_id = ?", [*[row[k] for k in row if k != "run_id"], row["run_id"]])
-        else:
+        sets = [k for k in row if k != "run_id"]
+        cur = self.db.execute(f"update runs set {', '.join(f'{k} = ?' for k in sets)} where run_id = ?",
+                              [*[row[k] for k in sets], row["run_id"]])
+        if cur.rowcount == 0:
             row.setdefault("created_at", now())
-            cols = ", ".join(row)
-            self.db.execute(f"insert into runs({cols}) values ({', '.join('?' * len(row))})", list(row.values()))
+            self.db.execute(f"insert into runs({', '.join(row)}) values ({', '.join('?' * len(row))})",
+                            list(row.values()))
         self.db.commit()
 
     def run(self, run_id: str) -> dict:

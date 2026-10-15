@@ -27,7 +27,7 @@ flowchart TB
     AN -->|AssumeRole + session policy| RUN[run role]
     AN -->|run credentials| LAKE[(Lake S3)]
     AN --> WS[(Workspace S3, KMS)]
-    API & PLAN & AN --> FS[(EFS: shared SQLite index)]
+    API & PLAN & AN --> DB[(Aurora PostgreSQL)]
 ```
 
 With `workflow.sandbox_mode: separate`, the analyse task drives a sandbox task in the sandbox subnets instead, and only
@@ -38,7 +38,7 @@ the sandbox gets data credentials, from the broker Lambda (refreshed as they exp
 | --- | --- | --- |
 | VPC | `network.py` | public (ALB), api, app, sandbox and data subnets; one NAT gateway routed only from the api subnets (`network.api_egress`); interface endpoints for ECR, logs, Lambda, Secrets Manager, Bedrock, STS, Step Functions, ECS, KMS, CloudWatch; S3 gateway endpoint limited to Alchemist's buckets, the lake and the ECR layer bucket |
 | Buckets and key | `storage.py` | workspace, knowledge, Bedrock invocation logs (all SSE-KMS with one customer key), web (SPA), logs |
-| Database | `database.py`, `services.py` | Aurora PostgreSQL 17 Serverless v2, encrypted, in the data subnets, for when the app moves its index there; until then the SQLite index is shared on encrypted EFS (`storage.shared_sqlite`) |
+| Database | `database.py`, `services.py` | Aurora PostgreSQL 17 Serverless v2, encrypted, in the data subnets: the catalog, run index and audit log, shared by every API and worker task; only their security groups reach port 5432 |
 | Bedrock | `bedrock.py` | guardrail with a sensitive-information filter, invocation logging to the Alchemist bucket, model allow-list on roles and on the VPC endpoint |
 | Services | `services.py` | ECS cluster, image, roles, task definitions (api, orchestrator, sandbox, sealer, indexer), API service behind the ALB, broker Lambda, nightly indexers |
 | Run workflow | `workflow.py` | run: Plan, WaitForApproval, Analyse (or the separate-sandbox steps); replay: Replay; plus the approval function |
@@ -187,15 +187,15 @@ passes in staging (technical design, Operations). Pin the image by digest (`imag
 ## Known gaps
 
 - The default deployment keeps the kernel inside the analyse task; `sandbox_mode: separate` is built but has not run
-  in an AWS account yet, so try it in dev first. The index is SQLite on EFS: Aurora needs Postgres support in the app,
-  and `knowledge ingest` is not a command yet, so that nightly schedule fails until it is.
+  in an AWS account yet, so try it in dev first. `knowledge ingest` is not a command yet, so that nightly schedule fails until it is.
 - The broker token travels in the execution input and the sandbox task's environment, so people who can read
   execution history or describe ECS tasks (the orchestrator role can) can see it. Only the sandbox role may invoke the
   broker, and the token is bound to one run and expires with the grant.
 - The sandbox's kernel API has no authentication of its own; only the orchestrator's security group reaches it.
 - WAF on CloudFront, Bedrock Guardrails being passed on each model call, S3 Access Grants (for lakes not split by
   plant prefix), cross-region replication, and an alarm for writes to sealed prefixes are not in this stack yet.
-- SQLite on EFS locks unreliably with several concurrent writers, so the stack runs one API task while
-  `storage.shared_sqlite` is on (more is refused) and the pilot should keep runs few at a time. Postgres removes this.
+- The app connects to Aurora as the cluster's admin user with a password, over TLS (`sslmode=require`, without
+  verifying the RDS certificate). A least-privilege app role, IAM database authentication and `verify-full` with the
+  RDS CA bundle are not in this stack yet.
 - The NAT gives the API task general HTTPS egress, not only to the ALB key endpoint. An egress proxy or AWS Network
   Firewall with a domain allow-list would narrow it to `public-keys.auth.elb.<region>.amazonaws.com`.

@@ -5,7 +5,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-RUN uv sync --locked --no-dev && useradd -m alchemist
+RUN uv sync --locked --no-dev && useradd -m alchemist && mkdir -p /data && chown alchemist /data
 # Plugins (docs/guides/plugins.md) installed next to alchemist, e.g. --build-arg EXTRA_PACKAGES="acme-alchemist==1.2.0".
 # Paths are relative to the build context (the repository root). The infrastructure sets this from plugins.packages.
 ARG EXTRA_PACKAGES=""

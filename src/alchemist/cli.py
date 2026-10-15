@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 from .catalog import index_dataset
-from .config import load_settings
+from .config import _home, load_settings
+from .db import is_postgres
 from .paths import as_path, copy_tree, read_yaml
 
 
@@ -62,7 +63,7 @@ def cmd_demo_setup(a) -> None:
     from .demo.generate import generate
 
     s = load_settings()
-    home = Path(s.db_path).parent
+    home = Path(_home()) if is_postgres(s.db_path) else Path(s.db_path).parent
     datasets = generate(home)
     if a.lake:
         # Put the demo lake on S3 (or any cloudpathlib location) and register it there.
@@ -331,6 +332,18 @@ def _worker_step(a, svc) -> None:
         sys.exit(1)  # ends the workflow instead of waiting for an approval that cannot come
 
 
+def cmd_db(a) -> None:
+    from .db import LATEST, connect
+
+    s = load_settings()
+    db = connect(s.db_path)  # opening applies any pending migrations
+    try:
+        version = db.execute("select max(version) as v from schema_migrations").fetchone()["v"]
+    finally:
+        db.close()
+    print(f"{db.dialect} database at schema version {version} (latest {LATEST})")
+
+
 def cmd_sandbox(a) -> None:
     from .sandbox_server import serve
 
@@ -441,6 +454,10 @@ def main(argv=None) -> None:
     w.add_argument("--sandbox-task-arn", help="analyse/replay on this separate sandbox task (ECS); default ALC_SANDBOX_TASK_ARN")
     w.add_argument("--sandbox-url", help="analyse/replay on the sandbox kernel API at this address")
     w.set_defaults(fn=cmd_worker)
+
+    dbp = sub.add_parser("db", help="the app database (SQLite file or PostgreSQL)")
+    dbsub = dbp.add_subparsers(dest="db_cmd", required=True)
+    dbsub.add_parser("migrate", help="apply pending schema migrations and print the schema version").set_defaults(fn=cmd_db)
 
     sb = sub.add_parser("sandbox", help="the analysis kernel as its own service (separate sandbox mode)")
     sbsub = sb.add_subparsers(dest="sandbox_cmd", required=True)

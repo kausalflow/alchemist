@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .db import database_url, is_postgres
+
 
 def _home(*parts: str) -> str:
     return str(Path(os.environ.get("ALC_HOME", "./alchemist-home")).joinpath(*parts))
@@ -15,8 +17,9 @@ def _home(*parts: str) -> str:
 class Settings:
     # Root of the workspace store: s3://alchemist-workspace in production, a folder locally.
     workspace_root: str = field(default_factory=lambda: os.environ.get("ALC_WORKSPACE") or _home("workspace"))
-    # Catalog / index database (SQLite in the MVP; Aurora PostgreSQL in the target design).
-    db_path: str = field(default_factory=lambda: os.environ.get("ALC_DB") or _home("alchemist.db"))
+    # App database (catalog, run index, audit): a SQLite file locally, or a postgresql:// URL (Aurora on AWS, built
+    # from ALC_DB_HOST/PORT/NAME/USER when ALC_DB is unset; the password comes from ALC_DB_PASSWORD).
+    db_path: str = field(default_factory=lambda: database_url() or _home("alchemist.db"))
     # Plants, workspaces and how identity-provider groups map to them; may also list local users (fallback).
     access_file: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS") or _home("access.yaml"))
     # Role the credential broker assumes once per run, narrowed by a session policy to the run's data and folder.
@@ -55,8 +58,8 @@ class Settings:
     seed: int = 1729
 
     def ensure_local_dirs(self) -> None:
-        for p in (self.db_path,):
-            Path(p).parent.mkdir(parents=True, exist_ok=True)
+        if not is_postgres(self.db_path):
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         if "://" not in self.workspace_root:
             Path(self.workspace_root).mkdir(parents=True, exist_ok=True)
 

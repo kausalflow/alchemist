@@ -19,7 +19,6 @@ lake:
 storage:
   workspace_versioning: false     # open question 1 in the technical design
   work_expiry_days: 90
-  shared_sqlite: true             # the app's index is SQLite today; shared on EFS until Postgres
   retain_data: true
 
 oidc:                             # placeholder: your identity provider's OIDC app

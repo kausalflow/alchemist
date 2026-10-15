@@ -117,7 +117,11 @@ class LocalLauncher:
                 from ..run import interrupted
 
                 log.error("run %s step failed:\n%s", run_id, traceback.format_exc())
-                interrupted(self.services(), run_id, f"{type(e).__name__}: {e}")
+                svc = self.services()
+                try:
+                    interrupted(svc, run_id, f"{type(e).__name__}: {e}")
+                finally:
+                    svc.catalog.db.close()
         return self.pool.submit(wrapped)
 
     def cancel(self, run_id: str) -> None:
@@ -140,10 +144,13 @@ class LocalLauncher:
             from ..run import plan
 
             svc = self.services()  # one connection per thread: SQLite connections are not shared across threads
-            if svc.catalog.run(run_id)["status"] != "planning":
-                return  # cancelled while queued
-            model, _ = models(svc.settings, "plan")
-            plan(svc, run_id, model=model, should_stop=lambda: stop_requested(svc, run_id))
+            try:
+                if svc.catalog.run(run_id)["status"] != "planning":
+                    return  # cancelled while queued
+                model, _ = models(svc.settings, "plan")
+                plan(svc, run_id, model=model, should_stop=lambda: stop_requested(svc, run_id))
+            finally:
+                svc.catalog.db.close()
         self._submit(run_id, go)
 
     def resume(self, run_id: str) -> None:
@@ -154,18 +161,25 @@ class LocalLauncher:
             from ..run import analyse
 
             svc = self.services()
-            if svc.catalog.run(run_id)["status"] != "running":
-                return
-            model, reviewer = models(svc.settings, "analysis")
-            analyse(svc, run_id, user=user, model=model, reviewer=reviewer,
-                    should_stop=lambda: stop_requested(svc, run_id))
+            try:
+                if svc.catalog.run(run_id)["status"] != "running":
+                    return
+                model, reviewer = models(svc.settings, "analysis")
+                analyse(svc, run_id, user=user, model=model, reviewer=reviewer,
+                        should_stop=lambda: stop_requested(svc, run_id))
+            finally:
+                svc.catalog.db.close()
         self._submit(run_id, go)
 
     def replay(self, run_id: str) -> None:
         def go():
             from ..run import execute_replay
 
-            execute_replay(self.services(), run_id)
+            svc = self.services()
+            try:
+                execute_replay(svc, run_id)
+            finally:
+                svc.catalog.db.close()
         self._submit(run_id, go)
 
     def shutdown(self) -> None:

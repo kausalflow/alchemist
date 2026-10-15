@@ -13,7 +13,7 @@ from .identity import NotSignedIn, Principal, resolve
 
 
 def services(request: Request):
-    # A fresh Services per request: the SQLite index is opened per thread (Aurora uses a pool in the target design).
+    # A fresh Services per request; on PostgreSQL its connection comes from a shared pool and goes back on close.
     svc = request.app.state.services_factory()
     try:
         yield svc

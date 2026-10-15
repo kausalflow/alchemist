@@ -110,7 +110,7 @@ npx aws-cdk@2 synth -c env=dev --quiet   # no AWS credentials needed
 | Hidden and pseudonymised columns | dropped or keyed-hashed in the views | same |
 | The kernel cannot reach the model or the internet | not enforced (local process) | separate Fargate task, no route to Bedrock, no NAT |
 | Sealed runs cannot change | SEALED written once (S3 conditional put), run credentials may not write it, SHA-256 tamper evidence | same |
-| Catalog and run index | SQLite | Aurora PostgreSQL + pgvector |
+| Catalog and run index | SQLite, or PostgreSQL with `ALC_DB=postgresql://...` | Aurora PostgreSQL (pgvector for knowledge passages is planned) |
 | Document search | keyword ranking | hybrid (embeddings + full text) |
 
 ## Layout

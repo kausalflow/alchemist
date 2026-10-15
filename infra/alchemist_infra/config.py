@@ -69,9 +69,6 @@ class Storage(_Model):
     workspace_versioning: bool = False
     object_lock_governance_days: int | None = None
     work_expiry_days: int = 90
-    # The app's catalog and run index is SQLite today (Postgres is planned). True puts it on an encrypted EFS file
-    # system mounted at /data in the API and worker tasks, so they share one database (ALC_DB=/data/alchemist.db).
-    shared_sqlite: bool = True
     # Access rules for the "yaml" access provider (users, plant groups, workspaces, identity claim mapping); key in
     # the workspace bucket, uploaded by an admin.
     access_file_key: str = "_config/access.yaml"
@@ -174,8 +171,8 @@ class TaskSize(_Model):
 
 class Sizes(_Model):
     api: TaskSize = TaskSize(cpu=1024, memory_mib=2048)
-    # Several writers on SQLite over NFS lock unreliably, so keep one API task while storage.shared_sqlite is on.
-    api_count: int = 1
+    # API tasks behind the ALB; they share Aurora, so any number works. Two keeps the app up through a task restart.
+    api_count: int = 2
     orchestrator: TaskSize = TaskSize(cpu=1024, memory_mib=2048)
     sandbox: TaskSize = TaskSize(cpu=4096, memory_mib=16384, ephemeral_gib=100)
     indexer: TaskSize = TaskSize(cpu=2048, memory_mib=8192, ephemeral_gib=50)
@@ -263,12 +260,6 @@ class EnvConfig(_Model):
             raise ValueError("plugins.packages are installed at image build; with a pinned image, bake them into it")
         if self.plugins.env.keys() & {"ALC_PLUGINS", "ALC_PLUGIN_MODULES", "ALC_ACCESS_PROVIDER"}:
             raise ValueError("set plugin selection with plugins.enabled, plugins.modules and plugins.access_provider")
-        return self
-
-    @model_validator(mode="after")
-    def _one_api_on_shared_sqlite(self):
-        if self.storage.shared_sqlite and self.sizes.api_count > 1:
-            raise ValueError("sizes.api_count > 1 needs Postgres; SQLite on EFS supports one API task")
         return self
 
     @property

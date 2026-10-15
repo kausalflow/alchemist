@@ -222,17 +222,19 @@ def test_api_gets_the_contract_environment(resources):
             "ALC_LAUNCHER", "ALC_APPROVALS", "ALC_ACCESS", "ALC_ALLOWED_PROVIDERS"} <= names
     env = {e["Name"]: e["Value"] for e in c["Environment"]}
     assert env["ALC_LAUNCHER"] == "alchemist.sfn_launcher:StepFunctionsLauncher"
-    assert env["ALC_DB"] == "/data/alchemist.db"  # shared SQLite on EFS until the app uses Postgres
+    assert "ALC_DB" not in env  # the app builds its Aurora URL from ALC_DB_HOST and friends
     assert c["Command"] == ["api", "--host", "0.0.0.0", "--port", "8080"]
 
 
-def test_sqlite_is_shared_through_encrypted_efs(template, resources):
-    template.has_resource_properties("AWS::EFS::FileSystem", {"Encrypted": True})
+def test_tasks_share_aurora_and_no_efs(template, resources, dev_cfg):
+    template.resource_count_is("AWS::EFS::FileSystem", 0)
     for name in ("ApiTask", "OrchestratorTask", "IndexerTask"):
         td = next(v for k, v in resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and name in k)
-        (vol,) = td["Properties"]["Volumes"]
-        assert vol["EFSVolumeConfiguration"]["TransitEncryption"] == "ENABLED"
-        assert td["Properties"]["ContainerDefinitions"][0]["MountPoints"][0]["ContainerPath"] == "/data"
+        assert not td["Properties"].get("Volumes")
+        c = td["Properties"]["ContainerDefinitions"][0]
+        assert {"ALC_DB_USER", "ALC_DB_PASSWORD"} <= {s["Name"] for s in c["Secrets"]}
+    svc = next(v for v in resources.values() if v["Type"] == "AWS::ECS::Service")
+    assert svc["Properties"]["DesiredCount"] == dev_cfg.sizes.api_count >= 2
 
 
 def test_in_process_analysis_gets_the_run_role_and_the_pseudonym_key(resources):

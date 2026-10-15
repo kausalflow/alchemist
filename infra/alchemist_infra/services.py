@@ -21,7 +21,6 @@ from aws_cdk import Duration, Token
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
-from aws_cdk import aws_efs as efs
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
@@ -37,8 +36,6 @@ from .database import DB_NAME, Database
 from .network import Network
 from .storage import APPROVALS_PREFIX, GRANTS_PREFIX, RUNS_PATTERN, SEALED_PATTERN, Storage
 
-DATA_DIR = "/data"  # ALC_HOME in the image
-APP_UID = "1000"    # the `alchemist` user created in the Dockerfile
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BROKER_CODE = Path(__file__).resolve().parent / "lambdas" / "broker"
 ORIGIN_HEADER = "X-Alchemist-Origin-Verify"
@@ -210,9 +207,6 @@ class Services(Construct):
             "ALC_DB_PORT": Token.as_string(db.cluster_endpoint.port),
             "ALC_DB_NAME": DB_NAME,
         }
-        # The app still keeps its catalog and run index in SQLite; share it through EFS until Postgres lands.
-        if cfg.storage.shared_sqlite:
-            self.db_env["ALC_DB"] = f"{DATA_DIR}/alchemist.db"
         self.common_env["ALC_ACCESS"] = f"s3://{ws.bucket_name}/{cfg.storage.access_file_key}"
         self.db_secrets = {
             "ALC_DB_USER": ecs.Secret.from_secrets_manager(database.secret, "username"),
@@ -303,35 +297,6 @@ class Services(Construct):
                 next=elbv2.ListenerAction.forward([tg])))
         self.target_group = tg
         self.api_container.add_environment("ALC_ALB_ARN", self.alb.load_balancer_arn)  # expected OIDC header signer
-
-        # ---------------------------------------------------------------- shared SQLite (until Postgres)
-        self.file_system = None
-        if cfg.storage.shared_sqlite:
-            fs_sg = ec2.SecurityGroup(self, "FsSg", vpc=network.vpc, description="EFS for the shared SQLite index",
-                                      allow_all_outbound=False)
-            self.file_system = efs.FileSystem(
-                self, "Data", vpc=network.vpc, vpc_subnets=network.app_subnets, security_group=fs_sg,
-                encrypted=True, kms_key=storage.key, performance_mode=efs.PerformanceMode.GENERAL_PURPOSE,
-                throughput_mode=efs.ThroughputMode.ELASTIC, enable_automatic_backups=True,
-                removal_policy=storage.removal_policy)
-            ap = self.file_system.add_access_point(
-                "AppAccess", path="/alchemist", posix_user=efs.PosixUser(uid=APP_UID, gid=APP_UID),
-                create_acl=efs.Acl(owner_uid=APP_UID, owner_gid=APP_UID, permissions="750"))
-            mounted = [(self.api_task, self.api_container, network.api_sg, self.api_role),
-                       (self.orchestrator_task, self.orchestrator_container, network.orchestrator_sg,
-                        self.orchestrator_role),
-                       (self.indexer_task, self.indexer_container, network.indexer_sg, self.indexer_role)]
-            if self.sealer_task:
-                mounted.append((self.sealer_task, self.sealer_container, network.indexer_sg, self.sealer_role))
-            for td, container, sg, role in mounted:
-                td.add_volume(name="data", efs_volume_configuration=ecs.EfsVolumeConfiguration(
-                    file_system_id=self.file_system.file_system_id, transit_encryption="ENABLED",
-                    authorization_config=ecs.AuthorizationConfig(access_point_id=ap.access_point_id, iam="ENABLED")))
-                container.add_mount_points(ecs.MountPoint(container_path=DATA_DIR, source_volume="data",
-                                                          read_only=False))
-                self.file_system.grant_read_write(role)
-                sg.add_egress_rule(fs_sg, ec2.Port.tcp(2049), "EFS")
-                fs_sg.add_ingress_rule(sg, ec2.Port.tcp(2049), "EFS clients")
 
         # ---------------------------------------------------------------- scheduled indexers
         schedules = (("CatalogIndex", cfg.commands.catalog_index),
