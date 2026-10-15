@@ -21,6 +21,7 @@ from aws_cdk import Duration, Token
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
+from aws_cdk import aws_efs as efs
 from aws_cdk import aws_elasticloadbalancingv2 as elbv2
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
@@ -34,8 +35,10 @@ from .bedrock import BedrockSetup
 from .config import EnvConfig, TaskSize
 from .database import DB_NAME, Database
 from .network import Network
-from .storage import GRANTS_PREFIX, RUNS_PATTERN, SEALED_PATTERN, Storage
+from .storage import APPROVALS_PREFIX, GRANTS_PREFIX, RUNS_PATTERN, SEALED_PATTERN, Storage
 
+DATA_DIR = "/data"  # ALC_HOME in the image
+APP_UID = "1000"    # the `alchemist` user created in the Dockerfile
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BROKER_CODE = Path(__file__).resolve().parent / "lambdas" / "broker"
 ORIGIN_HEADER = "X-Alchemist-Origin-Verify"
@@ -97,10 +100,16 @@ class Services(Construct):
             self, "BrokerFunctionRole", assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
             managed_policies=[iam.ManagedPolicy.from_aws_managed_policy_name(
                 "service-role/AWSLambdaBasicExecutionRole")])
+        in_process = cfg.workflow.sandbox_mode == "in_process"
+        self.in_process = in_process
+        # Who may assume the run role: the broker (separate sandbox) or the analyse task itself (in-process kernel).
+        # Either way the caller narrows it to the run's prefixes with a session policy.
+        run_principals = [iam.ArnPrincipal(broker_fn_role.role_arn).with_session_tags()]
+        if in_process:
+            run_principals.append(iam.ArnPrincipal(self.orchestrator_role.role_arn).with_session_tags())
         self.run_role = iam.Role(
-            self, "RunRole", description="Per-run data role; the broker narrows it with a session policy",
-            assumed_by=iam.ArnPrincipal(broker_fn_role.role_arn).with_session_tags(),
-            max_session_duration=Duration.hours(1))
+            self, "RunRole", description="Per-run data role; narrowed per run with a session policy",
+            assumed_by=iam.CompositePrincipal(*run_principals), max_session_duration=Duration.hours(1))
 
         # Run role ceiling: read the lake and the knowledge bucket, read and write run folders, never SEALED.
         for st in storage.lake_read_statements():
@@ -111,8 +120,12 @@ class Services(Construct):
             resources=[ws.arn_for_objects(RUNS_PATTERN)]))
         self.run_role.add_to_policy(iam.PolicyStatement(actions=["s3:ListBucket"], resources=[ws.bucket_arn]))
         self.run_role.add_to_policy(iam.PolicyStatement(
-            effect=iam.Effect.DENY, actions=["s3:PutObject"], resources=[ws.arn_for_objects(SEALED_PATTERN)]))
+            effect=iam.Effect.DENY, actions=["s3:PutObject", "s3:DeleteObject"],
+            resources=[ws.arn_for_objects(SEALED_PATTERN)]))
         storage.key.grant_encrypt_decrypt(self.run_role)
+        if in_process:
+            self.orchestrator_role.add_to_policy(iam.PolicyStatement(
+                actions=["sts:AssumeRole", "sts:TagSession"], resources=[self.run_role.role_arn]))
 
         # Broker function: reads grants, assumes the run role.
         ws.grant_read(broker_fn_role, f"{GRANTS_PREFIX}*")
@@ -128,32 +141,35 @@ class Services(Construct):
                          "GRANTS_PREFIX": GRANTS_PREFIX})
         self.broker.grant_invoke(self.sandbox_role)
 
-        # API: read everything in the workspace (presigned downloads), write questions and grants.
+        # API: read everything in the workspace (presigned downloads), write questions, grants and approvals.
         ws.grant_read(self.api_role)
         ws.grant_put(self.api_role, "workspaces/*")
         ws.grant_put(self.api_role, f"{GRANTS_PREFIX}*")
+        ws.grant_put(self.api_role, f"{APPROVALS_PREFIX}*")
         kn.grant_read_write(self.api_role)  # POST /documents from approved sources
 
-        # Orchestrator: run folders without raw rows, Bedrock, knowledge, the sandbox's address.
+        # Orchestrator: run folders, Bedrock, knowledge, the sandbox's address. With a separate sandbox it never sees
+        # raw rows (inputs/, work/) and the sealer writes SEALED; in-process it does both itself.
         ws.grant_read(self.orchestrator_role)
+        hidden = [ws.arn_for_objects(f"{GRANTS_PREFIX}*")]
+        if not in_process:
+            hidden += [ws.arn_for_objects("workspaces/*/runs/*/inputs/*"),
+                       ws.arn_for_objects("workspaces/*/runs/*/work/*")]
         self.orchestrator_role.add_to_policy(iam.PolicyStatement(
-            effect=iam.Effect.DENY, actions=["s3:GetObject"],
-            resources=[ws.arn_for_objects("workspaces/*/runs/*/inputs/*"),
-                       ws.arn_for_objects("workspaces/*/runs/*/work/*"), ws.arn_for_objects(f"{GRANTS_PREFIX}*")]))
+            effect=iam.Effect.DENY, actions=["s3:GetObject"], resources=hidden))
         ws.grant_put(self.orchestrator_role, RUNS_PATTERN)
         ws.grant_put(self.orchestrator_role, "workspaces/*/question.yaml")  # the drafted plan
-        self.orchestrator_role.add_to_policy(iam.PolicyStatement(
-            effect=iam.Effect.DENY, actions=["s3:PutObject"], resources=[ws.arn_for_objects(SEALED_PATTERN)]))
+        if not in_process:
+            self.orchestrator_role.add_to_policy(iam.PolicyStatement(
+                effect=iam.Effect.DENY, actions=["s3:PutObject"], resources=[ws.arn_for_objects(SEALED_PATTERN)]))
         kn.grant_read(self.orchestrator_role)
         bedrock.grant_invoke(self.orchestrator_role)
         self.orchestrator_role.add_to_policy(iam.PolicyStatement(
             actions=["ecs:DescribeTasks"], resources=["*"],
             conditions={"ArnEquals": {"ecs:cluster": self.cluster.cluster_arn}}))
-        # The plan step hands its task token back (plan approval skipped) or reports failure.
-        for r in (self.orchestrator_role, self.api_role):
-            r.add_to_policy(iam.PolicyStatement(
-                actions=["states:SendTaskSuccess", "states:SendTaskFailure", "states:SendTaskHeartbeat"],
-                resources=["*"]))
+        # Approval: the API answers the task token the workflow stored (see workflow.py).
+        self.api_role.add_to_policy(iam.PolicyStatement(
+            actions=["states:SendTaskSuccess", "states:SendTaskFailure"], resources=["*"]))
 
         # Sealer: hash every file, write SEALED.
         ws.grant_read(self.sealer_role, RUNS_PATTERN)
@@ -190,8 +206,11 @@ class Services(Construct):
             "ALC_DB_HOST": db.cluster_endpoint.hostname,
             "ALC_DB_PORT": Token.as_string(db.cluster_endpoint.port),
             "ALC_DB_NAME": DB_NAME,
-            "ALC_DB": f"postgresql://{db.cluster_endpoint.socket_address}/{DB_NAME}",
         }
+        # The app still keeps its catalog and run index in SQLite; share it through EFS until Postgres lands.
+        if cfg.storage.shared_sqlite:
+            self.db_env["ALC_DB"] = f"{DATA_DIR}/alchemist.db"
+        self.common_env["ALC_ACCESS"] = f"s3://{ws.bucket_name}/{cfg.storage.access_file_key}"
         self.db_secrets = {
             "ALC_DB_USER": ecs.Secret.from_secrets_manager(database.secret, "username"),
             "ALC_DB_PASSWORD": ecs.Secret.from_secrets_manager(database.secret, "password"),
@@ -202,27 +221,37 @@ class Services(Construct):
             "ALC_EMBEDDING_MODEL": cfg.bedrock.embedding_model,
             **bedrock.env(),
         }
-        self.identity_env = {"ALC_IDENTITY": "alb-oidc", "ALC_ACCESS_PROVIDER": cfg.plugins.access_provider,
-                             "ALC_GROUP_CLAIM": cfg.oidc.group_claim}
+        self.identity_env = {"ALC_AUTH": "alb-oidc", "ALC_IDENTITY": "alb-oidc",
+                             "ALC_ACCESS_PROVIDER": cfg.plugins.access_provider,
+                             "ALC_OIDC_GROUPS_CLAIM": cfg.oidc.group_claim, "ALC_GROUP_CLAIM": cfg.oidc.group_claim,
+                             "ALC_LAUNCHER": "alchemist.sfn_launcher:StepFunctionsLauncher",
+                             "ALC_APPROVALS": f"s3://{ws.bucket_name}/{APPROVALS_PREFIX}"}
+        run_env = {"ALC_RUN_ROLE_ARN": self.run_role.role_arn, "ALC_RUN_CREDENTIAL_SECONDS": "3600"} \
+            if in_process else {}
         pseudonym = {"ALC_PSEUDONYM_KEY": ecs.Secret.from_secrets_manager(self.pseudonym_key)}
 
         # ---------------------------------------------------------------- task definitions
         sz = cfg.sizes
+        # In-process the analyse task does the sandbox's work, so it gets the sandbox's size.
+        orch_size = sz.sandbox if in_process else sz.orchestrator
         self.api_task, self.api_container = self.add_task(
             "Api", "api", sz.api, self.api_role, cfg.commands.api,
             {**self.common_env, **self.db_env, **self.identity_env, **self.model_env}, self.db_secrets,
             port=cfg.commands.api_port)
         self.orchestrator_task, self.orchestrator_container = self.add_task(
-            "Orchestrator", "orchestrator", sz.orchestrator, self.orchestrator_role, cfg.commands.plan,
-            {**self.common_env, **self.db_env, **self.model_env, "ALC_CLUSTER_ARN": self.cluster.cluster_arn},
-            self.db_secrets)
-        self.sandbox_task, self.sandbox_container = self.add_task(
-            "Sandbox", "sandbox", sz.sandbox, self.sandbox_role, cfg.commands.sandbox,
-            {**self.common_env, "ALC_BROKER_FUNCTION": self.broker.function_arn}, pseudonym,
-            port=cfg.commands.sandbox_port)
-        self.sealer_task, self.sealer_container = self.add_task(
-            "Sealer", "sealer", sz.sealer, self.sealer_role, cfg.commands.seal,
-            {**self.common_env, **self.db_env}, self.db_secrets)
+            "Orchestrator", "orchestrator", orch_size, self.orchestrator_role, cfg.commands.plan,
+            {**self.common_env, **self.db_env, **self.model_env, **run_env,
+             "ALC_CLUSTER_ARN": self.cluster.cluster_arn},
+            {**self.db_secrets, **(pseudonym if in_process else {})})
+        self.sandbox_task = self.sandbox_container = self.sealer_task = self.sealer_container = None
+        if not in_process:
+            self.sandbox_task, self.sandbox_container = self.add_task(
+                "Sandbox", "sandbox", sz.sandbox, self.sandbox_role, cfg.commands.sandbox,
+                {**self.common_env, "ALC_BROKER_FUNCTION": self.broker.function_arn}, pseudonym,
+                port=cfg.commands.sandbox_port)
+            self.sealer_task, self.sealer_container = self.add_task(
+                "Sealer", "sealer", sz.sealer, self.sealer_role, cfg.commands.seal,
+                {**self.common_env, **self.db_env}, self.db_secrets)
         self.indexer_task, self.indexer_container = self.add_task(
             "Indexer", "indexer", sz.indexer, self.indexer_role, cfg.commands.catalog_index,
             {**self.common_env, **self.db_env, **self.model_env}, {**self.db_secrets, **pseudonym})
@@ -230,7 +259,7 @@ class Services(Construct):
         # ---------------------------------------------------------------- API service and ALB
         self.api_service = ecs.FargateService(
             self, "ApiService", cluster=self.cluster, task_definition=self.api_task,
-            desired_count=sz.api_count, vpc_subnets=network.app_subnets, security_groups=[network.api_sg],
+            desired_count=sz.api_count, vpc_subnets=network.api_subnets, security_groups=[network.api_sg],
             assign_public_ip=False, circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True),
             min_healthy_percent=100, enable_execute_command=False)
         self.alb = elbv2.ApplicationLoadBalancer(
@@ -266,6 +295,36 @@ class Services(Construct):
                 session_timeout=Duration.hours(o.session_timeout_hours),
                 next=elbv2.ListenerAction.forward([tg])))
         self.target_group = tg
+        self.api_container.add_environment("ALC_ALB_ARN", self.alb.load_balancer_arn)  # expected OIDC header signer
+
+        # ---------------------------------------------------------------- shared SQLite (until Postgres)
+        self.file_system = None
+        if cfg.storage.shared_sqlite:
+            fs_sg = ec2.SecurityGroup(self, "FsSg", vpc=network.vpc, description="EFS for the shared SQLite index",
+                                      allow_all_outbound=False)
+            self.file_system = efs.FileSystem(
+                self, "Data", vpc=network.vpc, vpc_subnets=network.app_subnets, security_group=fs_sg,
+                encrypted=True, kms_key=storage.key, performance_mode=efs.PerformanceMode.GENERAL_PURPOSE,
+                throughput_mode=efs.ThroughputMode.ELASTIC, enable_automatic_backups=True,
+                removal_policy=storage.removal_policy)
+            ap = self.file_system.add_access_point(
+                "AppAccess", path="/alchemist", posix_user=efs.PosixUser(uid=APP_UID, gid=APP_UID),
+                create_acl=efs.Acl(owner_uid=APP_UID, owner_gid=APP_UID, permissions="750"))
+            mounted = [(self.api_task, self.api_container, network.api_sg, self.api_role),
+                       (self.orchestrator_task, self.orchestrator_container, network.orchestrator_sg,
+                        self.orchestrator_role),
+                       (self.indexer_task, self.indexer_container, network.indexer_sg, self.indexer_role)]
+            if self.sealer_task:
+                mounted.append((self.sealer_task, self.sealer_container, network.indexer_sg, self.sealer_role))
+            for td, container, sg, role in mounted:
+                td.add_volume(name="data", efs_volume_configuration=ecs.EfsVolumeConfiguration(
+                    file_system_id=self.file_system.file_system_id, transit_encryption="ENABLED",
+                    authorization_config=ecs.AuthorizationConfig(access_point_id=ap.access_point_id, iam="ENABLED")))
+                container.add_mount_points(ecs.MountPoint(container_path=DATA_DIR, source_volume="data",
+                                                          read_only=False))
+                self.file_system.grant_read_write(role)
+                sg.add_egress_rule(fs_sg, ec2.Port.tcp(2049), "EFS")
+                fs_sg.add_ingress_rule(sg, ec2.Port.tcp(2049), "EFS clients")
 
         # ---------------------------------------------------------------- scheduled indexers
         schedules = (("CatalogIndex", cfg.commands.catalog_index),

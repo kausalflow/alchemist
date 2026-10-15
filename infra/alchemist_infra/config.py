@@ -26,6 +26,10 @@ class ExistingVpc(_Model):
     public_route_table_ids: list[str] = []
     app_subnet_ids: list[str]
     app_route_table_ids: list[str]
+    # Subnets for the API service when it needs HTTPS egress (network.api_egress); default: the app subnets,
+    # in which case the landing zone must provide that egress.
+    api_subnet_ids: list[str] = []
+    api_route_table_ids: list[str] = []
     sandbox_subnet_ids: list[str]
     sandbox_route_table_ids: list[str]
     data_subnet_ids: list[str]
@@ -37,6 +41,10 @@ class Network(_Model):
     cidr: str = "10.40.0.0/20"
     # Zones for a new VPC; default <region>a and <region>b.
     availability_zones: list[str] = []
+    # The API verifies the ALB's signed OIDC header with the key from public-keys.auth.elb.<region>.amazonaws.com,
+    # which is on the internet. True adds an "api" subnet tier routed through one NAT gateway, used only by the API
+    # service; orchestrator, sandbox, indexers and the database stay without any route out.
+    api_egress: bool = True
     existing: ExistingVpc | None = None
 
 
@@ -61,6 +69,12 @@ class Storage(_Model):
     workspace_versioning: bool = False
     object_lock_governance_days: int | None = None
     work_expiry_days: int = 90
+    # The app's catalog and run index is SQLite today (Postgres is planned). True puts it on an encrypted EFS file
+    # system mounted at /data in the API and worker tasks, so they share one database (ALC_DB=/data/alchemist.db).
+    shared_sqlite: bool = True
+    # Access rules for the "yaml" access provider (users, plant groups, workspaces, identity claim mapping); key in
+    # the workspace bucket, uploaded by an admin.
+    access_file_key: str = "_config/access.yaml"
     # Keep buckets, keys and the database when the stack is deleted.
     retain_data: bool = True
 
@@ -140,9 +154,9 @@ class Plugins(_Model):
     enabled: list[str] = []
     # ALC_PLUGIN_MODULES: importable modules to load without an entry point.
     modules: list[str] = []
-    # ALC_ACCESS_PROVIDER: the registered access provider for users, plant groups and workspaces. In AWS the
-    # identity comes from the ALB OIDC header, so the default names that provider rather than the MVP's yaml file.
-    access_provider: str = "alb-oidc"
+    # ALC_ACCESS_PROVIDER: the registered access provider for users, plant groups and workspaces. "yaml" reads
+    # ALC_ACCESS (storage.access_file_key), which also maps identity-provider claims to groups.
+    access_provider: str = "yaml"
     # Extra environment for every app container, e.g. settings a plugin reads.
     env: dict[str, str] = {}
     # Infrastructure plugins: importable modules with `register(ctx: InfraContext)`, in addition to installed
@@ -181,6 +195,7 @@ class Commands(_Model):
     api_health_path: str = "/healthz"
     plan: list[str] = ["worker", "plan", "--run-id"]
     analyse: list[str] = ["worker", "analyse", "--run-id"]
+    replay: list[str] = ["worker", "replay", "--run-id"]
     report: list[str] = ["worker", "report", "--run-id"]
     seal: list[str] = ["worker", "seal", "--run-id"]
     sandbox: list[str] = ["sandbox", "serve", "--port", "8888"]
@@ -191,6 +206,11 @@ class Commands(_Model):
 
 
 class Workflow(_Model):
+    # in_process: the analyse task runs the kernel itself, assumes the run role (ALC_RUN_ROLE_ARN) for data access,
+    #   and builds the report and seals the run; this is what the app does today.
+    # separate: the target design; the kernel runs in a sandbox task that gets data credentials only from the
+    #   broker Lambda and has no route to Bedrock; Report and Seal are their own steps.
+    sandbox_mode: Literal["in_process", "separate"] = "in_process"
     approval_timeout_days: int = 14
     analysis_timeout_hours: int = 6
     # Nightly catalog re-index and knowledge ingestion (UTC cron, EventBridge syntax).

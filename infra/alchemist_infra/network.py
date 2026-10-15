@@ -2,7 +2,8 @@
 
 | Tier    | Runs                         | Reaches                                                 |
 | ------- | ---------------------------- | ------------------------------------------------------- |
-| public  | ALB                          | API tasks; the identity provider                        |
+| public  | ALB, NAT (api_egress only)   | API tasks; the identity provider                        |
+| api     | API (api_egress only)        | as app, plus HTTPS out through NAT for the ALB signing keys |
 | app     | API, orchestrator, indexers  | Aurora, S3 gateway, all interface endpoints incl. Bedrock |
 | sandbox | sandbox tasks                | S3 gateway, logs, ECR, secrets, Lambda (broker); not Bedrock |
 | data    | Aurora                       | nothing outbound                                        |
@@ -20,7 +21,7 @@ from constructs import Construct
 
 from .config import EnvConfig
 
-APP, SANDBOX, DATA, PUBLIC = "app", "sandbox", "data", "public"
+APP, SANDBOX, DATA, PUBLIC, API = "app", "sandbox", "data", "public", "api"
 
 
 class Network(Construct):
@@ -49,15 +50,24 @@ class Network(Construct):
                 ec2.Subnet.from_subnet_attributes(self, f"Data{i}", subnet_id=s, availability_zone=az)
                 for i, (s, az) in enumerate(zip(e.data_subnet_ids, e.availability_zones))])
             self.public_subnets = ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC)
+            self.api_subnets = self.app_subnets
+            if e.api_subnet_ids:
+                self.api_subnets = ec2.SubnetSelection(subnets=[
+                    ec2.Subnet.from_subnet_attributes(self, f"Api{i}", subnet_id=s, route_table_id=r,
+                                                      availability_zone=az)
+                    for i, (s, r, az) in enumerate(zip(e.api_subnet_ids, e.api_route_table_ids,
+                                                       e.availability_zones))])
         else:
             self.vpc = ec2.Vpc(
-                self, "Vpc", ip_addresses=ec2.IpAddresses.cidr(n.cidr), nat_gateways=0,
+                self, "Vpc", ip_addresses=ec2.IpAddresses.cidr(n.cidr), nat_gateways=1 if n.api_egress else 0,
                 availability_zones=Stack.of(self).availability_zones,
                 subnet_configuration=[
                     ec2.SubnetConfiguration(name=PUBLIC, subnet_type=ec2.SubnetType.PUBLIC, cidr_mask=26),
                     ec2.SubnetConfiguration(name=APP, subnet_type=ec2.SubnetType.PRIVATE_ISOLATED, cidr_mask=24),
                     ec2.SubnetConfiguration(name=SANDBOX, subnet_type=ec2.SubnetType.PRIVATE_ISOLATED, cidr_mask=24),
                     ec2.SubnetConfiguration(name=DATA, subnet_type=ec2.SubnetType.PRIVATE_ISOLATED, cidr_mask=26),
+                    *([ec2.SubnetConfiguration(name=API, subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
+                                               cidr_mask=26)] if n.api_egress else []),
                 ],
                 restrict_default_security_group=True,
             )
@@ -66,6 +76,7 @@ class Network(Construct):
             self.sandbox_subnets = ec2.SubnetSelection(subnet_group_name=SANDBOX)
             self.data_subnets = ec2.SubnetSelection(subnet_group_name=DATA)
             self.public_subnets = ec2.SubnetSelection(subnet_group_name=PUBLIC)
+            self.api_subnets = ec2.SubnetSelection(subnet_group_name=API) if n.api_egress else self.app_subnets
 
         def sg(name: str, desc: str, outbound: bool = False) -> ec2.SecurityGroup:
             return ec2.SecurityGroup(self, name, vpc=self.vpc, description=desc, allow_all_outbound=outbound)
@@ -128,7 +139,8 @@ class Network(Construct):
                 private_dns_enabled=True, open=False)
 
         self.s3_endpoint = self.vpc.add_gateway_endpoint(
-            "S3", service=ec2.GatewayVpcEndpointAwsService.S3, subnets=[self.app_subnets, self.sandbox_subnets])
+            "S3", service=ec2.GatewayVpcEndpointAwsService.S3, subnets=[self.app_subnets, self.sandbox_subnets]
+            + ([self.api_subnets] if self.api_subnets is not self.app_subnets else []))
 
     def limit_s3_endpoint(self, bucket_names: list[str], region: str) -> None:
         """S3 gateway endpoint policy: only Alchemist's buckets, the lake, and the ECR layer bucket."""

@@ -20,8 +20,24 @@ def _policies_of(resources, role_fragment):
     return role, dumps(docs)
 
 
-def test_no_nat_gateway(template):
-    template.resource_count_is("AWS::EC2::NatGateway", 0)
+def _default_routes(resources) -> set[str]:
+    """Route tables (logical ids) that have a 0.0.0.0/0 route."""
+    return {v["Properties"]["RouteTableId"]["Ref"] for v in resources.values()
+            if v["Type"] == "AWS::EC2::Route" and v["Properties"].get("DestinationCidrBlock") == "0.0.0.0/0"}
+
+
+def test_only_public_and_api_subnets_have_a_route_out(resources, template):
+    template.resource_count_is("AWS::EC2::NatGateway", 1)  # api_egress: the API fetches the ALB signing keys
+    routed = _default_routes(resources)
+    assert routed and all("public" in t or "api" in t for t in routed)
+    nat_routes = [v for v in resources.values() if v["Type"] == "AWS::EC2::Route" and "NatGatewayId" in v["Properties"]]
+    assert nat_routes and all("api" in v["Properties"]["RouteTableId"]["Ref"] for v in nat_routes)
+
+
+def test_without_api_egress_there_is_no_nat(dev_cfg):
+    data = dev_cfg.model_dump()
+    data["network"]["api_egress"] = False
+    synth(EnvConfig.model_validate(data)).resource_count_is("AWS::EC2::NatGateway", 0)
 
 
 def test_sandbox_cannot_reach_bedrock_endpoint(resources):
@@ -56,13 +72,21 @@ def test_sandbox_role_can_only_call_the_broker(resources):
         assert forbidden not in policy
 
 
-def test_orchestrator_has_bedrock_but_no_lake(resources, dev_cfg):
+def test_orchestrator_has_bedrock_but_no_direct_lake_access(resources, dev_cfg):
     _, policy = _policies_of(resources, "OrchestratorRole")
     assert "bedrock:InvokeModel" in policy
     for b in dev_cfg.lake.buckets:
         assert b.name not in policy
-    # Snapshots of raw rows in run folders are denied too.
+    # In-process (default) it reads data only through the run role, narrowed per run.
+    assert "sts:AssumeRole" in policy and "RunRole" in policy
+
+
+def test_separate_sandbox_keeps_raw_rows_and_seal_away_from_the_orchestrator(separate_resources):
+    _, policy = _policies_of(separate_resources, "OrchestratorRole")
     assert "/runs/*/inputs/*" in policy and "/runs/*/work/*" in policy
+    assert "sts:AssumeRole" not in policy
+    role = next(v for k, v in separate_resources.items() if v["Type"] == "AWS::IAM::Role" and "RunRole" in k)
+    assert "OrchestratorRole" not in dumps(role["Properties"]["AssumeRolePolicyDocument"])
 
 
 def test_run_role_is_assumed_only_by_the_broker(resources, dev_cfg):
@@ -99,13 +123,28 @@ def test_buckets_are_encrypted_private_and_tls_only(resources):
         assert "aws:SecureTransport" in dumps(p)
 
 
-def test_run_workflow_waits_on_plan_approval_and_always_seals(resources):
+def _definition(resources) -> str:
     (sm,) = find(resources, "AWS::StepFunctions::StateMachine").values()
-    d = dumps(sm["Properties"]["DefinitionString"])
-    assert "ecs:runTask.waitForTaskToken" in d and "$$.Task.Token" in d
+    return dumps(sm["Properties"]["DefinitionString"])
+
+
+def test_run_workflow_waits_on_plan_approval(resources):
+    d = _definition(resources)
+    assert "lambda:invoke.waitForTaskToken" in d and "$$.Task.Token" in d
+    for state in ("Mode", "Plan", "WaitForApproval", "Analyse", "Replay"):
+        assert f'\\"{state}\\"' in d
+    assert "StartSandbox" not in d
+
+
+def test_separate_workflow_always_reports_and_seals(separate_resources):
+    d = _definition(separate_resources)
     for state in ("StartSandbox", "Analyse", "Report", "StopSandbox", "Seal"):
         assert f'\\"{state}\\"' in d
-    # Analyse failures still produce a report; nothing logs execution data (it holds the broker token).
+
+
+def test_state_machine_does_not_log_execution_data(resources):
+    (sm,) = find(resources, "AWS::StepFunctions::StateMachine").values()
+    # Execution data can hold the broker token.
     assert sm["Properties"]["LoggingConfiguration"]["IncludeExecutionData"] is False
 
 
@@ -146,8 +185,28 @@ def test_api_gets_the_contract_environment(resources):
     (c,) = api["Properties"]["ContainerDefinitions"]
     names = {e["Name"] for e in c["Environment"]} | {s["Name"] for s in c["Secrets"]}
     assert {"ALC_WORKSPACE", "ALC_KNOWLEDGE", "ALC_DB_HOST", "ALC_DB_USER", "ALC_DB_PASSWORD", "ALC_LEAD_MODEL",
-            "ALC_STATE_MACHINE_ARN", "ALC_GROUP_CLAIM", "ALC_ALLOWED_PROVIDERS"} <= names
+            "ALC_STATE_MACHINE_ARN", "ALC_GROUP_CLAIM", "ALC_OIDC_GROUPS_CLAIM", "ALC_AUTH", "ALC_ALB_ARN",
+            "ALC_LAUNCHER", "ALC_APPROVALS", "ALC_ACCESS", "ALC_ALLOWED_PROVIDERS"} <= names
+    env = {e["Name"]: e["Value"] for e in c["Environment"]}
+    assert env["ALC_LAUNCHER"] == "alchemist.sfn_launcher:StepFunctionsLauncher"
+    assert env["ALC_DB"] == "/data/alchemist.db"  # shared SQLite on EFS until the app uses Postgres
     assert c["Command"] == ["api", "--host", "0.0.0.0", "--port", "8080"]
+
+
+def test_sqlite_is_shared_through_encrypted_efs(template, resources):
+    template.has_resource_properties("AWS::EFS::FileSystem", {"Encrypted": True})
+    for name in ("ApiTask", "OrchestratorTask", "IndexerTask"):
+        td = next(v for k, v in resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and name in k)
+        (vol,) = td["Properties"]["Volumes"]
+        assert vol["EFSVolumeConfiguration"]["TransitEncryption"] == "ENABLED"
+        assert td["Properties"]["ContainerDefinitions"][0]["MountPoints"][0]["ContainerPath"] == "/data"
+
+
+def test_in_process_analysis_gets_the_run_role_and_the_pseudonym_key(resources):
+    td = next(v for k, v in resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and "OrchestratorTask" in k)
+    c = td["Properties"]["ContainerDefinitions"][0]
+    assert {"ALC_RUN_ROLE_ARN", "ALC_RUN_CREDENTIAL_SECONDS"} <= {e["Name"] for e in c["Environment"]}
+    assert "ALC_PSEUDONYM_KEY" in {s["Name"] for s in c["Secrets"]}
 
 
 def test_config_rejects_object_lock_without_versioning(dev_cfg):

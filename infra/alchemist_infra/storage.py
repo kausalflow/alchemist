@@ -17,6 +17,7 @@ from .config import EnvConfig
 RUNS_PATTERN = "workspaces/*/runs/*"  # `*` crosses `/`, so this is every run folder
 SEALED_PATTERN = "workspaces/*/runs/*/SEALED"
 GRANTS_PREFIX = "_grants/"
+APPROVALS_PREFIX = "_approvals/"  # plan-approval task tokens and approvals (see workflow.py)
 
 
 class Storage(Construct):
@@ -24,6 +25,7 @@ class Storage(Construct):
         super().__init__(scope, id)
         st = cfg.storage
         removal = RemovalPolicy.RETAIN if st.retain_data else RemovalPolicy.DESTROY
+        self.removal_policy = removal
         auto_delete = not st.retain_data
 
         self.key = kms.Key(self, "Key", alias=f"alias/{cfg.prefix}", enable_key_rotation=True,

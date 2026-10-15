@@ -29,6 +29,16 @@ def resources(template) -> dict:
     return template.to_json()["Resources"]
 
 
+@pytest.fixture(scope="session")
+def separate_resources(dev_cfg) -> dict:
+    """The target design: a separate sandbox task with broker credentials."""
+    data = dev_cfg.model_dump()
+    data["workflow"]["sandbox_mode"] = "separate"
+    from alchemist_infra.config import EnvConfig
+
+    return synth(EnvConfig.model_validate(data)).to_json()["Resources"]
+
+
 def find(resources: dict, type_: str, contains: str = "") -> dict[str, dict]:
     return {k: v for k, v in resources.items() if v["Type"] == type_ and contains in k}
 

@@ -37,7 +37,8 @@ class AlchemistStack(Stack):
         self.bedrock = BedrockSetup(self, "Bedrock", cfg=cfg, storage=self.storage)
         self.services = Services(self, "Services", cfg=cfg, network=self.network, storage=self.storage,
                                  database=self.database, bedrock=self.bedrock)
-        self.workflow = RunWorkflow(self, "Workflow", cfg=cfg, network=self.network, services=self.services)
+        self.workflow = RunWorkflow(self, "Workflow", cfg=cfg, network=self.network, services=self.services,
+                                    storage=self.storage)
         self.edge = Edge(self, "Edge", cfg=cfg, storage=self.storage, services=self.services) \
             if cfg.modules.edge else None
         self.observability = Observability(self, "Observability", cfg=cfg, storage=self.storage,

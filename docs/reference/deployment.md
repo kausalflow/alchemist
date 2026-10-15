@@ -3,6 +3,18 @@
 What the infrastructure in `infra/` gives the application, and what it expects back. Commands are config values
 (`commands:` in `infra/config/<env>.yaml`), so a rename on the app side needs no infrastructure code change.
 
+## Two sandbox modes
+
+`workflow.sandbox_mode` picks how the analysis kernel runs:
+
+| Mode | Kernel | Data credentials | Report and seal | Status |
+| --- | --- | --- | --- | --- |
+| `in_process` (default) | inside the analyse task | the analyse task assumes the run role (`ALC_RUN_ROLE_ARN`) with a per-run session policy | done by `worker analyse` | what the app does today |
+| `separate` | its own sandbox task with no route to Bedrock | the sandbox calls the broker Lambda; its own role can do nothing else | separate Report and Seal steps | target design; needs `sandbox serve`, `worker report`, `worker seal` in the app |
+
+In `in_process` mode the process that calls Bedrock also holds data credentials for the run, so the split between
+model access and data access is enforced by the app, not by AWS. Switch to `separate` once the app supports it.
+
 ## Containers
 
 All tasks run the one image built from the repository `Dockerfile` (entry point `alchemist`) or the pinned image in
@@ -10,11 +22,13 @@ All tasks run the one image built from the repository `Dockerfile` (entry point 
 
 | Task | Command (arguments to `alchemist`) | Subnets | Role can |
 | --- | --- | --- | --- |
-| api (service) | `api --host 0.0.0.0 --port 8080`; health check `GET /healthz` returns 200 | app | read the workspace bucket; write `workspaces/*` outside run folders and `_grants/`; start, stop and read executions; send task success or failure |
-| orchestrator | `worker plan --run-id <id>`, `worker analyse --run-id <id> --sandbox-task-arn <arn>`, `worker report --run-id <id>` | app | invoke allow-listed Bedrock models; read run folders except `inputs/` and `work/`; write run folders and `question.yaml`; describe tasks in the cluster; send task success or failure |
-| sandbox | `sandbox serve --port 8888` (Jupyter Kernel Gateway) | sandbox | invoke the broker, nothing else |
-| sealer | `worker seal --run-id <id>` | app | read run folders, write `SEALED` |
+| api (service) | `api --host 0.0.0.0 --port 8080`; health check `GET /healthz` returns 200 | api (HTTPS egress) | read the workspace bucket (presigned downloads); write `workspaces/*` outside run folders, `_grants/` and `_approvals/`; start, stop and read executions; send task success or failure |
+| orchestrator | `worker plan --run-id <id>`, `worker analyse --run-id <id>`, `worker replay --run-id <id>` | app | invoke allow-listed Bedrock models; read and write run folders and `question.yaml`; in-process: assume the run role; separate: no `inputs/` or `work/`, no `SEALED` |
+| sandbox (separate only) | `sandbox serve --port 8888` | sandbox | invoke the broker, nothing else |
+| sealer (separate only) | `worker seal --run-id <id>` | app | read run folders, write `SEALED` |
 | indexer | `catalog index` and `knowledge ingest` (nightly), `db migrate` (by hand) | app | read the lake and knowledge buckets; invoke the sub and embedding models |
+
+In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandbox`), because it runs the kernel.
 
 ## Environment
 
@@ -24,75 +38,78 @@ All tasks run the one image built from the repository `Dockerfile` (entry point 
 | `AWS_REGION` | all | stack region |
 | `ALC_WORKSPACE` | all | `s3://<workspace bucket>` |
 | `ALC_KNOWLEDGE` | all | `s3://<knowledge bucket>` |
+| `ALC_ACCESS` | all | `s3://<workspace bucket>/_config/access.yaml` (`storage.access_file_key`), uploaded by an admin |
 | `ALC_GRANTS_PREFIX` | all | `_grants/` |
-| `ALC_LAKE_BUCKETS` | all | comma-separated lake bucket names |
-| `ALC_PLANT_PREFIX_TEMPLATE` | all | e.g. `s3://{bucket}/plant={plant}/` |
+| `ALC_LAKE_BUCKETS` | all | comma-separated lake bucket names (the ceiling of the run role; read prefixes come from the catalog) |
+| `ALC_PLANT_PREFIX_TEMPLATE` | all | informational; the app derives prefixes from catalog registrations |
 | `ALC_ALLOWED_PROVIDERS` | all | `bedrock` |
 | `ALC_IMAGE_DIGEST` | all | image digest when the image is pinned, else empty |
 | `ALC_PLUGINS` | all | `plugins.enabled`, comma-separated; `none` when empty |
 | `ALC_PLUGIN_MODULES` | all | `plugins.modules`, comma-separated |
 | `ALC_EXTRA_PACKAGES` | all | `plugins.packages` installed into the image, for the manifest |
 | (any) | all | `plugins.env` |
-| `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME` | api, orchestrator, sealer, indexer | Aurora writer endpoint, port, `alchemist` |
-| `ALC_DB` | api, orchestrator, sealer, indexer | `postgresql://<host>:<port>/alchemist`, without credentials |
-| `ALC_DB_USER`, `ALC_DB_PASSWORD` | api, orchestrator, sealer, indexer | from the generated database secret |
+| `ALC_DB` | api, orchestrator, sealer, indexer | `/data/alchemist.db` on the shared EFS volume while `storage.shared_sqlite` is on |
+| `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME`, `ALC_DB_USER`, `ALC_DB_PASSWORD` | api, orchestrator, sealer, indexer | Aurora PostgreSQL, for when the app moves the index there |
 | `ALC_LEAD_MODEL`, `ALC_SUB_MODEL`, `ALC_EMBEDDING_MODEL` | api, orchestrator, indexer | from `bedrock:` |
 | `ALC_BEDROCK_GUARDRAIL_ID`, `ALC_BEDROCK_GUARDRAIL_VERSION` | api, orchestrator, indexer | when `bedrock.guardrail` is on |
-| `ALC_IDENTITY`, `ALC_GROUP_CLAIM` | api | `alb-oidc`, `groups` |
-| `ALC_ACCESS_PROVIDER` | api | `plugins.access_provider`, default `alb-oidc` (an access provider reading the ALB's OIDC header must be registered by the app or a plugin) |
+| `ALC_AUTH` | api | `alb-oidc`: verify the ALB's signed `x-amzn-oidc-data` header |
+| `ALC_ALB_ARN` | api | the ALB that must have signed the header |
+| `ALC_OIDC_GROUPS_CLAIM`, `ALC_GROUP_CLAIM` | api | the groups claim, from `oidc.group_claim` |
+| `ALC_ACCESS_PROVIDER` | api | `plugins.access_provider`, default `yaml` |
+| `ALC_LAUNCHER` | api | `alchemist.sfn_launcher:StepFunctionsLauncher` |
 | `ALC_STATE_MACHINE_ARN` | api | the run workflow |
-| `ALC_CLUSTER_ARN` | orchestrator | to look up the sandbox's address |
-| `ALC_PSEUDONYM_KEY` | sandbox, indexer | from Secrets Manager |
-| `ALC_BROKER_FUNCTION` | sandbox | broker Lambda ARN |
+| `ALC_APPROVALS` | api | `s3://<workspace bucket>/_approvals/` |
+| `ALC_RUN_ROLE_ARN`, `ALC_RUN_CREDENTIAL_SECONDS` | orchestrator (in-process) | the run role; `3600` |
+| `ALC_PSEUDONYM_KEY` | indexer, orchestrator (in-process), sandbox (separate) | from Secrets Manager |
+| `ALC_CLUSTER_ARN` | orchestrator | to look up the sandbox's address (separate) |
+| `ALC_BROKER_FUNCTION`, `ALC_BROKER_TOKEN` | sandbox (separate) | broker Lambda ARN; the run's broker token |
 | `ALC_RUN_ID` | workflow tasks | set per execution |
-| `ALC_TASK_TOKEN`, `ALC_SKIP_APPROVAL` | plan task | the approval task token; `true` or `false` |
-| `ALC_BROKER_TOKEN` | sandbox | the run's broker token |
-| `ALC_SANDBOX_TASK_ARN` | report task | the sandbox to build the report in |
 
 ## HTTP routing and identity
 
-CloudFront serves the SPA (`web_dist_path`, default `web/dist`) at `/` and forwards `/api/*` and `/oauth2/*` to the
-ALB with all headers, cookies and query strings, uncached. API routes therefore live under `/api`. Paths without a
-file extension outside those prefixes are rewritten to `/index.html` for client-side routing.
+CloudFront serves the SPA (`web_dist_path`, default `web/dist`, built with `cd web && npm ci && npm run build`) at `/`
+and forwards `/api/*` and `/oauth2/*` to the ALB with all headers, cookies and query strings, uncached. API routes
+therefore live under `/api`. Paths without a file extension outside those prefixes are rewritten to `/index.html` for
+client-side routing.
 
-The ALB authenticates every forwarded request with OIDC and passes the claims in the `x-amzn-oidc-data` header (a JWT)
-and the user id in `x-amzn-oidc-identity`. Groups are in the claim named by `ALC_GROUP_CLAIM`.
+The ALB authenticates every forwarded request with OIDC and passes the claims in the signed `x-amzn-oidc-data`
+header. The API verifies the signature with the key from `public-keys.auth.elb.<region>.amazonaws.com`, which is on
+the internet, so the API service runs in its own `api` subnets routed through one NAT gateway
+(`network.api_egress`). Orchestrator, sandbox, indexers and the database have no route out.
 
 ## Run workflow
 
-The API starts one execution of `ALC_STATE_MACHINE_ARN` per run, with this input (all fields required):
+The API's launcher (`alchemist.sfn_launcher`) starts one execution of `ALC_STATE_MACHINE_ARN` per run:
 
-```json
-{"run_id": "01JA...", "question_id": "01JA...", "workspace": "quality", "project": "line2-yield",
- "run_prefix": "s3://<workspace>/workspaces/quality/projects/line2-yield/questions/01JA.../runs/01JA.../",
- "broker_token": "<random, per run>", "skip_approval": false}
-```
+| API call | Launcher does |
+| --- | --- |
+| run created | `StartExecution` with `{"run_id": ..., "mode": "run"}` |
+| plan approved | writes `_approvals/<run_id>/approved.json` and sends the stored task token |
+| replay run created | `StartExecution` with `{"run_id": ..., "mode": "replay"}` |
 
 | State | Does |
 | --- | --- |
-| Prepare | builds the commands with the run id |
-| Plan | runs the plan task with `ALC_TASK_TOKEN` and waits up to `workflow.approval_timeout_days`. The plan task creates the run folder, drafts the plan, stores the token with the run and exits. The API calls `SendTaskSuccess` on approval (or `SendTaskFailure` on rejection); with `skip_approval` the plan task sends it itself |
-| StartSandbox | starts the sandbox task and keeps its ARN |
-| Analyse | runs the orchestrator to completion, within `workflow.analysis_timeout_hours` |
-| Report | builds the (possibly partial) report in the sandbox; runs even when Analyse failed |
-| StopSandbox | stops the sandbox, so no data writer remains |
-| Seal | writes `SEALED` and indexes the run |
+| Prepare, Mode | build the commands; choose run or replay |
+| Plan | `worker plan` to completion |
+| WaitForApproval | the approval function stores the task token at `_approvals/<run_id>/token.json`; the execution waits (up to `workflow.approval_timeout_days`) until the launcher sends it. If the approval was written first, the function sends it at once |
+| Analyse | in-process: `worker analyse`, which also builds the report and seals the run (a model failure still ends in a sealed partial run). Separate: StartSandbox, Analyse, Report, StopSandbox and Seal; Report and Seal run even when Analyse fails |
+| Replay | `worker replay` |
 
-A failure before the sandbox starts goes straight to Seal. To stop a run and still get a partial report, the API
-should ask the orchestrator to stop (for example a flag in the run record) rather than call `StopExecution`, which
-ends the execution without Report and Seal.
+Stopping is an audit event (`run.stop`) that workers check between steps; the API should not call `StopExecution`,
+which would end the execution without a report.
 
-## Credential broker
+## Credential broker (separate mode)
 
 When the API creates a run it writes `s3://<workspace>/_grants/<run_id>.json`:
 
 ```json
 {"schema": "alchemist.grant/v1", "run_id": "01JA...", "user": "eng_p1", "plants": ["P01"],
- "read_prefixes": ["s3://lake/plant=P01/"], "knowledge_prefixes": ["s3://<knowledge>/P01/"],
+ "read_prefixes": ["s3://lake/line2/historian/"], "knowledge_prefixes": ["s3://<knowledge>/P01/"],
  "run_prefix": "s3://<workspace>/workspaces/.../runs/01JA.../",
  "token_sha256": "<sha256 hex of broker_token>", "expires_at": "2026-10-15T14:00:00Z"}
 ```
 
+`read_prefixes` are the catalog registrations of the run's pinned views, as in `alchemist.credentials.run_policy`.
 The sandbox's AWS `credential_process` invokes `ALC_BROKER_FUNCTION` with `{"run_id": ..., "token": ...}` and prints
 the result, which is the standard credential-process JSON (`Version`, `AccessKeyId`, `SecretAccessKey`,
 `SessionToken`, `Expiration`), or `{"error": "denied"}`. The broker:
@@ -101,8 +118,9 @@ the result, which is the standard credential-process JSON (`Version`, `AccessKey
   `workspaces/.../runs/<run_id>/` in the workspace bucket, a read prefix outside the registered lake buckets (or a
   whole bucket), or a knowledge prefix outside the knowledge bucket;
 - assumes the run role for at most one hour (role chaining), tagged with run id, user and plants for CloudTrail;
-- passes a session policy that allows `GetObject` and `ListBucket` on the read, knowledge and run prefixes and
-  `PutObject` only under the run prefix. The run role itself never allows writing `SEALED`.
+- passes a session policy that allows `GetObject` and `ListBucket` on the read, knowledge and run prefixes,
+  `PutObject` only under the run prefix, and denies writing or deleting the run's `SEALED`, the same rules as
+  `alchemist.credentials.run_policy`.
 
 A session policy holds about 2 KB, enough for tens of prefixes. A plant whose data is scattered over many prefixes
 needs S3 Access Grants instead (technical design, open question 2).
@@ -110,5 +128,7 @@ needs S3 Access Grants instead (technical design, open question 2).
 ## Workspace bucket conventions
 
 - `work/` intermediates expire after `storage.work_expiry_days` when tagged `alchemist:tier=work`.
-- `_grants/` is written only by the API and read only by the broker.
+- `_grants/` is written only by the API and read only by the broker; `_approvals/` only by the API and the approval
+  function.
+- `_config/access.yaml` holds the access rules for the `yaml` access provider.
 - Everything under `workspaces/*/runs/*` can be written only by the run, orchestrator and sealer roles.

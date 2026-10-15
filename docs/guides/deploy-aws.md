@@ -18,29 +18,30 @@ flowchart TB
     U[Engineer's browser] --> CF[CloudFront]
     CF -->|/| WEB[(S3: SPA)]
     CF -->|/api/*, /oauth2/*<br/>origin header| ALB[ALB + OIDC]
-    ALB --> API[API service<br/>Fargate, app subnets]
-    API --> SF[Step Functions<br/>one execution per run]
+    ALB --> API[API service<br/>api subnets, NAT for ALB keys only]
+    API -->|StartExecution, task token| SF[Step Functions<br/>one execution per run]
     SF --> PLAN[Plan task]
-    SF --> SBX[Sandbox task<br/>sandbox subnets]
-    SF --> AN[Analyse / Report tasks]
-    SF --> SEAL[Seal task]
+    SF --> AP[Approval function<br/>stores the task token]
+    SF --> AN[Analyse task<br/>kernel in-process]
     PLAN & AN -->|VPC endpoint| BR[(Bedrock)]
-    AN -->|kernel port| SBX
-    SBX -->|invoke| BROKER[Broker Lambda]
-    BROKER -->|AssumeRole + session policy| RUN[run role]
-    SBX -->|run credentials| LAKE[(Lake S3)]
-    SBX --> WS[(Workspace S3, KMS)]
-    API & PLAN & AN & SEAL --> PG[(Aurora PostgreSQL<br/>data subnets)]
+    AN -->|AssumeRole + session policy| RUN[run role]
+    AN -->|run credentials| LAKE[(Lake S3)]
+    AN --> WS[(Workspace S3, KMS)]
+    API & PLAN & AN --> FS[(EFS: shared SQLite index)]
 ```
+
+With `workflow.sandbox_mode: separate` (the target design), the analyse task drives a sandbox task in the sandbox
+subnets instead, and only the sandbox gets data credentials, from the broker Lambda. See
+[Deployment contract](../reference/deployment.md#two-sandbox-modes).
 
 | Piece | Where it is | Notes |
 | --- | --- | --- |
-| VPC | `network.py` | public (ALB), app, sandbox and data subnets; no NAT gateway; interface endpoints for ECR, logs, Lambda, Secrets Manager, Bedrock, STS, Step Functions, ECS, KMS, CloudWatch; S3 gateway endpoint limited to Alchemist's buckets, the lake and the ECR layer bucket |
+| VPC | `network.py` | public (ALB), api, app, sandbox and data subnets; one NAT gateway routed only from the api subnets (`network.api_egress`); interface endpoints for ECR, logs, Lambda, Secrets Manager, Bedrock, STS, Step Functions, ECS, KMS, CloudWatch; S3 gateway endpoint limited to Alchemist's buckets, the lake and the ECR layer bucket |
 | Buckets and key | `storage.py` | workspace, knowledge, Bedrock invocation logs (all SSE-KMS with one customer key), web (SPA), logs |
-| Database | `database.py` | Aurora PostgreSQL 17 Serverless v2, encrypted, in the data subnets |
+| Database | `database.py`, `services.py` | Aurora PostgreSQL 17 Serverless v2, encrypted, in the data subnets, for when the app moves its index there; until then the SQLite index is shared on encrypted EFS (`storage.shared_sqlite`) |
 | Bedrock | `bedrock.py` | guardrail with a sensitive-information filter, invocation logging to the Alchemist bucket, model allow-list on roles and on the VPC endpoint |
 | Services | `services.py` | ECS cluster, image, roles, task definitions (api, orchestrator, sandbox, sealer, indexer), API service behind the ALB, broker Lambda, nightly indexers |
-| Run workflow | `workflow.py` | Prepare, Plan (waits for approval), StartSandbox, Analyse, Report, StopSandbox, Seal |
+| Run workflow | `workflow.py` | run: Plan, WaitForApproval, Analyse (or the separate-sandbox steps); replay: Replay; plus the approval function |
 | Edge | `edge.py` | CloudFront with the SPA and `/api/*`, `/oauth2/*` routed to the ALB; optional Route 53 records |
 | Operations | `observability.py` | alarms to an SNS topic, CloudTrail with S3 data events on the workspace bucket, optional break-glass role whose every use alarms |
 
@@ -48,8 +49,10 @@ flowchart TB
 
 | Rule | Enforced by |
 | --- | --- |
-| The orchestrator calls Bedrock but cannot read the lake | the orchestrator role has no lake permission and is denied `inputs/` and `work/` in run folders |
-| The sandbox reads the lake but cannot call Bedrock or the internet | no NAT; the Bedrock endpoint's security group admits only app security groups; the sandbox role can only invoke the broker |
+| A run reads only its datasets and writes only its own folder | the run role, narrowed per run by a session policy (assumed by the analyse task in-process, or by the broker for a separate sandbox) |
+| The orchestrator calls Bedrock but cannot read the lake | separate mode: the orchestrator role has no lake permission and is denied `inputs/` and `work/`. In-process mode the analyse task holds both, so this rule rests on the app |
+| The sandbox reads the lake but cannot call Bedrock or the internet | separate mode: no route out of the sandbox subnets; the Bedrock endpoint's security group admits only app security groups; the sandbox role can only invoke the broker |
+| Only the API reaches the internet, for the ALB signing keys | the NAT route exists only in the api subnets |
 | A run reads only its user's plants and writes only its own folder | the broker assumes the run role with a session policy built from the run's grant |
 | Sealed runs cannot change | workspace bucket policy: only the run, orchestrator and sealer roles (and break-glass) may write in run folders; run credentials expire; no role may write `SEALED` except the sealer; optional Object Lock |
 | Only approved models | allow-listed ARNs on the roles and on the Bedrock endpoint policy |
@@ -119,14 +122,16 @@ npx aws-cdk@2 deploy -c env=dev
 
 After the first deployment:
 
-1. **Database.** Run the migration task once (it creates the schema and `CREATE EXTENSION vector`):
-   `aws ecs run-task --cluster <ClusterName> --task-definition <IndexerTaskDefinition> --launch-type FARGATE
-   --network-configuration ... --overrides '{"containerOverrides":[{"name":"indexer","command":["db","migrate"]}]}'`.
-   The stack outputs carry the cluster and task definition names.
-2. **DNS.** Without `domain.hosted_zone_id`, create `domain.name` as an alias to `DistributionDomain` and
+1. **Access rules.** Upload the access file (plant groups, workspaces, identity-claim mapping) to
+   `s3://<WorkspaceBucket>/_config/access.yaml` ([Access](../concepts/access.md)).
+2. **Catalog.** Register and index the pilot datasets with the indexer task
+   (`aws ecs run-task --cluster <ClusterName> --task-definition <IndexerTaskDefinition> --launch-type FARGATE
+   --network-configuration ... --overrides '{"containerOverrides":[{"name":"indexer","command":["catalog","index"]}]}'`).
+   When the app moves to Postgres, run `db migrate` the same way first.
+3. **DNS.** Without `domain.hosted_zone_id`, create `domain.name` as an alias to `DistributionDomain` and
    `domain.api_origin_name` as an alias to `AlbDns`.
-3. **Alarms.** Confirm the SNS e-mail subscription if `operations.alarm_email` is set.
-4. **Gate for phase 1.** Start a run as a user of plant A only and check at S3 (CloudTrail data events) that its
+4. **Alarms.** Confirm the SNS e-mail subscription if `operations.alarm_email` is set.
+5. **Gate for phase 1.** Start a run as a user of plant A only and check at S3 (CloudTrail data events) that its
    sandbox is denied when reading a plant-B prefix.
 
 ## Extend the deployment
@@ -181,11 +186,12 @@ passes in staging (technical design, Operations). Pin the image by digest (`imag
 
 ## Known gaps
 
-- The app side of the contract (the `api`, `worker`, `sandbox serve`, `db migrate` and `knowledge ingest` commands,
-  the broker client, Postgres) is being built in parallel; until it lands, those tasks fail at start.
+- The default deployment matches the app today: the kernel runs inside the analyse task and the index is SQLite on
+  EFS. `sandbox_mode: separate` and Aurora need `sandbox serve`, `worker report`, `worker seal`, the broker client and
+  Postgres support in the app; `knowledge ingest` is not a command yet, so that nightly schedule fails until it is.
 - The broker token travels in the execution input and the sandbox task's environment, so people who can read
   execution history or describe ECS tasks can see it. It is bound to one run and expires with the grant.
 - WAF on CloudFront, Bedrock Guardrails being passed on each model call, S3 Access Grants (for lakes not split by
   plant prefix), cross-region replication, and an alarm for writes to sealed prefixes are not in this stack yet.
-- The ALB's OIDC header is trusted because only the ALB can reach the API; verifying its signature needs the ALB public
-  key endpoint, which is on the internet.
+- The NAT gives the API task general HTTPS egress, not only to the ALB key endpoint. An egress proxy or AWS Network
+  Firewall with a domain allow-list would narrow it to `public-keys.auth.elb.<region>.amazonaws.com`.

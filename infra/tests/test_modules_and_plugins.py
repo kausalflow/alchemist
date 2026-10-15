@@ -25,7 +25,6 @@ def test_edge_and_observability_can_be_left_out(dev_cfg):
     t.resource_count_is("AWS::Events::Rule", 0)
     # The core and its security rules stay.
     t.resource_count_is("AWS::StepFunctions::StateMachine", 1)
-    t.resource_count_is("AWS::EC2::NatGateway", 0)
 
 
 def test_infra_plugin_adds_resources_and_widens_only_the_s3_endpoint(dev_cfg):
@@ -70,7 +69,7 @@ def test_plugin_packages_become_an_image_build_argument(dev_cfg, tmp_path):
 def test_default_loads_only_built_in_app_plugins(resources):
     api = next(v for k, v in resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and "ApiTask" in k)
     env = {e["Name"]: e["Value"] for e in api["Properties"]["ContainerDefinitions"][0]["Environment"]}
-    assert env["ALC_PLUGINS"] == "none" and env["ALC_ACCESS_PROVIDER"] == "alb-oidc"
+    assert env["ALC_PLUGINS"] == "none" and env["ALC_ACCESS_PROVIDER"] == "yaml"
 
 
 @pytest.mark.parametrize("plugins,image,msg", [

@@ -7,6 +7,7 @@ region: eu-central-1
 network:
   cidr: 10.40.0.0/20
   availability_zones: [eu-central-1a, eu-central-1b]
+  api_egress: true                # API only: HTTPS out to verify the ALB's signed identity header
   # To deploy into a landing-zone VPC instead, set `existing:` (see config/example-existing-vpc.yaml).
 
 lake:
@@ -18,6 +19,7 @@ lake:
 storage:
   workspace_versioning: false     # open question 1 in the technical design
   work_expiry_days: 90
+  shared_sqlite: true             # the app's index is SQLite today; shared on EFS until Postgres
   retain_data: false              # dev only; keep true for staging and prod
 
 oidc:                             # placeholder: your identity provider's OIDC app
@@ -58,7 +60,7 @@ plugins:                          # see docs/guides/plugins.md and docs/guides/d
   packages: []                    # pip specs installed into the image, e.g. ["acme-alchemist==1.2.0"]
   enabled: []                     # ALC_PLUGINS (empty = built-ins only); keep explicit in production
   modules: []                     # ALC_PLUGIN_MODULES
-  access_provider: alb-oidc       # ALC_ACCESS_PROVIDER
+  access_provider: yaml           # ALC_ACCESS_PROVIDER; reads s3://<workspace>/_config/access.yaml
   env: {}                         # extra settings for plugins
   infra: []                       # infrastructure plugins: modules with register(ctx)
 
@@ -66,6 +68,10 @@ database:
   min_acu: 0.5
   max_acu: 4
   deletion_protection: false      # dev only
+
+workflow:
+  sandbox_mode: in_process        # what the app supports today; `separate` is the target design
+  approval_timeout_days: 14
 
 operations:
   alarm_email: null

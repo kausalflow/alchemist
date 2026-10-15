@@ -90,6 +90,9 @@ def session_policy(grant: dict) -> dict:
         {"Effect": "Allow", "Action": "s3:GetObject", "Resource": sorted(set(get_arns))},
         {"Effect": "Allow", "Action": ["s3:PutObject", "s3:PutObjectTagging", "s3:AbortMultipartUpload"],
          "Resource": f"arn:aws:s3:::{run_bucket}/{run_key}*"},
+        # Same rule as alchemist.credentials.run_policy: a run never writes or removes its own seal.
+        {"Effect": "Deny", "Action": ["s3:PutObject", "s3:DeleteObject"],
+         "Resource": f"arn:aws:s3:::{run_bucket}/{run_key}SEALED"},
     ]
     for b, prefixes in sorted(list_by_bucket.items()):
         statements.append({"Effect": "Allow", "Action": "s3:ListBucket", "Resource": f"arn:aws:s3:::{b}",
