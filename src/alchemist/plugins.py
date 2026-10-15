@@ -375,8 +375,10 @@ def set_registry(registry: Registry | None) -> None:
 # ---------------------------------------------------------------- built-ins
 
 def _s3_setup(con) -> None:
-    con.execute("install httpfs; load httpfs")
-    con.execute("create secret (type s3, provider credential_chain)")
+    from .paths import duckdb_s3_secret
+
+    con.execute("install httpfs; load httpfs")  # a no-op when the image ships the extension
+    con.execute(duckdb_s3_secret())
 
 
 def _register_builtins(r: Registry) -> None:
@@ -387,7 +389,7 @@ def _register_builtins(r: Registry) -> None:
     r.data_formats.add(DataFormat("json", "read_json_auto", description="JSON or newline-delimited JSON"))
 
     r.storage_backends.add(StorageBackend("file", lambda con: None, "local folders"))
-    r.storage_backends.add(StorageBackend("s3", _s3_setup, "S3 through httpfs and the AWS credential chain"))
+    r.storage_backends.add(StorageBackend("s3", _s3_setup, "S3 through httpfs: the run's own credentials, else the AWS credential chain; AWS_ENDPOINT_URL_S3 honoured"))
 
     r.metadata_parsers.add(MetadataParser("yaml", (".yaml", ".yml", ".json", ""), parse_yaml_text,
                                           "YAML or JSON (YAML is a superset of JSON)"))
@@ -416,3 +418,12 @@ def _register_builtins(r: Registry) -> None:
         return AccessModel.load(settings.access_file)
 
     r.access_providers.add(AccessProvider("yaml", yaml_access, "users, plants and workspaces from ALC_ACCESS"))
+
+    def oidc_access(settings):
+        from .access import ClaimsOnlyAccessModel
+        return ClaimsOnlyAccessModel.load(settings.access_file)
+
+    for name in ("oidc", "alb-oidc"):
+        r.access_providers.add(AccessProvider(name, oidc_access, "identity-provider group claims only (the API passes "
+                                              "verified claims, e.g. from the ALB's x-amzn-oidc-data); plants, "
+                                              "workspaces and group mapping from ALC_ACCESS; local users refused"))

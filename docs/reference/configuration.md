@@ -9,8 +9,18 @@ Alchemist reads its settings from environment variables, with local-friendly def
 | `ALC_HOME` | `./alchemist-home` | base folder for the defaults below and the demo data |
 | `ALC_WORKSPACE` | `$ALC_HOME/workspace` | root of the workspace store; `s3://alchemist-workspace` in production |
 | `ALC_DB` | `$ALC_HOME/alchemist.db` | catalog and run index (SQLite in the MVP) |
-| `ALC_ACCESS` | `$ALC_HOME/access.yaml` | plant groups, workspaces and users (stands in for identity-provider groups) |
+| `ALC_ACCESS` | `$ALC_HOME/access.yaml` | plants, workspaces, identity-provider group mapping, optional local users ([Access model](../concepts/access.md)) |
 | `ALC_KNOWLEDGE` | `$ALC_HOME/knowledge` | documents (`*.md`) and structured knowledge (`structured/*.yaml`) |
+
+## S3 and per-run credentials
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_RUN_ROLE_ARN` | unset | role assumed once per run with a session policy limited to the run's data and folder; unset means the sandbox uses the process's credentials |
+| `ALC_RUN_CREDENTIAL_SECONDS` | `3600` | lifetime of a run's credentials (one hour at most with role chaining) |
+| `AWS_ENDPOINT_URL_S3` | unset | custom S3 endpoint (MinIO, moto, LocalStack), used by boto3, cloudpathlib and DuckDB |
+
+See [S3 and the workspace](../guides/s3.md).
 
 ## Models
 
@@ -31,7 +41,8 @@ Provider credentials are read the usual way: the AWS credential chain for Bedroc
 | --- | --- | --- |
 | `ALC_PLUGINS` | `*` | installed plugins to load (entry-point names, comma-separated); `*` for all, `none` for built-ins only |
 | `ALC_PLUGIN_MODULES` | unset | importable modules to load as plugins without an entry point, e.g. `site_plugins.acme` |
-| `ALC_ACCESS_PROVIDER` | `yaml` | registered access provider for users, plant groups and workspaces; `yaml` reads `ALC_ACCESS` |
+| `ALC_ACCESS_PROVIDER` | `yaml` | registered access provider for users, plant groups and workspaces; `yaml` reads `ALC_ACCESS` with its local users; `oidc` (alias `alb-oidc`) accepts only identity-provider claims |
+| `ALC_GROUP_CLAIM` | `groups` | token claim holding the groups; `identity.group_claim` in `access.yaml` takes precedence |
 
 See [Plugins](../guides/plugins.md).
 

@@ -72,5 +72,6 @@ changed and how many source objects are new or changed.
 
 `SEALED` lists a SHA-256 for every file; its own hash is stored in the catalog database and the audit log.
 `alchemist verify <run-id>` reports any file that is missing, changed or added after sealing. Locally the files are also
-made read-only. In the target design the run's write credentials expire at sealing, and S3 Object Lock adds an
-AWS-enforced layer if versioning is allowed on Alchemist's own workspace bucket.
+made read-only. On S3, `SEALED` is written with a conditional put so a run is sealed only once, the sandbox kernel has
+stopped by then, and the run's own credentials may never write `SEALED`. S3 Object Lock could add an AWS-enforced
+layer if versioning is ever allowed on Alchemist's workspace bucket; it is not needed for the checks above.
