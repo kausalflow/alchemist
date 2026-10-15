@@ -193,5 +193,7 @@ passes in staging (technical design, Operations). Pin the image by digest (`imag
   execution history or describe ECS tasks can see it. It is bound to one run and expires with the grant.
 - WAF on CloudFront, Bedrock Guardrails being passed on each model call, S3 Access Grants (for lakes not split by
   plant prefix), cross-region replication, and an alarm for writes to sealed prefixes are not in this stack yet.
+- SQLite on EFS locks unreliably with several concurrent writers, so the stack runs one API task while
+  `storage.shared_sqlite` is on (more is refused) and the pilot should keep runs few at a time. Postgres removes this.
 - The NAT gives the API task general HTTPS egress, not only to the ALB key endpoint. An egress proxy or AWS Network
   Firewall with a domain allow-list would narrow it to `public-keys.auth.elb.<region>.amazonaws.com`.

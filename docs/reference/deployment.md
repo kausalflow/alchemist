@@ -55,7 +55,7 @@ In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandb
 | `ALC_AUTH` | api | `alb-oidc`: verify the ALB's signed `x-amzn-oidc-data` header |
 | `ALC_ALB_ARN` | api | the ALB that must have signed the header |
 | `ALC_OIDC_GROUPS_CLAIM`, `ALC_GROUP_CLAIM` | api | the groups claim, from `oidc.group_claim` |
-| `ALC_ACCESS_PROVIDER` | api | `plugins.access_provider`, default `yaml` |
+| `ALC_ACCESS_PROVIDER` | api | `plugins.access_provider`, default `alb-oidc`: users only from verified claims; plants, workspaces and group patterns from `ALC_ACCESS` |
 | `ALC_LAUNCHER` | api | `alchemist.sfn_launcher:StepFunctionsLauncher` |
 | `ALC_STATE_MACHINE_ARN` | api | the run workflow |
 | `ALC_APPROVALS` | api | `s3://<workspace bucket>/_approvals/` |
@@ -130,5 +130,5 @@ needs S3 Access Grants instead (technical design, open question 2).
 - `work/` intermediates expire after `storage.work_expiry_days` when tagged `alchemist:tier=work`.
 - `_grants/` is written only by the API and read only by the broker; `_approvals/` only by the API and the approval
   function.
-- `_config/access.yaml` holds the access rules for the `yaml` access provider.
+- `_config/access.yaml` holds the access rules (plants, workspaces, group-name patterns, `identity.group_claim`).
 - Everything under `workspaces/*/runs/*` can be written only by the run, orchestrator and sealer roles.

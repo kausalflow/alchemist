@@ -154,9 +154,10 @@ class Plugins(_Model):
     enabled: list[str] = []
     # ALC_PLUGIN_MODULES: importable modules to load without an entry point.
     modules: list[str] = []
-    # ALC_ACCESS_PROVIDER: the registered access provider for users, plant groups and workspaces. "yaml" reads
-    # ALC_ACCESS (storage.access_file_key), which also maps identity-provider claims to groups.
-    access_provider: str = "yaml"
+    # ALC_ACCESS_PROVIDER: the registered access provider for users, plant groups and workspaces. "alb-oidc" takes
+    # users only from the verified identity-provider claims; plants, workspaces and group-name patterns still come
+    # from ALC_ACCESS (storage.access_file_key).
+    access_provider: str = "alb-oidc"
     # Extra environment for every app container, e.g. settings a plugin reads.
     env: dict[str, str] = {}
     # Infrastructure plugins: importable modules with `register(ctx: InfraContext)`, in addition to installed
@@ -173,7 +174,8 @@ class TaskSize(_Model):
 
 class Sizes(_Model):
     api: TaskSize = TaskSize(cpu=1024, memory_mib=2048)
-    api_count: int = 2
+    # Several writers on SQLite over NFS lock unreliably, so keep one API task while storage.shared_sqlite is on.
+    api_count: int = 1
     orchestrator: TaskSize = TaskSize(cpu=1024, memory_mib=2048)
     sandbox: TaskSize = TaskSize(cpu=4096, memory_mib=16384, ephemeral_gib=100)
     indexer: TaskSize = TaskSize(cpu=2048, memory_mib=8192, ephemeral_gib=50)
@@ -259,6 +261,12 @@ class EnvConfig(_Model):
             raise ValueError("plugins.packages are installed at image build; with a pinned image, bake them into it")
         if self.plugins.env.keys() & {"ALC_PLUGINS", "ALC_PLUGIN_MODULES", "ALC_ACCESS_PROVIDER"}:
             raise ValueError("set plugin selection with plugins.enabled, plugins.modules and plugins.access_provider")
+        return self
+
+    @model_validator(mode="after")
+    def _one_api_on_shared_sqlite(self):
+        if self.storage.shared_sqlite and self.sizes.api_count > 1:
+            raise ValueError("sizes.api_count > 1 needs Postgres; SQLite on EFS supports one API task")
         return self
 
     @property

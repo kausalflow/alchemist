@@ -69,7 +69,7 @@ def test_plugin_packages_become_an_image_build_argument(dev_cfg, tmp_path):
 def test_default_loads_only_built_in_app_plugins(resources):
     api = next(v for k, v in resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and "ApiTask" in k)
     env = {e["Name"]: e["Value"] for e in api["Properties"]["ContainerDefinitions"][0]["Environment"]}
-    assert env["ALC_PLUGINS"] == "none" and env["ALC_ACCESS_PROVIDER"] == "yaml"
+    assert env["ALC_PLUGINS"] == "none" and env["ALC_ACCESS_PROVIDER"] == "alb-oidc"
 
 
 @pytest.mark.parametrize("plugins,image,msg", [

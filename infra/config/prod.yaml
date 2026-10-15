@@ -60,7 +60,7 @@ plugins:                          # see docs/guides/plugins.md and docs/guides/d
   packages: []                    # pip specs installed into the image, e.g. ["acme-alchemist==1.2.0"]
   enabled: []                     # ALC_PLUGINS (empty = built-ins only); keep explicit in production
   modules: []                     # ALC_PLUGIN_MODULES
-  access_provider: yaml           # ALC_ACCESS_PROVIDER; reads s3://<workspace>/_config/access.yaml
+  access_provider: alb-oidc       # ALC_ACCESS_PROVIDER; users from verified OIDC claims, rules from s3://<workspace>/_config/access.yaml
   env: {}                         # extra settings for plugins
   infra: []                       # infrastructure plugins: modules with register(ctx)
 
