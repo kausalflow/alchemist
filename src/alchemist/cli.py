@@ -296,7 +296,12 @@ def cmd_worker(a) -> None:
     try:
         _worker_step(a, svc)
     except Exception as e:  # say so in the database now, not when the API next reconciles
-        mark_failed(svc, a.run_id, e)
+        from .run import checkpoint_of
+
+        # An analysis with a checkpoint stays running: the workflow retries the step, which resumes from it (and
+        # if no retry is left, the API's reconciler pauses the run so a person can resume it).
+        if not (a.step == "analyse" and checkpoint_of(svc.catalog.run(a.run_id)["path"])):
+            mark_failed(svc, a.run_id, e)
         raise
 
 

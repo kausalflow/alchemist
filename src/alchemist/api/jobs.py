@@ -36,6 +36,8 @@ class Launcher(Protocol):
 
     def replay(self, run_id: str) -> None: ...
 
+    def resume(self, run_id: str) -> None: ...
+
     def cancel(self, run_id: str) -> None: ...
 
     def reconcile(self) -> None: ...
@@ -53,10 +55,16 @@ def models(settings: Settings, phase: str):
     return None, None  # run.py builds PydanticAIModel from settings (ALC_LEAD_MODEL, ALC_SUB_MODEL)
 
 
-def stop_requested(svc, run_id: str) -> bool:
-    row = svc.catalog.db.execute("select 1 from audit_events where action = 'run.stop' and target = ? limit 1",
-                                 (run_id,)).fetchone()
-    return row is not None
+def stop_requested(svc, run_id: str) -> str | None:
+    """"stop" or "pause" if a user asked for it since the run last (re)started, else None. Stop wins."""
+    rows = svc.catalog.db.execute("select action, max(id) as id from audit_events where target = ? and action in"
+                                  " ('run.stop', 'run.pause', 'run.resume') group by action", (run_id,)).fetchall()
+    last = {r["action"]: r["id"] for r in rows}
+    if "run.stop" in last:
+        return "stop"  # a stop is never undone; a stopped paused run is resumed only to seal it
+    if last.get("run.pause", -1) > last.get("run.resume", -1):
+        return "pause"
+    return None
 
 
 def mark_failed(svc, run_id: str, error: "Exception | str") -> None:
@@ -65,6 +73,18 @@ def mark_failed(svc, run_id: str, error: "Exception | str") -> None:
 
     reason = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
     end_run(svc, run_id, "failed", actor="system", reason=reason, from_status=ACTIVE)
+
+
+def approved_by(services_factory, run_id: str) -> str:
+    from ..paths import as_path, read_yaml
+
+    svc = services_factory()
+    try:
+        row = svc.catalog.run(run_id)
+    finally:
+        svc.catalog.db.close()
+    q = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
+    return (q.get("plan") or {}).get("approved_by") or row["user_id"]
 
 
 def last_launch(svc, run_id: str) -> dict | None:
@@ -93,23 +113,25 @@ class LocalLauncher:
         def wrapped():
             try:
                 fn()
-            except Exception as e:
+            except Exception as e:  # an analysis with a checkpoint is paused, so it can resume; others fail
+                from ..run import interrupted
+
                 log.error("run %s step failed:\n%s", run_id, traceback.format_exc())
-                mark_failed(self.services(), run_id, e)
+                interrupted(self.services(), run_id, f"{type(e).__name__}: {e}")
         return self.pool.submit(wrapped)
 
     def cancel(self, run_id: str) -> None:
         pass  # the step sees the stop flag; a queued step finds the run cancelled and does nothing
 
     def reconcile(self) -> None:
-        from ..run import ACTIVE
+        from ..run import ACTIVE, interrupted
 
         svc = self.services()
         try:
             for row in svc.catalog.active_runs(ACTIVE):
                 launch = last_launch(svc, row["run_id"])
                 if launch and launch.get("launcher") == "local" and launch.get("instance") != self.instance:
-                    mark_failed(svc, row["run_id"], "the server restarted while this step was running")
+                    interrupted(svc, row["run_id"], "the server restarted while this step was running")
         finally:
             svc.catalog.db.close()
 
@@ -123,6 +145,9 @@ class LocalLauncher:
             model, _ = models(svc.settings, "plan")
             plan(svc, run_id, model=model, should_stop=lambda: stop_requested(svc, run_id))
         self._submit(run_id, go)
+
+    def resume(self, run_id: str) -> None:
+        self.analyse(run_id, approved_by(self.services, run_id))
 
     def analyse(self, run_id: str, user: str) -> None:
         def go():

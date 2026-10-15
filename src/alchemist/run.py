@@ -353,21 +353,71 @@ def end_run(svc: Services, run_id: str, status: str, *, actor: str, reason: str,
     return True
 
 
-def cancel(svc: Services, run_id: str, *, user: "str | User") -> str:
-    """Stop a run as its owner or an admin. Planning or waiting for approval: the run is cancelled at once (nothing
-    was read from the lake yet). Analysing: it stops after the current step and seals a partial report.
-    Returns what happened: "cancelled" or "stopping"."""
+def _owner(svc: Services, row: dict, user: "str | User", what: str) -> "User":
     u = svc.access.resolve(user)
-    row = svc.catalog.run(run_id)
     if u.id != row["user_id"] and not u.is_admin:
-        raise AccessDenied("only the run's owner or an admin can stop it")
-    if row["status"] not in OPEN:
+        raise AccessDenied(f"only the run's owner or an admin can {what} it")
+    return u
+
+
+def cancel(svc: Services, run_id: str, *, user: "str | User") -> str:
+    """Stop a run as its owner or an admin. Returns what happened:
+
+    - "cancelled": it was planning or waiting for approval, and is closed at once (nothing was read from the lake);
+    - "stopping": it is analysing, and stops after the current step, then seals a partial report;
+    - "finishing": it was paused; it must be resumed once to build and seal that partial report (the caller then
+      hands it to the launcher's resume)."""
+    row = svc.catalog.run(run_id)
+    u = _owner(svc, row, user, "stop")
+    if row["status"] not in OPEN + ("paused",):
         raise ValueError(f"run {run_id} is {row['status']}")
     svc.catalog.audit(u.id, "run.stop", run_id)  # the running step sees this between model turns
+    if row["status"] == "paused":
+        if svc.catalog.transition(run_id, "paused", "running"):
+            return "finishing"
+        raise ValueError(f"run {run_id} is {svc.catalog.run(run_id)['status']}")
     if row["status"] != "running" and end_run(svc, run_id, "cancelled", actor=u.id, reason=f"cancelled by {u.id}",
                                              from_status=("planning", "awaiting_approval")):
         return "cancelled"
     return "stopping"
+
+
+def pause(svc: Services, run_id: str, *, user: "str | User") -> None:
+    """Ask an analysing run to pause after its current step. Its conversation and notebook are already saved after
+    every step; the step then ends (in AWS its tasks stop) and the run waits, at no cost, for resume()."""
+    row = svc.catalog.run(run_id)
+    u = _owner(svc, row, user, "pause")
+    if row["status"] != "running" or row["mode"] != "live":
+        raise ValueError(f"only a running analysis can be paused; run {run_id} is {row['status']}")
+    svc.catalog.audit(u.id, "run.pause", run_id)
+
+
+def resume(svc: Services, run_id: str, *, user: "str | User") -> None:
+    """Mark a paused run running again; the caller hands it to the launcher's resume(), whose analysis step picks
+    up from the checkpoint."""
+    row = svc.catalog.run(run_id)
+    u = _owner(svc, row, user, "resume")
+    if row["status"] != "paused":
+        raise ValueError(f"run {run_id} is {row['status']}, not paused")
+    # Without a checkpoint (paused before its first step finished) the analysis simply starts again.
+    check_capacity(svc, row["user_id"])
+    if not svc.catalog.transition(run_id, "paused", "running"):
+        raise ValueError(f"run {run_id} is {svc.catalog.run(run_id)['status']}, not paused")
+    svc.catalog.audit(u.id, "run.resume", run_id)
+    update_question(as_path(row["path"]).parent.parent, status="running")
+
+
+def interrupted(svc: Services, run_id: str, reason: str) -> str | None:
+    """A step died without saying so. An analysis with a checkpoint is paused, so it can be resumed from its last
+    step; anything else fails. Returns the new status, or None if the run had already moved on."""
+    row = svc.catalog.run(run_id)
+    if row["status"] == "running" and not row.get("seal_sha256") and checkpoint_of(row["path"]):
+        if svc.catalog.transition(run_id, "running", "paused"):
+            svc.catalog.audit("system", "run.paused", run_id, {"reason": f"interrupted: {reason}"[:1000]})
+            update_question(as_path(row["path"]).parent.parent, status="paused")
+            return "paused"
+        return None
+    return "failed" if end_run(svc, run_id, "failed", actor="system", reason=reason, from_status=ACTIVE) else None
 
 
 def create(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict) -> dict:
@@ -483,10 +533,30 @@ def _record_approval(svc: Services, row: dict, user: str, plan: dict | None) -> 
     return ctx.plan
 
 
+CHECKPOINT = "logs/checkpoint.json"
+
+
+def checkpoint_of(run) -> dict | None:
+    """The analysis checkpoint of a run folder: the conversation, budget and notebook position after its last
+    completed turn. A run with one can be paused and resumed, and recovers from a crash or a timeout."""
+    f = as_path(run) / CHECKPOINT
+    try:
+        return read_json(f) if f.exists() else None
+    except (json.JSONDecodeError, FileNotFoundError):
+        return None
+
+
 def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None, reviewer: Model | None = None,
-            should_stop: Callable[[], bool] | None = None, sandbox_url: str | None = None) -> dict:
+            should_stop: "Callable[[], bool | str | None] | None" = None, sandbox_url: str | None = None) -> dict:
     """The analysis step of an approved run: query, compute, review, report, seal (in-process; with a separate
-    sandbox the workflow's Seal step seals)."""
+    sandbox the workflow's Seal step seals).
+
+    After every completed turn the step writes a checkpoint. If the run has one when the step starts (it was paused,
+    or an earlier attempt crashed or timed out), the step resumes: a fresh kernel re-runs the notebook's cells on
+    their stored snapshots, and the conversation continues where it stopped. A pause request, or a model provider
+    that stays unavailable, ends the step with the run `paused` instead of sealing it."""
+    from .llm import is_retryable
+
     s = svc.settings
     row = svc.catalog.run(run_id)
     if row["status"] != "running":
@@ -498,15 +568,21 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     reviewer = reviewer or PydanticAIModel(s, s.sub_model, effort="medium")
     ctx.models.update(lead=model.name, reviewer=reviewer.name)
     budget = Budget(s.max_steps, s.max_output_tokens_total)
+    saved = checkpoint_of(ctx.run)
     ended = "error"
     with svc.sandbox(ctx, views, run_mode="live", sandbox_url=sandbox_url) as sb:
         ctx.sandbox = sb
         if sb.kernel.credentials is not None:
             ctx.credentials = sb.kernel.credentials
-        sb.add_markdown(f"# {question['text']}\n\nRun `{run_id}` · approved plan v{ctx.plan.get('version')} · "
-                        f"plants {', '.join(sorted(ctx.plants))}\n\nSet `run_mode = 'replay'` in the next cell to "
-                        "re-execute on the stored snapshots.")
-        sb.setup()
+        if saved:
+            replay_errors = _restore(ctx, sb, budget, model, saved)
+            svc.catalog.audit("system", "run.resumed", run_id, {"cells": saved["notebook"]["cells"],
+                                                                 "steps": budget.steps, "cell_errors": replay_errors})
+        else:
+            sb.add_markdown(f"# {question['text']}\n\nRun `{run_id}` · approved plan v{ctx.plan.get('version')} · "
+                            f"plants {', '.join(sorted(ctx.plants))}\n\nSet `run_mode = 'replay'` in the next cell to "
+                            "re-execute on the stored snapshots.")
+            sb.setup()
         handlers = {"search_catalog": ctx.search_catalog, "search_knowledge": ctx.search_knowledge,
                     "run_query": ctx.run_query, "run_python": ctx.run_python, "record_finding": ctx.record_finding,
                     "suggest_catalog_fix": ctx.suggest_catalog_fix,
@@ -523,19 +599,59 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
         try:
             ended = run_loop(model, system=prompts.ANALYSIS_SYSTEM, tools=prompts.tool_list(prompts.ANALYSIS_TOOLS, extra_tools),
                              handlers=handlers, first_message=first, done=lambda: ctx.report_out is not None,
-                             budget=budget, transcript=ctx.run / "logs" / "transcript.jsonl", should_stop=should_stop)
+                             budget=budget, transcript=ctx.run / "logs" / "transcript.jsonl", should_stop=should_stop,
+                             checkpoint=lambda state: _save_checkpoint(ctx, sb, budget, state), resume=saved)
         except Exception as e:  # a model or network failure still ends in a sealed, partial run
             ended = f"error: {type(e).__name__}: {e}"
+            if is_retryable(e) and checkpoint_of(ctx.run):  # the provider is down: keep the work, resume later
+                ended = f"paused: the model provider is unavailable ({type(e).__name__}: {str(e)[:300]})"
         finally:
-            if ctx.report_out is None and ctx._findings():
+            if ctx.report_out is None and ctx._findings() and not ended.startswith("paused"):
                 # Budget stop or failure: still leave a partial report of what was found.
                 partial = {"title": f"Partial result: {question['text']}",
                            "conclusion": "The run stopped before it finished; findings so far are listed below.",
                            "top_causes": [], "limitations": [f"Run ended early: {ended}"]}
                 ctx.review_requested = True
                 ctx.build_report(partial)
+    if ended.startswith("paused"):
+        return _pause(svc, ctx, budget, ended)
     status = "completed" if ended == "done" else "partial"
     return _finish(svc, ctx, status, usage=budget.as_dict(), extra={"analysis_ended": ended})
+
+
+def _save_checkpoint(ctx: RunContext, sb: Sandbox, budget: Budget, state: dict) -> None:
+    write_json(ctx.run / CHECKPOINT, {
+        "schema": "alchemist.checkpoint/v1", "phase": "analysis", "at": now(), **state,
+        "budget": budget.as_dict(),
+        "context": {"query_n": ctx.query_n, "finding_n": ctx.finding_n, "review_requested": ctx.review_requested,
+                    "review": ctx.review},
+        "notebook": {"cells": len(sb.nb.cells), "counter": sb.counter}})
+
+
+def _restore(ctx: RunContext, sb: Sandbox, budget: Budget, model: Model, saved: dict) -> list[dict]:
+    """Put a resumed step back where the checkpoint left it: kernel state, counters, budget, model position."""
+    errors = sb.restore(cells=saved["notebook"]["cells"], counter=saved["notebook"]["counter"])
+    c = saved["context"]
+    ctx.query_n, ctx.finding_n = c["query_n"], c["finding_n"]
+    ctx.review_requested, ctx.review = c["review_requested"], c["review"]
+    b = saved["budget"]
+    budget.steps, budget.model_calls = b["steps"], b["model_calls"]
+    budget.input_tokens, budget.output_tokens = b["input_tokens"], b["output_tokens"]
+    if hasattr(model, "advance"):  # the offline script continues from the turn it reached
+        model.advance(budget.model_calls)
+    sb.add_markdown(f"*Resumed {now()} from the checkpoint of {saved['at']}: the cells above were re-run on their "
+                    "stored snapshots in a fresh kernel.*")
+    return errors
+
+
+def _pause(svc: Services, ctx: RunContext, budget: Budget, ended: str) -> dict:
+    run_id = ctx.row["run_id"]
+    ctx.write_manifest("paused", usage=budget.as_dict(), extra={"analysis_ended": ended})
+    if svc.catalog.transition(run_id, "running", "paused"):
+        svc.catalog.audit("system", "run.paused", run_id, {"reason": ended, "steps": budget.steps})
+        update_question(ctx.qdir, status="paused")
+    return {"run_id": run_id, "status": svc.catalog.run(run_id)["status"], "path": str(ctx.run), "seal_sha256": None,
+            "analysis_ended": ended}
 
 
 def _finish(svc: Services, ctx: RunContext, status: str, usage: dict, extra: dict | None = None) -> dict:
@@ -559,6 +675,8 @@ def report_step(svc: Services, run_id: str) -> dict:
     row = svc.catalog.run(run_id)
     if row["status"] != "running":
         return {"run_id": run_id, "status": row["status"], "ended": "already reported"}
+    if checkpoint_of(row["path"]) and interrupted(svc, run_id, "the analysis step stopped before it finished") == "paused":
+        return {"run_id": run_id, "status": "paused", "ended": "paused; resume continues from the last step"}
     ctx = RunContext(svc, row, user=(read_yaml(as_path(row["path"]).parent.parent / "question.yaml").get("plan") or {})
                      .get("approved_by") or row["user_id"])
     ended = "the analysis step stopped before it finished"
@@ -580,6 +698,8 @@ def seal_step(svc: Services, run_id: str) -> dict:
     row = svc.catalog.run(run_id)
     if row.get("seal_sha256"):
         return {"run_id": run_id, "status": row["status"], "seal_sha256": row["seal_sha256"]}
+    if row["status"] == "paused":  # sealed only once it finishes, after resume
+        return {"run_id": run_id, "status": "paused", "seal_sha256": None}
     status = "failed" if row["status"] in ("planning", "running") else row["status"]  # a step died without a word
     run = as_path(row["path"])
     if (run / "SEALED").exists():  # sealed by an earlier attempt that failed before indexing it

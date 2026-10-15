@@ -86,13 +86,14 @@ def _launcher(request: Request):
 
 
 def _launch(svc, request: Request, run_id: str, step: str, *args) -> None:
-    """Hand a step to the launcher; if that fails, close the run instead of leaving it looking busy."""
-    from .jobs import mark_failed
+    """Hand a step to the launcher; if that fails, close the run (or pause it again, if it can resume) instead of
+    leaving it looking busy."""
+    from ..run import interrupted
 
     try:
         getattr(_launcher(request), step)(run_id, *args)
     except Exception as e:
-        mark_failed(svc, run_id, f"could not start the {step} step: {type(e).__name__}: {e}")
+        interrupted(svc, run_id, f"could not start the {step} step: {type(e).__name__}: {e}")
         raise HTTPException(503, f"could not start the run's {step} step; try again") from e
 
 
@@ -182,6 +183,7 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
     purposes = _query_purposes(run)
     children = [_summary(svc, me, r) for r in svc.catalog.runs() if r["parent_run"] == run_id]
     is_owner = me.user.id == q["asker"] or me.user.is_admin
+    owns = me.user.id == row["user_id"] or me.user.is_admin
     return {
         "run": s,
         "entitled": True,
@@ -189,8 +191,9 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
         "plan": q["plan"],
         "permissions": {
             "approve": row["status"] == "awaiting_approval" and is_owner,
-            "stop": row["status"] in ("planning", "awaiting_approval", "running")
-            and (me.user.id == row["user_id"] or me.user.is_admin),
+            "stop": row["status"] in ("planning", "awaiting_approval", "running", "paused") and owns,
+            "pause": row["status"] == "running" and row["mode"] == "live" and owns,
+            "resume": row["status"] == "paused" and owns,
             "replay": bool(row["seal_sha256"]),
             "verdict": bool(row["seal_sha256"]) and in_workspace(me, row["workspace"]),
         },
@@ -243,8 +246,8 @@ def _failure(svc, run_id: str) -> dict | None:
 
 
 def _closed(svc, run_id: str) -> dict | None:
-    """Why a run was cancelled or expired (who, when, reason)."""
-    rows = _audit(svc, run_id, "run.cancel") + _audit(svc, run_id, "run.expire")
+    """Why a run was cancelled, expired or paused (who, when, reason)."""
+    rows = _audit(svc, run_id, "run.cancel") + _audit(svc, run_id, "run.expire") + _audit(svc, run_id, "run.paused")
     return sorted(rows, key=lambda r: r["at"])[-1] if rows else None
 
 
@@ -391,7 +394,7 @@ async def events(run_id: str, request: Request, svc: Svc, me: Me, poll: float = 
             for phase, step in all_steps[sent:]:
                 yield _sse("step", {"phase": phase, **step})
             sent = len(all_steps)
-            if status in TERMINAL:
+            if status in TERMINAL or status == "paused":
                 yield _sse("end", {"status": status})
                 return
             await asyncio.sleep(poll)
@@ -453,8 +456,45 @@ def stop(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
             _launcher(request).cancel(run_id)
         except Exception:  # the run is closed either way; reconcile() ends a workflow left behind
             pass
+    elif result == "finishing":  # paused: resume it once, so it builds and seals its partial report
+        _launch(svc, request, run_id, "resume")
     return {"run_id": run_id, "stop_requested": True, "result": result,
             "status": svc.catalog.run(run_id)["status"]}
+
+
+@router.post("/runs/{run_id}:pause")
+def pause_run(run_id: str, svc: Svc, me: Me) -> dict:
+    """Pause a running analysis after its current step. Nothing is lost: the conversation and the notebook are saved
+    after every step, and its tasks stop until it is resumed."""
+    from ..run import pause
+
+    entitled_run(svc, me, run_id)
+    try:
+        pause(svc, run_id, user=me.user)
+    except AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    return {"run_id": run_id, "pause_requested": True}
+
+
+@router.post("/runs/{run_id}:resume")
+def resume_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
+    """Continue a paused run from its last step: a fresh kernel re-runs the notebook on its stored snapshots, then the
+    agent carries on."""
+    from ..run import RunLimit, resume
+
+    entitled_run(svc, me, run_id)
+    try:
+        resume(svc, run_id, user=me.user)
+    except AccessDenied as e:
+        raise HTTPException(403, str(e)) from e
+    except RunLimit as e:
+        raise _limit_error(e) from e
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    _launch(svc, request, run_id, "resume")
+    return {"run_id": run_id, "status": "running"}
 
 
 class ReplayBody(BaseModel):

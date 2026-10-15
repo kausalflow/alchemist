@@ -61,7 +61,7 @@ In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandb
 | `ALC_ACCESS_PROVIDER` | api | `plugins.access_provider`, default `alb-oidc`: users only from verified claims; plants, workspaces and group patterns from `ALC_ACCESS` |
 | `ALC_LAUNCHER` | api | `alchemist.sfn_launcher:StepFunctionsLauncher` |
 | `ALC_STATE_MACHINE_ARN` | api | the run workflow |
-| `ALC_GRANT_HOURS` | api | how long a broker grant lasts after approval: `workflow.analysis_timeout_hours` + 2 |
+| `ALC_GRANT_HOURS` | api | how long a broker grant lasts after approval or resume: `workflow.analysis_timeout_hours` × (1 + `workflow.analysis_retries`) + 2 |
 | `ALC_APPROVALS` | api | `s3://<workspace bucket>/_approvals/` |
 | `ALC_RUN_ROLE_ARN`, `ALC_RUN_CREDENTIAL_SECONDS` | orchestrator (in-process) | the run role; `3600` |
 | `ALC_PSEUDONYM_KEY` | indexer, orchestrator (in-process), sandbox (separate) | from Secrets Manager |
@@ -93,14 +93,15 @@ The API's launcher (`alchemist.sfn_launcher`) starts one execution of `ALC_STATE
 
 | State | Does |
 | --- | --- |
-| Prepare, Mode | build the commands; choose run or replay |
+| Prepare, Mode | build the commands; choose run, replay or resume (resume skips to the analysis) |
 | Plan | `worker plan` to completion |
 | WaitForApproval | the approval function stores the task token at `_approvals/<run_id>/token.json`; the execution waits (up to `workflow.approval_timeout_days`) until the launcher sends it. If the approval was written first, the function sends it at once |
-| Analyse | in-process: `worker analyse`, which also builds the report and seals the run (a model failure still ends in a sealed partial run). Separate: StartSandbox (with the broker token), Analyse (with the sandbox's task ARN), Report, StopSandbox and Seal; Report and Seal run even when Analyse fails |
+| Analyse | in-process: `worker analyse`, which also builds the report and seals the run (a model failure still ends in a sealed partial run). Separate: StartSandbox (with the broker token), Analyse (with the sandbox's task ARN), Report, StopSandbox and Seal; Report and Seal run even when Analyse fails. Analyse is retried up to `workflow.analysis_retries` times when its task fails or times out; each attempt resumes from the run's checkpoint. A paused run's Report and Seal do nothing |
 | Replay | in-process: `worker replay`. Separate: StartReplaySandbox, Replay, StopReplaySandbox and SealReplay |
 
-Stopping is an audit event (`run.stop`) that workers check between steps; the API should not call `StopExecution`,
-which would end the execution without a report.
+Stopping and pausing are audit events (`run.stop`, `run.pause`) that workers check between steps; the API calls
+`StopExecution` only for a run cancelled while planning or waiting for approval, since it would end an analysis without
+a report. Resuming a paused run starts a new execution, `<run_id>-resume-<time>`, with `"mode": "resume"`.
 
 ## Credential broker (separate mode)
 

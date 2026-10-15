@@ -72,6 +72,7 @@ database:
 workflow:
   sandbox_mode: in_process        # `separate`: kernel in its own task with broker credentials (try in dev first)
   approval_timeout_days: 14
+  analysis_retries: 2             # a failed or timed-out analysis task restarts and resumes from its checkpoint
 
 operations:
   alarm_email: null

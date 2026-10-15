@@ -202,3 +202,24 @@ def test_retries_stop_at_the_budget():
 
     with pytest.raises(Throttled):
         with_retries(call, budget_seconds=0, sleep=lambda s: None)
+
+
+def test_step_functions_resume_starts_a_new_execution_and_reconcile_pauses_a_dead_one(svc):
+    from alchemist.api.app import services_factory_for
+    from alchemist.paths import write_json
+
+    rid = planned(svc)
+    start_approval(svc, rid, user="eng_p1")
+    write_json(as_path(svc.catalog.run(rid)["path"]) / "logs" / "checkpoint.json", {"schema": "test"})
+    sfn = FakeSfn({})
+    l = StepFunctionsLauncher(services_factory_for(svc.settings, ttl=0), state_machine_arn=
+                              "arn:aws:states:eu-central-1:123:stateMachine:alc-runs", approvals="s3://ws/_approvals/",
+                              sfn=sfn, s3=object())
+    l.resume(rid)
+    (started,) = sfn.started
+    assert json.loads(started["input"]) == {"run_id": rid, "mode": "resume"}
+    assert started["name"].startswith(f"{rid}-resume-")
+    sfn.statuses[started["name"]] = "TIMED_OUT"  # every attempt of the analysis timed out
+    l.reconcile()
+    assert svc.catalog.run(rid)["status"] == "paused"  # it has a checkpoint: resumable, not failed
+    svc.catalog.transition(rid, "paused", "failed")

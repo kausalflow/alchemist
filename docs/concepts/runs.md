@@ -14,7 +14,9 @@ stateDiagram-v2
     awaiting_approval --> expired: not approved in time (AWS)
     running --> completed: report built
     running --> partial: budget stop, stop, or error
-    running --> failed: the step died (task killed, timed out)
+    running --> paused: pause, provider down, or the step died
+    paused --> running: resume
+    running --> failed: the step died before its first checkpoint
     completed --> [*]: sealed
     partial --> [*]: sealed
 ```
@@ -100,15 +102,40 @@ Stop (`POST /runs/{id}:stop`, the Stop or Cancel button) depends on where the ru
 | --- | --- |
 | `planning`, `awaiting_approval` | the run is `cancelled` at once; nothing was read from the lake yet. In AWS its workflow execution is stopped too |
 | `running` | the agent stops after its current step (a cell can take up to 15 minutes), builds a partial report of the findings so far and seals the run as `partial` |
+| `paused` | the run is resumed once to build and seal that partial report |
 
-The only pause is the wait for plan approval: the plan waits for its owner (in AWS for up to
-`workflow.approval_timeout_days`, at no cost, then the run is `expired`). There is no pause in the middle of an
-analysis. The kernel's state and the model's conversation live in one process, so a stopped analysis is sealed as
-`partial`; to go further, ask again (the plan can reuse the earlier one) or `rerun` it.
+### Pause and resume
 
-A step that dies without saying so (the API restarted under a local thread, an ECS task was killed, ran out of memory
-or hit `workflow.analysis_timeout_hours`) is closed as `failed` by the API's reconciler, which runs every
-`ALC_RECONCILE_SECONDS`. A worker that raises marks its run failed itself, so in AWS a failed task shows at once.
+A plan waits for approval at no cost (in AWS for up to `workflow.approval_timeout_days`, then the run is `expired`).
+A running analysis can be paused too (`POST /runs/{id}:pause`, the Pause button):
+
+- **Checkpoint.** After every completed step the analysis writes `logs/checkpoint.json`: the model conversation (without
+  image payloads), the budget used so far, the query and finding counters, and how many notebook cells exist. The
+  notebook itself is saved after every cell, as before.
+- **Pause.** The agent stops after its current step. The run is `paused`, nothing is reported or sealed, and its
+  tasks end (in AWS the execution finishes; a separate sandbox task is stopped), so a paused run costs nothing.
+- **Resume** (`POST /runs/{id}:resume`). A new analysis step starts a fresh kernel, reads the notebook back up to the
+  checkpoint and re-runs its code cells in replay mode, so every query reads the snapshot it stored and nothing reads
+  the lake again; then the kernel switches back to live mode and the conversation continues where it stopped. The
+  notebook gets one note where it resumed, and the transcript carries on in the same file. Re-running the cells takes
+  as long as they took the first time.
+
+The same checkpoint makes a run survive its step dying:
+
+- In AWS, `Analyse` is retried up to `workflow.analysis_retries` times (default 2) when its task fails or hits
+  `workflow.analysis_timeout_hours`, and each attempt resumes from the checkpoint. A run can therefore go past the
+  timeout, and each attempt gets fresh run credentials.
+- If no retry is left, or a local server restarted under the step, the API's reconciler (every
+  `ALC_RECONCILE_SECONDS`) pauses the run, so its owner can resume it. A model provider that stays unavailable past
+  `ALC_MODEL_RETRY_SECONDS` pauses the run as well.
+- A step that dies before its first checkpoint, or a planning step, is closed as `failed`.
+
+Work after the last checkpoint is lost: if a step dies after a cell ran but before the step was saved, that cell is
+dropped from the notebook and any finding it recorded is removed, and the agent does that step again.
+
+With a separate sandbox, resume starts a new sandbox task with a new broker grant. A retry of `Analyse` reuses the
+running sandbox task, whose kernel is rebuilt the same way; if the sandbox task itself died, the retries fail and the
+run is paused for a person to resume.
 
 ## Many people at once
 

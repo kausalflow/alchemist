@@ -9,6 +9,7 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "failed",
   mismatch: "replay mismatch",
   cancelled: "cancelled",
+  paused: "paused",
   expired: "plan expired",
 };
 

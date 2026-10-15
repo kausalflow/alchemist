@@ -222,3 +222,35 @@ def test_alb_token_is_verified(monkeypatch):
         verify_alb_jwt(token(claims, signer="arn:other"), key_loader=lambda region, kid: pem)
     with pytest.raises(NotSignedIn):
         verify_alb_jwt(token(claims)[:-4] + "AAAA", key_loader=lambda region, kid: pem)
+
+
+def test_pause_and_resume_through_the_api(client, svc):
+    from alchemist.agent import ScriptedModel
+    from alchemist.run import ScriptedReviewer, analyse
+
+    h = as_user("eng_p1")
+    r = client.post("/api/questions", headers=h, json={"workspace": "quality", "project": "line2-api",
+                                                       "question": "Pause and resume test", "scope": script.SCOPE})
+    rid = r.json()["run_id"]
+    assert client.post(f"/api/runs/{rid}:pause", headers=h).status_code == 409  # not analysing yet
+    from alchemist.run import start_approval
+
+    start_approval(svc, rid, user="eng_p1")
+    assert client.get(f"/api/runs/{rid}", headers=h).json()["permissions"]["pause"]
+    assert client.post(f"/api/runs/{rid}:pause", headers=as_user("eng_p2")).status_code in (403, 404)
+    assert client.post(f"/api/runs/{rid}:pause", headers=h).status_code == 200
+    analyse(svc, rid, user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
+            reviewer=ScriptedReviewer(script.REVIEW), should_stop=lambda: "pause" if svc.catalog.run(rid) else None)
+    run = client.get(f"/api/runs/{rid}", headers=h).json()
+    assert run["run"]["status"] == "paused" and run["permissions"]["resume"] and run["permissions"]["stop"]
+    svc.catalog.transition(rid, "paused", "running")  # stands in for a resume
+    calls = []
+    analyse(svc, rid, user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
+            reviewer=ScriptedReviewer(script.REVIEW),
+            should_stop=lambda: calls.append(1) or ("pause" if len(calls) > 4 else None))
+    assert client.get(f"/api/runs/{rid}", headers=h).json()["run"]["status"] == "paused"
+    with client.stream("GET", f"/api/runs/{rid}/events", headers=h) as s:
+        assert '"status": "paused"' in "".join(s.iter_text())  # the live view ends on a pause
+    r = client.post(f"/api/runs/{rid}:resume", headers=h)  # the inline launcher finishes it here
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/runs/{rid}", headers=h).json()["run"]["status"] == "completed"

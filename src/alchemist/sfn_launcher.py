@@ -5,9 +5,11 @@ Selected with ALC_LAUNCHER=alchemist.sfn_launcher:StepFunctionsLauncher. The API
 - plan(run_id) right after creating a run: starts the execution, which plans and then waits for approval;
 - analyse(run_id, user) right after recording the approval: releases the waiting execution;
 - replay(run_id) right after creating a replay run: starts an execution in replay mode;
+- resume(run_id) after a paused run was resumed (or stopped, to seal it): starts an execution in resume mode;
 - cancel(run_id) after a run was cancelled while planning or waiting for approval: stops its execution;
 - reconcile() every ALC_RECONCILE_SECONDS: a run whose execution ended (a task killed or timed out, approval timed
-  out) while the database still says it is busy is closed as failed, or expired if it was waiting for approval.
+  out) while the database still says it is busy is closed: expired if it was waiting for approval, paused if it
+  was analysing and has a checkpoint (so it can be resumed), failed otherwise.
 
 Approval is a task token the workflow stores at <ALC_APPROVALS><run_id>/token.json. This launcher writes
 approved.json next to it and sends the token; if the token is not stored yet (approval came before planning
@@ -54,24 +56,31 @@ class StepFunctionsLauncher:
     def _name(self, run_id: str, mode: str) -> str:
         return f"{run_id}-{mode}"[:80]
 
-    def _execution_arn(self, run_id: str, mode: str) -> str:
+    def _execution_arn(self, name: str) -> str:
         # arn:aws:states:<region>:<account>:stateMachine:<name> -> ...:execution:<name>:<execution name>
-        return self.state_machine_arn.replace(":stateMachine:", ":execution:", 1) + ":" + self._name(run_id, mode)
+        return self.state_machine_arn.replace(":stateMachine:", ":execution:", 1) + ":" + name
 
     def _start(self, run_id: str, mode: str, token: str | None = None) -> None:
         body = {"run_id": run_id, "mode": mode, **({"broker_token": token} if token else {})}
-        self.sfn.start_execution(stateMachineArn=self.state_machine_arn, name=self._name(run_id, mode),
-                                 input=json.dumps(body))
+        # Execution names are unique per state machine, and a run can be resumed many times.
+        name = self._name(run_id, mode if mode != "resume" else f"resume-{int(dt.datetime.now().timestamp())}")
+        self.sfn.start_execution(stateMachineArn=self.state_machine_arn, name=name, input=json.dumps(body))
         if self.services:
             svc = self.services()
             try:
-                svc.catalog.audit("system", "run.launch", run_id, {"launcher": "sfn", "mode": mode})
+                svc.catalog.audit("system", "run.launch", run_id, {"launcher": "sfn", "mode": mode, "execution": name})
             finally:
                 svc.catalog.db.close()
 
+    def resume(self, run_id: str) -> None:
+        """A paused run: a new execution goes straight to the analysis, which resumes from the checkpoint (with a
+        separate sandbox, on a new sandbox task with a new broker grant)."""
+        self._start(run_id, "resume", self._new_grant(run_id, ready=True))
+
     def cancel(self, run_id: str) -> None:
         try:
-            self.sfn.stop_execution(executionArn=self._execution_arn(run_id, "run"), cause="cancelled in Alchemist")
+            self.sfn.stop_execution(executionArn=self._execution_arn(self._name(run_id, "run")),
+                                    cause="cancelled in Alchemist")
         except self.sfn.exceptions.ExecutionDoesNotExist:
             pass
 
@@ -79,7 +88,7 @@ class StepFunctionsLauncher:
         if not self.services:
             return
         from .api.jobs import last_launch
-        from .run import OPEN, end_run
+        from .run import OPEN, end_run, interrupted
 
         svc = self.services()
         try:
@@ -88,7 +97,8 @@ class StepFunctionsLauncher:
                 if not launch or launch.get("launcher") != "sfn":
                     continue  # started some other way (the CLI): not ours to judge
                 try:
-                    ex = self.sfn.describe_execution(executionArn=self._execution_arn(row["run_id"], launch["mode"]))
+                    name = launch.get("execution") or self._name(row["run_id"], launch["mode"])
+                    ex = self.sfn.describe_execution(executionArn=self._execution_arn(name))
                 except self.sfn.exceptions.ExecutionDoesNotExist:
                     continue
                 if ex["status"] == "RUNNING":
@@ -97,8 +107,8 @@ class StepFunctionsLauncher:
                 if row["status"] == "awaiting_approval":
                     end_run(svc, row["run_id"], "expired", actor="system", reason=f"plan was not approved in time ({why})",
                             from_status=("awaiting_approval",))
-                else:
-                    end_run(svc, row["run_id"], "failed", actor="system", reason=why, from_status=("planning", "running"))
+                else:  # an analysis with a checkpoint is paused, so it can be resumed; anything else fails
+                    interrupted(svc, row["run_id"], why)
         finally:
             svc.catalog.db.close()
 

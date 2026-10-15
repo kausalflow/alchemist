@@ -215,6 +215,8 @@ class Workflow(_Model):
     sandbox_mode: Literal["in_process", "separate"] = "in_process"
     approval_timeout_days: int = 14
     analysis_timeout_hours: int = 6
+    # Attempts after the first when an analysis task fails or times out; each resumes from the run's checkpoint.
+    analysis_retries: int = 2
     # Nightly catalog re-index and knowledge ingestion (UTC cron, EventBridge syntax).
     index_schedule: str = "cron(0 2 * * ? *)"
 

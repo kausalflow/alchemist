@@ -9,6 +9,11 @@ also carries "broker_token".
     mode = run:     Plan -> WaitForApproval -> Analyse                                   (sandbox_mode: in_process)
                     Plan -> WaitForApproval -> StartSandbox -> Analyse -> Report
                          -> StopSandbox -> Seal                                          (sandbox_mode: separate)
+    mode = resume:  the same, from Analyse (in_process) or StartSandbox (separate)
+
+The analysis writes a checkpoint after every step. A paused run's execution ends (Report and Seal leave a paused run
+alone); resuming it starts a new execution in resume mode. Analyse is retried up to workflow.analysis_retries times
+when its task fails or times out, and each attempt resumes from the checkpoint.
 
 WaitForApproval invokes the approval function with the task token, which stores it in the workspace bucket under
 `_approvals/<run_id>/`; the execution then waits at no cost until the launcher sends the token on approval (see
@@ -111,14 +116,20 @@ class RunWorkflow(Construct):
         if svc.in_process:
             analyse = run_task("Analyse", command_path="$.cmd.analyse", env=run_env,
                                timeout=Duration.hours(wf.analysis_timeout_hours), **orch)
+            self._retry_analysis(analyse, wf)
             analyse.add_catch(failed, result_path="$.error")
             body = plan.next(wait).next(analyse).next(done)
+            analysis = analyse
         else:
             body = plan.next(wait).next(self._separate(cfg, network, svc, run_task, orch, run_env, failed, done))
+            analysis = self.analysis_entry
 
-        mode = sfn.Choice(self, "Mode").when(
-            sfn.Condition.and_(sfn.Condition.is_present("$.mode"), sfn.Condition.string_equals("$.mode", "replay")),
-            replay).otherwise(body)
+        def mode_is(m: str):
+            return sfn.Condition.and_(sfn.Condition.is_present("$.mode"), sfn.Condition.string_equals("$.mode", m))
+
+        # resume: a paused run goes straight to its analysis, which continues from the run's checkpoint.
+        mode = sfn.Choice(self, "Mode").when(mode_is("replay"), replay).when(mode_is("resume"), analysis) \
+            .otherwise(body)
         definition = prepare.next(mode)
 
         self.log_group = logs.LogGroup(self, "Logs", log_group_name=f"/aws/vendedlogs/states/{cfg.prefix}-runs",
@@ -127,7 +138,8 @@ class RunWorkflow(Construct):
             self, "Runs", state_machine_name=f"{cfg.prefix}-runs",
             definition_body=sfn.DefinitionBody.from_chainable(definition),
             state_machine_type=sfn.StateMachineType.STANDARD, tracing_enabled=True,
-            timeout=Duration.hours(24 * wf.approval_timeout_days + wf.analysis_timeout_hours + 4),
+            timeout=Duration.hours(24 * wf.approval_timeout_days
+                                   + wf.analysis_timeout_hours * (1 + wf.analysis_retries) + 4),
             # Execution data can hold the broker token, so it is not logged.
             logs=sfn.LogOptions(destination=self.log_group, level=sfn.LogLevel.ERROR, include_execution_data=False))
 
@@ -138,6 +150,14 @@ class RunWorkflow(Construct):
             actions=["states:StopExecution"], resources=[f"arn:aws:states:{cfg.region}:{cfg.account}:execution:"
                                                          f"{cfg.prefix}-runs:*"]))
         svc.api_container.add_environment("ALC_STATE_MACHINE_ARN", self.state_machine.state_machine_arn)
+
+    @staticmethod
+    def _retry_analysis(analyse, wf) -> None:
+        """A killed or timed-out analysis task is started again; the step resumes from the run's checkpoint, so a
+        run survives a lost task and can go past analysis_timeout_hours (each attempt gets that much)."""
+        if wf.analysis_retries:
+            analyse.add_retry(errors=["States.TaskFailed", "States.Timeout", "ECS.AmazonECSException"],
+                              interval=Duration.seconds(30), max_attempts=wf.analysis_retries, backoff_rate=2)
 
     def _separate(self, cfg, network, svc, run_task, orch, run_env, failed, done, *,
                   replay: bool = False) -> sfn.IChainable:
@@ -178,6 +198,9 @@ class RunWorkflow(Construct):
         start_sandbox.add_catch(failed, result_path="$.error")
         stop_sandbox.add_catch(seal, result_path="$.stop_error")
         seal.add_catch(seal_failed, result_path="$.seal_error")
+        if not replay:
+            self.analysis_entry = start_sandbox
+            self._retry_analysis(analyse, wf)
         if replay:
             analyse.add_catch(stop_sandbox, result_path="$.error")
             chain = start_sandbox.next(prepare).next(analyse).next(stop_sandbox)

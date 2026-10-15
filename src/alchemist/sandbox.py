@@ -244,6 +244,44 @@ class Sandbox:
         res.cell_id = cell_id
         return res
 
+    def restore(self, *, cells: int, counter: int) -> list[dict]:
+        """Rebuild the kernel of a paused (or interrupted) run in this fresh kernel.
+
+        The notebook is read back up to the checkpoint (`cells` cells, numbered up to `counter`); its code cells are
+        re-run in replay mode, so each query reads the snapshot it stored and nothing reads the lake again; then the
+        kernel switches back to this sandbox's mode. Nothing is added to the notebook. Returns the cells that raised
+        (cells that failed the first time fail again; that is expected)."""
+        self.nb = nbformat.reads((self.run / "notebook.ipynb").read_text(), as_version=4)
+        self.nb.cells = self.nb.cells[:cells]
+        self.counter = counter
+
+        def quiet(code: str) -> str | None:
+            err: list[str] = []
+
+            def hook(msg):
+                if msg["msg_type"] == "error":
+                    err.append(f"{msg['content']['ename']}: {msg['content']['evalue']}")
+            self.kernel.execute_interactive(code, output_hook=hook, timeout=900)
+            return err[0] if err else None
+
+        failed = quiet(f"run_mode = 'replay'\nseed = {self.seed}\nimport os\nimport alchemist.nb as alc\n\n"
+                       "alc.init(os.environ['ALC_RUN_DIR'], run_mode=run_mode, seed=seed)")
+        if failed:
+            raise RuntimeError(f"sandbox setup failed while resuming: {failed}")
+        errors = []
+        for c in self.nb.cells:
+            meta = c.metadata.get("alchemist", {})
+            if c.cell_type != "code" or meta.get("kind") in ("parameters", "setup"):
+                continue
+            failed = quiet(c.source)
+            if failed:
+                errors.append({"cell": meta.get("cell_id"), "error": failed[:500]})
+        failed = quiet(f"run_mode = {self.run_mode!r}\nalc.resume(run_mode)")
+        if failed:
+            raise RuntimeError(f"could not switch the resumed kernel back to {self.run_mode}: {failed}")
+        self.save()
+        return errors
+
     def add_markdown(self, text: str) -> None:
         self.nb.cells.append(nbformat.v4.new_markdown_cell(text))
         self.save()

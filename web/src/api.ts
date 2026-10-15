@@ -138,7 +138,7 @@ export interface RunDetail {
   run: RunSummary;
   question?: { id: string; text: string; asker: string; scope: Record<string, unknown>; status: string; created_at: string };
   plan?: Plan | null;
-  permissions?: { approve: boolean; stop: boolean; replay: boolean; verdict: boolean };
+  permissions?: { approve: boolean; stop: boolean; pause?: boolean; resume?: boolean; replay: boolean; verdict: boolean };
   conclusion_md?: string | null;
   conclusion_html?: string | null;
   findings?: Finding[];

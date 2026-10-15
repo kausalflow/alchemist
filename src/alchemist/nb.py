@@ -214,6 +214,13 @@ def finding(fid: str, *, statement: str, value=None, unit: str = "", verdict: st
     return rec
 
 
+def resume(run_mode: str) -> None:
+    """After a paused run's cells were re-run in replay mode: continue in `run_mode`, and make findings.json hold
+    exactly the findings of the cells that were re-run (one recorded after the last checkpoint is dropped)."""
+    _state["mode"] = run_mode
+    write_json(_state["run"] / "findings.json", {"schema": "alchemist.findings/v1", "findings": list(_state["findings"].values())})
+
+
 def check_results() -> pd.DataFrame:
     """Last cell of every notebook: compare finding values with the original run."""
     rows = []
