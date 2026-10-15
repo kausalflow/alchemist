@@ -46,8 +46,11 @@ class ScriptedModel:
 
 
 class ToolOutput:
-    def __init__(self, text: str, images: list[bytes] | None = None, is_error: bool = False):
-        self.text, self.images, self.is_error = text, images or [], is_error
+    """What a tool returns to the model (`text`, `images`), and `meta` for people following the run: figure paths,
+    a query's shape and previews. `meta` goes to the transcript only, never to the model."""
+
+    def __init__(self, text: str, images: list[bytes] | None = None, is_error: bool = False, meta: dict | None = None):
+        self.text, self.images, self.is_error, self.meta = text, images or [], is_error, meta or {}
 
 
 def _result_block(tool_use_id: str, out: ToolOutput) -> dict:
@@ -187,7 +190,8 @@ def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str
             results.append(_result_block(tu["id"], out))
             lines.append(json.dumps({"at": time.time(), "tool": tu["name"], "input": tu.get("input"),
                                      "is_error": out.is_error, "seconds": round(time.time() - started, 3),
-                                     "output": out.text[:4000], "images": len(out.images)}))
+                                     "output": out.text[:4000], "images": len(out.images),
+                                     **({"meta": out.meta} if out.meta else {})}))
         user = {"role": "user", "content": results}
         messages.append(user)
         flush()

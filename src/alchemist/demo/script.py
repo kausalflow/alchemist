@@ -55,7 +55,8 @@ order by ts
 
 Q_RESIN = "select resin_lot, supplier, received_date, cert_mfi_g10min from ds.resin_lots order by resin_lot"
 
-HEALTH = """import numpy as np
+HEALTH = """import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 proc = df_q2.copy()
@@ -67,7 +68,19 @@ print("TT-204 null minutes by day:")
 print(by_day[by_day > 0])
 print(proc[["barrel_temp_c", "line_speed_mpm", "melt_pressure_bar"]].describe().round(2))
 lots = df_q1.copy()
-print("lots:", len(lots), " lots with missing yield:", int(lots.first_pass_yield_pct.isna().sum()))"""
+print("lots:", len(lots), " lots with missing yield:", int(lots.first_pass_yield_pct.isna().sum()))
+
+hourly = proc.set_index("ts")["barrel_temp_c"].resample("h").mean()
+gaps = null_temp.resample("h").sum()
+fig, ax = plt.subplots(figsize=(9, 3.2))
+ax.plot(hourly.index, hourly.values, lw=0.8)
+for t in gaps[gaps > 0].index:  # hours with missing TT-204 minutes
+    ax.axvspan(t, t + pd.Timedelta(hours=1), color="red", alpha=0.3, lw=0)
+ax.axvline(pd.Timestamp("2026-08-03"), color="grey", ls="--", lw=1)
+ax.set_ylabel("Barrel zone 3, degC")
+ax.set_title(f"Data health: TT-204 hourly mean; {int(null_temp.sum())} missing minutes shaded red; scope from 3 Aug")
+plt.tight_layout()
+plt.show()"""
 
 YIELD = """import matplotlib.pyplot as plt
 

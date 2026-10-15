@@ -190,13 +190,16 @@ class RunContext:
             self.query_n -= 1
             return ToolOutput(f"Query failed: {res.error}", is_error=True)
         summary = next((r for r in res.results if r.get("query") == qid), {})
+        preview = {"query": qid, "cell": res.cell_id, **{k: summary.get(k) for k in ("rows", "columns", "stats", "spark")}}
         return ToolOutput(f"Cell {res.cell_id}: query {qid} saved as {summary.get('snapshot')}; frame df_{qid}.\n"
-                          + json.dumps({k: summary.get(k) for k in ("rows", "columns", "stats", "head")}, default=str)[:6000])
+                          + json.dumps({k: summary.get(k) for k in ("rows", "columns", "stats", "head")}, default=str)[:6000],
+                          meta={"preview": preview})
 
     def run_python(self, inp: dict) -> ToolOutput:
         res = self.sandbox.execute(inp["code"], kind="python", meta={"purpose": inp.get("purpose", "")})
         figs = f"\nFigures: {res.figure_paths}" if res.figure_paths else ""
-        return ToolOutput(f"Cell {res.cell_id}:\n{res.model_text()}{figs}", images=res.images, is_error=bool(res.error))
+        return ToolOutput(f"Cell {res.cell_id}:\n{res.model_text()}{figs}", images=res.images, is_error=bool(res.error),
+                          meta={"cell": res.cell_id, "figures": res.figure_paths} if res.figure_paths else {})
 
     def record_finding(self, inp: dict) -> ToolOutput:
         self.finding_n += 1
