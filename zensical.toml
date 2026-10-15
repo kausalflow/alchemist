@@ -31,6 +31,7 @@ nav = [
     "guides/s3.md",
     "guides/plugins.md",
     "guides/deploy-aws.md",
+    "guides/single-sign-on.md",
   ] },
   { "Reference" = [
     "reference/cli.md",

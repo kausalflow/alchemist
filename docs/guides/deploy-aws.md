@@ -67,7 +67,7 @@ the sandbox gets data credentials, from the broker Lambda (refreshed as they exp
 - An OIDC app in your identity provider with the callback URL `https://<domain.name>/oauth2/idpresponse` and a
   `groups` claim carrying the `alc-plant-<code>`, `alc-global`, `alc-ws-<area>`, `alc-catalog-admin` and `alc-admin`
   groups ([Access](../concepts/access.md)). Store its client secret in Secrets Manager under the name in
-  `oidc.client_secret_name`.
+  `oidc.client_secret_name`. See [Single sign-on](single-sign-on.md) for a OneLogin walkthrough.
 - Two ACM certificates: one in `us-east-1` for `domain.name` (CloudFront), and one in the stack's region covering both
   `domain.name` and `domain.api_origin_name` (ALB).
 - The data team's agreement that the lake buckets' KMS keys allow the run and indexer roles to decrypt (open
