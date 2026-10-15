@@ -13,7 +13,7 @@ import json
 import time
 from typing import Callable, Protocol
 
-from .paths import as_path
+from .paths import as_path, write_text
 
 
 class Model(Protocol):
@@ -89,21 +89,25 @@ class Budget:
 
 def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str, Callable[[dict], ToolOutput]],
              first_message: str, done: Callable[[], bool], budget: Budget, transcript,
-             max_nudges: int = 2) -> str:
-    """Run until `done()` is true, the budget runs out, or the model stops. Returns the reason it ended."""
+             max_nudges: int = 2, should_stop: Callable[[], bool] | None = None) -> str:
+    """Run until `done()` is true, the budget runs out, the model stops, or `should_stop()` asks it to.
+    Returns the reason it ended."""
     messages: list[dict] = [{"role": "user", "content": first_message}]
     log = as_path(transcript)
     lines: list[str] = [json.dumps({"at": time.time(), "message": messages[0]})]
     nudges = 0
 
     def flush():
-        log.write_text("\n".join(lines) + "\n")
+        write_text(log, "\n".join(lines) + "\n")
 
     while True:
         reason = budget.exceeded()
         if reason:
             flush()
             return f"budget: {reason}"
+        if should_stop and should_stop():
+            flush()
+            return "stopped: stop requested by a user"
         resp = model.create(system=system, tools=tools, messages=messages)
         budget.model_calls += 1
         budget.input_tokens += resp["usage"]["input_tokens"]
