@@ -171,7 +171,7 @@ def test_separate_mode_contract_environment(separate_resources):
 
     api, orch, sandbox = env_of("ApiTask"), env_of("OrchestratorTask"), env_of("SandboxTask")
     assert api["ALC_SANDBOX_MODE"] == orch["ALC_SANDBOX_MODE"] == "separate"
-    assert api["ALC_GRANT_HOURS"] == "8" and orch["ALC_SANDBOX_PORT"] == "8888"
+    assert api["ALC_GRANT_HOURS"] == "20" and orch["ALC_SANDBOX_PORT"] == "8888"
     assert "ALC_BROKER_FUNCTION" in sandbox and "ALC_RUN_ROLE_ARN" not in orch
 
 
@@ -272,3 +272,21 @@ def test_prod_config_synthesizes_with_retained_data():
     t.has_resource("AWS::RDS::DBCluster", {"DeletionPolicy": "Snapshot",
                                            "Properties": Match.object_like({"DeletionProtection": True})})
     t.has_resource("AWS::S3::Bucket", {"DeletionPolicy": "Retain"})
+
+
+def _mode_choices(resources) -> dict:
+    mode = _states(resources)["Mode"]
+    return {c["And"][1]["StringEquals"]: c["Next"] for c in mode["Choices"]}
+
+
+def test_resume_goes_straight_to_the_analysis_which_is_retried(resources):
+    """A paused run resumes in a new execution; a killed or timed-out analysis task is retried (it resumes too)."""
+    assert _mode_choices(resources) == {"replay": "Replay", "resume": "Analyse"}
+    retry = _states(resources)["Analyse"]["Retry"]
+    assert {"States.TaskFailed", "States.Timeout"} <= set(retry[0]["ErrorEquals"]) and retry[0]["MaxAttempts"] == 2
+
+
+def test_separate_resume_starts_a_new_sandbox(separate_resources):
+    assert _mode_choices(separate_resources)["resume"] == "StartSandbox"
+    assert _states(separate_resources)["Analyse"]["Retry"][0]["MaxAttempts"] == 2
+    assert "Retry" not in _states(separate_resources)["Replay"]

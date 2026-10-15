@@ -16,7 +16,12 @@ Plugins can add providers (`alchemist.plugins.ModelProvider`); the allow-list ap
 from __future__ import annotations
 
 import base64
-from typing import Any
+import logging
+import random
+import time
+from typing import Any, Callable
+
+log = logging.getLogger("alchemist.llm")
 
 DEFAULT_PROVIDER = "bedrock"
 # Pydantic AI prefixes that mean the same provider (google-gla = Gemini API, google-vertex = Vertex AI).
@@ -64,8 +69,42 @@ def build_model(spec: str, settings):
     return infer_model(full)
 
 
+RETRY_STATUS = {408, 429, 500, 502, 503, 504, 529}
+RETRY_WORDS = ("throttl", "toomanyrequests", "too many requests", "rate limit", "serviceunavailable",
+               "service unavailable", "overloaded", "modelnotready")
+
+
+def is_retryable(e: Exception) -> bool:
+    """Throttling and transient provider errors. Many runs share one model quota, so these are normal under load."""
+    if getattr(e, "status_code", None) in RETRY_STATUS:
+        return True
+    resp = getattr(e, "response", None)  # botocore ClientError
+    code = resp.get("Error", {}).get("Code", "") if isinstance(resp, dict) else ""
+    text = f"{type(e).__name__} {code} {e}".lower()
+    return any(w in text for w in RETRY_WORDS)
+
+
+def with_retries(call: Callable[[], Any], *, budget_seconds: float, sleep=time.sleep, first: float = 2.0,
+                 cap: float = 60.0) -> Any:
+    """Call, retrying throttling with exponential backoff and jitter until `budget_seconds` have passed."""
+    deadline = time.monotonic() + budget_seconds
+    delay = first
+    while True:
+        try:
+            return call()
+        except Exception as e:
+            if not is_retryable(e) or time.monotonic() + delay > deadline:
+                raise
+            wait = random.uniform(delay / 2, delay)
+            log.warning("model call throttled (%s); retrying in %.0fs", type(e).__name__, wait)
+            sleep(wait)
+            delay = min(delay * 2, cap)
+
+
 class PydanticAIModel:
     """Adapts a Pydantic AI model to the loop's Model protocol (Anthropic-style content blocks)."""
+
+    retry_seconds: float = 300.0  # ALC_MODEL_RETRY_SECONDS
 
     def __init__(self, settings, spec: str | None = None, effort: str | None = None, max_tokens: int = 16000):
         self.spec = check_allowed(spec or settings.lead_model, settings.allowed_providers)
@@ -74,6 +113,7 @@ class PydanticAIModel:
         effort = effort or settings.effort
         self.thinking = {"max": "xhigh"}.get(effort, effort) if effort and effort != "off" else None
         self.max_tokens = max_tokens
+        self.retry_seconds = settings.model_retry_seconds
 
     def create(self, *, system: str, tools: list[dict], messages: list[dict]) -> dict:
         from pydantic_ai.direct import model_request_sync
@@ -85,9 +125,10 @@ class PydanticAIModel:
         settings: dict[str, Any] = {"max_tokens": self.max_tokens}
         if self.thinking:
             settings["thinking"] = self.thinking
-        resp = model_request_sync(self.model, to_pydantic_messages(system, messages), model_settings=settings,
-                                  model_request_parameters=ModelRequestParameters(function_tools=defs,
-                                                                                  allow_text_output=True))
+        params = ModelRequestParameters(function_tools=defs, allow_text_output=True)
+        resp = with_retries(lambda: model_request_sync(self.model, to_pydantic_messages(system, messages),
+                                                       model_settings=settings, model_request_parameters=params),
+                            budget_seconds=self.retry_seconds)
         return from_pydantic_response(resp)
 
 

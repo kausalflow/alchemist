@@ -138,7 +138,7 @@ export interface RunDetail {
   run: RunSummary;
   question?: { id: string; text: string; asker: string; scope: Record<string, unknown>; status: string; created_at: string };
   plan?: Plan | null;
-  permissions?: { approve: boolean; stop: boolean; replay: boolean; verdict: boolean };
+  permissions?: { approve: boolean; stop: boolean; pause?: boolean; resume?: boolean; replay: boolean; verdict: boolean };
   conclusion_md?: string | null;
   conclusion_html?: string | null;
   findings?: Finding[];
@@ -154,6 +154,7 @@ export interface RunDetail {
   children?: RunSummary[];
   verdicts?: { at: string; actor: string; verdict: string; note: string; findings: Record<string, string> }[];
   failure?: { at: string; error: string } | null;
+  closed?: { at: string; actor: string; reason: string } | null;
 }
 
 export interface Step {
@@ -194,4 +195,4 @@ export interface DatasetSummary {
   missing_facts?: string[];
 }
 
-export const TERMINAL = new Set(["completed", "partial", "failed", "mismatch"]);
+export const TERMINAL = new Set(["completed", "partial", "failed", "mismatch", "cancelled", "expired"]);

@@ -14,6 +14,7 @@ The web app and CLI use only this API; the OpenAPI spec is at /api/openapi.json.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.metadata
 import logging
@@ -47,10 +48,30 @@ def load_object(spec: str):
     return obj
 
 
-def services_factory_for(settings: Settings):
+def services_factory_for(settings: Settings, ttl: float | None = None):
+    """Services per request or step. The database connection is always new (one per thread); the access model,
+    knowledge index and credential broker are shared for `ttl` seconds (ALC_SERVICES_TTL, default 60), since
+    building them reads access.yaml and every knowledge document from S3."""
+    import threading
+    import time
+
     from ..run import Services
 
-    return lambda: Services(settings)
+    ttl = float(os.environ.get("ALC_SERVICES_TTL", "60")) if ttl is None else ttl
+    cache: dict = {}
+    lock = threading.Lock()
+
+    def factory():
+        if ttl <= 0:
+            return Services(settings)
+        with lock:
+            if not cache or time.monotonic() - cache["at"] > ttl:
+                svc = Services(settings)
+                cache.update(at=time.monotonic(), access=svc.access, knowledge=svc.knowledge, broker=svc.broker)
+                return svc
+            return Services(settings, access=cache["access"], knowledge=cache["knowledge"], broker=cache["broker"])
+
+    return factory
 
 
 def plugin_routers() -> list[tuple[str, APIRouter]]:
@@ -177,9 +198,22 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
         spec = os.environ.get("ALC_LAUNCHER")
         launcher = load_object(spec)(services_factory) if spec else LocalLauncher(services_factory)
 
+    every = float(os.environ.get("ALC_RECONCILE_SECONDS", "60"))
+
+    async def reconcile_forever():
+        while True:
+            try:
+                await asyncio.to_thread(launcher.reconcile)
+            except Exception:
+                log.exception("reconciling runs failed")
+            await asyncio.sleep(every)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        task = asyncio.create_task(reconcile_forever()) if every > 0 and hasattr(launcher, "reconcile") else None
         yield
+        if task:
+            task.cancel()
         if hasattr(launcher, "shutdown"):
             launcher.shutdown()
 

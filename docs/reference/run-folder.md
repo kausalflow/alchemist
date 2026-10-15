@@ -25,6 +25,7 @@ runs/<run-id>/
   logs/
     plan_transcript.jsonl  planning model and tool calls
     transcript.jsonl       analysis model and tool calls
+    checkpoint.json        conversation, budget and notebook position after the last step (pause, resume, recovery)
     citations.json         document passages returned to the agent
     review.json            the reviewer's verdict and issues
     report_input.json      what the agent passed to build_report

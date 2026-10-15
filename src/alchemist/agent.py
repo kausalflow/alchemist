@@ -30,6 +30,10 @@ class ScriptedModel:
         self.name = name
         self.i = 0
 
+    def advance(self, model_calls: int) -> None:
+        """Skip the turns already played before a pause, so a resumed run continues the script."""
+        self.i = model_calls
+
     def create(self, *, system: str, tools: list[dict], messages: list[dict]) -> dict:
         if self.i >= len(self.turns):
             return {"content": [{"type": "text", "text": "Done."}], "stop_reason": "end_turn",
@@ -87,15 +91,39 @@ class Budget:
                 "input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
 
 
+def strip_images(messages: list[dict]) -> list[dict]:
+    """The conversation without image payloads, for a checkpoint (figures stay in the run's figures/ folder)."""
+    def strip(x):
+        if isinstance(x, dict):
+            if x.get("type") == "image":
+                return {"type": "text", "text": "[figure shown before the run was paused; see figures/]"}
+            return {k: strip(v) for k, v in x.items()}
+        if isinstance(x, list):
+            return [strip(v) for v in x]
+        return x
+    return strip(messages)
+
+
 def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str, Callable[[dict], ToolOutput]],
              first_message: str, done: Callable[[], bool], budget: Budget, transcript,
-             max_nudges: int = 2, should_stop: Callable[[], bool] | None = None) -> str:
+             max_nudges: int = 2, should_stop: "Callable[[], bool | str | None] | None" = None,
+             checkpoint: Callable[[dict], None] | None = None, resume: dict | None = None) -> str:
     """Run until `done()` is true, the budget runs out, the model stops, or `should_stop()` asks it to.
-    Returns the reason it ended."""
-    messages: list[dict] = [{"role": "user", "content": first_message}]
+    Returns the reason it ended.
+
+    `should_stop()` returns "pause" to pause (the run can resume later) or anything else truthy to stop.
+    `checkpoint(state)` is called after every completed turn with the conversation so far; passing that state back
+    as `resume` continues the conversation where it left off (the transcript file is appended to)."""
     log = as_path(transcript)
-    lines: list[str] = [json.dumps({"at": time.time(), "message": messages[0]})]
-    nudges = 0
+    if resume:
+        messages: list[dict] = list(resume["messages"])
+        nudges = resume.get("nudges", 0)
+        lines = log.read_text().splitlines() if log.exists() else []
+        lines.append(json.dumps({"at": time.time(), "resumed": True, "messages": len(messages)}))
+    else:
+        messages = [{"role": "user", "content": first_message}]
+        lines = [json.dumps({"at": time.time(), "message": messages[0]})]
+        nudges = 0
 
     def flush():
         write_text(log, "\n".join(lines) + "\n")
@@ -105,9 +133,10 @@ def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str
         if reason:
             flush()
             return f"budget: {reason}"
-        if should_stop and should_stop():
+        request = should_stop() if should_stop else None
+        if request:
             flush()
-            return "stopped: stop requested by a user"
+            return "paused: pause requested by a user" if request == "pause" else "stopped: stop requested by a user"
         resp = model.create(system=system, tools=tools, messages=messages)
         budget.model_calls += 1
         budget.input_tokens += resp["usage"]["input_tokens"]
@@ -153,5 +182,7 @@ def run_loop(model: Model, *, system: str, tools: list[dict], handlers: dict[str
         user = {"role": "user", "content": results}
         messages.append(user)
         flush()
+        if checkpoint:
+            checkpoint({"messages": strip_images(messages), "nudges": nudges})
         if done():
             return "done"

@@ -77,6 +77,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 1rem 1.25rem 4rem; }
 .conclusion { border: 2px solid var(--accent); }
 .conclusion h1 { font-size: 1.25rem; }
 .spread { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.actions { display: flex; gap: 0.5rem; }
 
 button, .button {
   font: inherit; padding: 0.4rem 0.85rem; border-radius: 7px; border: 1px solid var(--line);
@@ -115,8 +116,8 @@ legend { font-size: 0.85rem; color: var(--muted); }
   background: var(--code-bg); color: var(--muted); margin-right: 0.25rem; white-space: nowrap;
 }
 .chip.ok, .status-completed { background: var(--ok-bg); color: var(--ok); }
-.chip.warn, .status-awaiting_approval, .status-partial { background: var(--warn-bg); color: var(--warn); }
-.chip.bad, .status-failed, .status-mismatch { background: var(--bad-bg); color: var(--bad); }
+.chip.warn, .status-awaiting_approval, .status-partial, .status-paused { background: var(--warn-bg); color: var(--warn); }
+.chip.bad, .status-failed, .status-mismatch, .status-expired { background: var(--bad-bg); color: var(--bad); }
 .chip.info, .status-running, .status-planning { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
 .chiplink { margin-right: 0.4rem; font-size: 0.8rem; }
 

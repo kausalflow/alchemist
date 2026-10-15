@@ -44,7 +44,9 @@ All paths are under `/api`.
 | `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts | entitled viewer |
 | `POST /runs/{id}/plan:approve` | approve the plan, or send `{plan}` to approve an edited one; starts the analysis | who asked, or an admin |
 | `GET /runs/{id}/events` | live progress (server-sent events, below) | entitled viewer |
-| `POST /runs/{id}:stop` | stop after the current step; a partial report is still built and sealed | run owner, admin |
+| `POST /runs/{id}:pause` | pause a running analysis after its current step; it can be resumed later | run owner, admin |
+| `POST /runs/{id}:resume` | continue a paused run from its last step | run owner, admin |
+| `POST /runs/{id}:stop` | planning or waiting for approval: cancel now; running: stop after the current step, then build and seal a partial report | run owner, admin |
 | `POST /runs/{id}:replay` | new run in `replay` (snapshots) or `rerun` (current data) mode; body `{mode}` | entitled viewer |
 | `POST /runs/{id}/verdict` | `{verdict: confirmed \| partly_confirmed \| rejected, note, findings}` | workspace member |
 | `GET /runs/{id}/steps` | planning and analysis transcripts as steps | entitled viewer |
@@ -91,7 +93,11 @@ Events are read from the run folder's transcripts, so they work whichever proces
 (`alchemist.api.jobs`). Locally that is `LocalLauncher`, a thread pool in the API process. Each step needs only the
 database row and the run folder, so in AWS a launcher that starts the run's Step Functions execution (and sends the
 task token on approval) can replace it with `ALC_LAUNCHER=package.module:factory`, where `factory(services_factory)`
-returns an object with `plan(run_id)`, `analyse(run_id, user)` and `replay(run_id)`.
+returns an object with `plan(run_id)`, `analyse(run_id, user)`, `replay(run_id)`, `cancel(run_id)` (a run cancelled
+while planning or waiting) and `resume(run_id)` (a paused run; its analysis step continues from the checkpoint) and `reconcile()` (close or pause
+runs whose step died; called every `ALC_RECONCILE_SECONDS`).
+Starting a run, approving or replaying answers 429 when `ALC_MAX_ACTIVE_RUNS_PER_USER` or `ALC_MAX_ACTIVE_RUNS` is
+reached.
 
 The run lifecycle in `alchemist.run` is split the same way: `create` and `plan`, `start_approval` and `analyse`,
 `start_replay` and `execute_replay`. A stop request is an audit event that the agent loop checks between steps.

@@ -54,10 +54,11 @@ export default function RunPage() {
   const tabs = runTabs.filter((t) => t.show(run));
   const tab = tabs.find((t) => t.id === params.get("tab")) ?? tabs[0];
 
-  const stop = async () => {
-    await api.post(`/runs/${r.run_id}:stop`);
+  const act = (action: "stop" | "pause" | "resume") => async () => {
+    await api.post(`/runs/${r.run_id}:${action}`);
     reload();
   };
+  const stop = act("stop");
 
   return (
     <div>
@@ -78,7 +79,12 @@ export default function RunPage() {
         </div>
       </div>
 
-      {run.failure && <p className="error">This run failed: {run.failure.error}</p>}
+      {r.status === "failed" && run.failure && <p className="error">This run failed: {run.failure.error}</p>}
+      {(r.status === "cancelled" || r.status === "expired") && run.closed && (
+        <p className="muted">
+          {r.status === "cancelled" ? "Cancelled" : "Expired"} {when(run.closed.at)}: {run.closed.reason}
+        </p>
+      )}
 
       {status === "planning" && (
         <section className="card">
@@ -94,22 +100,62 @@ export default function RunPage() {
       )}
 
       {status === "awaiting_approval" && run.plan && (
-        <PlanEditor run={run} onApproved={reload} />
+        <>
+          <PlanEditor run={run} onApproved={reload} />
+          {run.permissions?.stop && (
+            <p>
+              <button className="danger" onClick={stop} title="Discards the plan; nothing has been read from the data lake">
+                Cancel run
+              </button>
+            </p>
+          )}
+        </>
       )}
 
       {status === "running" && (
         <section className="card">
           <div className="spread">
             <h2>Running</h2>
-            {run.permissions?.stop && (
-              <button className="danger" onClick={stop} title="Stops after the current step; findings so far still get a partial, sealed report">
-                Stop
-              </button>
-            )}
+            <div className="actions">
+              {run.permissions?.pause && (
+                <button onClick={act("pause")} title="Pauses after the current step; nothing is lost and it costs nothing while paused">
+                  Pause
+                </button>
+              )}
+              {run.permissions?.stop && (
+                <button className="danger" onClick={stop} title="Stops after the current step; findings so far still get a partial, sealed report">
+                  Stop
+                </button>
+              )}
+            </div>
           </div>
           <p className="muted">Every query and computation below becomes a notebook cell in the run folder.</p>
           <StepList steps={live.filter((s) => r.mode !== "live" || s.phase === "analysis")} live />
           {r.mode !== "live" && <p className="muted">Re-executing the original notebook cells in a fresh kernel…</p>}
+        </section>
+      )}
+
+      {status === "paused" && (
+        <section className="card">
+          <div className="spread">
+            <h2>Paused</h2>
+            <div className="actions">
+              {run.permissions?.resume && <button onClick={act("resume")}>Resume</button>}
+              {run.permissions?.stop && (
+                <button className="danger" onClick={stop} title="Builds and seals a partial report of the findings so far">
+                  Stop
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="muted">
+            {run.closed?.reason?.startsWith("interrupted")
+              ? "The analysis stopped unexpectedly. "
+              : ""}
+            The conversation and notebook are saved after every step. Resume re-runs the notebook on its stored
+            snapshots in a fresh kernel and carries on from the last step.
+          </p>
+          <StepList steps={live.filter((s) => s.phase === "analysis")} />
         </section>
       )}
 

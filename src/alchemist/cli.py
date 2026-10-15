@@ -290,10 +290,25 @@ def _sandbox_url(a) -> str | None:
 
 def cmd_worker(a) -> None:
     """One step of a run in its own process (an ECS task started by the run's Step Functions execution)."""
+    from .api.jobs import mark_failed
+
+    svc = _svc()
+    try:
+        _worker_step(a, svc)
+    except Exception as e:  # say so in the database now, not when the API next reconciles
+        from .run import checkpoint_of
+
+        # An analysis with a checkpoint stays running: the workflow retries the step, which resumes from it (and
+        # if no retry is left, the API's reconciler pauses the run so a person can resume it).
+        if not (a.step == "analyse" and checkpoint_of(svc.catalog.run(a.run_id)["path"])):
+            mark_failed(svc, a.run_id, e)
+        raise
+
+
+def _worker_step(a, svc) -> None:
     from .api.jobs import models, stop_requested
     from .run import analyse, execute_replay, plan, report_step, seal_step
 
-    svc = _svc()
     row = svc.catalog.run(a.run_id)
     if a.step == "plan":
         model, _ = models(svc.settings, "plan")
@@ -311,8 +326,9 @@ def cmd_worker(a) -> None:
     else:
         out = execute_replay(svc, a.run_id, sandbox_url=_sandbox_url(a))
     _print({k: v for k, v in out.items() if k in ("run_id", "status", "ended", "analysis_ended", "seal_sha256")})
-    if out["status"] == "failed" and a.step != "seal":
-        sys.exit(1)
+    failed = out["status"] in ("failed", "cancelled") and a.step != "seal"
+    if failed or (a.step == "plan" and out["status"] != "awaiting_approval"):
+        sys.exit(1)  # ends the workflow instead of waiting for an approval that cannot come
 
 
 def cmd_sandbox(a) -> None:

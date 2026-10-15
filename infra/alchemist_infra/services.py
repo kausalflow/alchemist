@@ -229,8 +229,10 @@ class Services(Construct):
                              "ALC_OIDC_GROUPS_CLAIM": cfg.oidc.group_claim, "ALC_GROUP_CLAIM": cfg.oidc.group_claim,
                              "ALC_LAUNCHER": "alchemist.sfn_launcher:StepFunctionsLauncher",
                              "ALC_APPROVALS": f"s3://{ws.bucket_name}/{APPROVALS_PREFIX}",
-                             # How long a run's broker grant lasts after approval (separate sandbox).
-                             "ALC_GRANT_HOURS": str(cfg.workflow.analysis_timeout_hours + 2)}
+                             # How long a run's broker grant lasts after approval or resume (separate sandbox):
+                             # every attempt of the analysis, plus slack.
+                             "ALC_GRANT_HOURS": str(cfg.workflow.analysis_timeout_hours
+                                                    * (1 + cfg.workflow.analysis_retries) + 2)}
         run_env = {"ALC_RUN_ROLE_ARN": self.run_role.role_arn, "ALC_RUN_CREDENTIAL_SECONDS": "3600"} \
             if in_process else {}
         pseudonym = {"ALC_PSEUDONYM_KEY": ecs.Secret.from_secrets_manager(self.pseudonym_key)}

@@ -8,9 +8,15 @@ stateDiagram-v2
     [*] --> planning: alchemist ask
     planning --> awaiting_approval: plan submitted
     planning --> failed: no plan within budget
+    planning --> cancelled: stopped
     awaiting_approval --> running: alchemist approve
+    awaiting_approval --> cancelled: stopped
+    awaiting_approval --> expired: not approved in time (AWS)
     running --> completed: report built
-    running --> partial: budget stop or error
+    running --> partial: budget stop, stop, or error
+    running --> paused: pause, provider down, or the step died
+    paused --> running: resume
+    running --> failed: the step died before its first checkpoint
     completed --> [*]: sealed
     partial --> [*]: sealed
 ```
@@ -87,6 +93,63 @@ database and the audit log. `alchemist verify <run-id>` checks a folder against 
 Each step of a run has a tool-call budget (`ALC_MAX_STEPS`, default 60) and an output-token budget (`ALC_MAX_OUTPUT_TOKENS`, default
 400,000). If the analysis stops early, the run still builds a partial report from the findings recorded so far, says
 why it stopped, and is sealed with status `partial`.
+
+## Stopping, pausing and failures
+
+Stop (`POST /runs/{id}:stop`, the Stop or Cancel button) depends on where the run is:
+
+| Status | What stop does |
+| --- | --- |
+| `planning`, `awaiting_approval` | the run is `cancelled` at once; nothing was read from the lake yet. In AWS its workflow execution is stopped too |
+| `running` | the agent stops after its current step (a cell can take up to 15 minutes), builds a partial report of the findings so far and seals the run as `partial` |
+| `paused` | the run is resumed once to build and seal that partial report |
+
+### Pause and resume
+
+A plan waits for approval at no cost (in AWS for up to `workflow.approval_timeout_days`, then the run is `expired`).
+A running analysis can be paused too (`POST /runs/{id}:pause`, the Pause button):
+
+- **Checkpoint.** After every completed step the analysis writes `logs/checkpoint.json`: the model conversation (without
+  image payloads), the budget used so far, the query and finding counters, and how many notebook cells exist. The
+  notebook itself is saved after every cell, as before.
+- **Pause.** The agent stops after its current step. The run is `paused`, nothing is reported or sealed, and its
+  tasks end (in AWS the execution finishes; a separate sandbox task is stopped), so a paused run costs nothing.
+- **Resume** (`POST /runs/{id}:resume`). A new analysis step starts a fresh kernel, reads the notebook back up to the
+  checkpoint and re-runs its code cells in replay mode, so every query reads the snapshot it stored and nothing reads
+  the lake again; then the kernel switches back to live mode and the conversation continues where it stopped. The
+  notebook gets one note where it resumed, and the transcript carries on in the same file. Re-running the cells takes
+  as long as they took the first time.
+
+The same checkpoint makes a run survive its step dying:
+
+- In AWS, `Analyse` is retried up to `workflow.analysis_retries` times (default 2) when its task fails or hits
+  `workflow.analysis_timeout_hours`, and each attempt resumes from the checkpoint. A run can therefore go past the
+  timeout, and each attempt gets fresh run credentials.
+- If no retry is left, or a local server restarted under the step, the API's reconciler (every
+  `ALC_RECONCILE_SECONDS`) pauses the run, so its owner can resume it. A model provider that stays unavailable past
+  `ALC_MODEL_RETRY_SECONDS` pauses the run as well.
+- A step that dies before its first checkpoint, or a planning step, is closed as `failed`.
+
+Work after the last checkpoint is lost: if a step dies after a cell ran but before the step was saved, that cell is
+dropped from the notebook and any finding it recorded is removed, and the agent does that step again.
+
+With a separate sandbox, resume starts a new sandbox task with a new broker grant. A retry of `Analyse` reuses the
+running sandbox task, whose kernel is rebuilt the same way; if the sandbox task itself died, the retries fail and the
+run is paused for a person to resume.
+
+## Many people at once
+
+Every run has its own folder, kernel and (in AWS) its own tasks and credentials, so runs do not see each other. What
+they share:
+
+- **The model quota.** All runs call the same Bedrock account. Throttled calls are retried with backoff for up to
+  `ALC_MODEL_RETRY_SECONDS` (default 300) before the step ends; ask for a quota increase before a wider rollout.
+- **Capacity and cost.** At most `ALC_MAX_ACTIVE_RUNS_PER_USER` (default 3) runs per person plan or analyse at once,
+  and `ALC_MAX_ACTIVE_RUNS` in total (default no limit); plans waiting for approval do not count. Over the limit the
+  API answers 429.
+- **The database.** Status changes are compare-and-set, so a plan approved twice (two tabs, a double click) starts
+  once, and a cancel and an approval at the same moment cannot both win. SQLite on EFS is fine for a pilot but locks
+  the whole file on each write; move to Postgres before many runs write at once.
 
 ## Replay and rerun
 

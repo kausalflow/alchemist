@@ -44,6 +44,12 @@ class Settings:
     # Budgets per run.
     max_steps: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_STEPS", "60")))
     max_output_tokens_total: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_OUTPUT_TOKENS", "400000")))
+    # Runs planning or analysing at once (waiting for approval does not count): per user, and in total (0: no limit).
+    # They share the model quota and the cost, so one person cannot starve everyone else.
+    max_active_runs_per_user: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_ACTIVE_RUNS_PER_USER", "3")))
+    max_active_runs: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_ACTIVE_RUNS", "0")))
+    # How long a model call keeps retrying when the provider throttles (many runs share one quota).
+    model_retry_seconds: float = field(default_factory=lambda: float(os.environ.get("ALC_MODEL_RETRY_SECONDS", "300")))
     # Key for pseudonymised columns (keyed hash). Set from a secret store in production.
     pseudonym_key: str = field(default_factory=lambda: os.environ.get("ALC_PSEUDONYM_KEY", "dev-only-key"))
     seed: int = 1729

@@ -62,6 +62,9 @@ See [Plugins](../guides/plugins.md).
 | --- | --- | --- |
 | `ALC_MAX_STEPS` | `60` | tool calls per planning or analysis step |
 | `ALC_MAX_OUTPUT_TOKENS` | `400000` | output tokens per planning or analysis step |
+| `ALC_MAX_ACTIVE_RUNS_PER_USER` | `3` | runs one person may have planning or analysing at once (0: no limit) |
+| `ALC_MAX_ACTIVE_RUNS` | `0` | runs planning or analysing at once in total (0: no limit) |
+| `ALC_MODEL_RETRY_SECONDS` | `300` | how long a throttled model call keeps retrying |
 
 ## Web app and API
 
@@ -73,6 +76,9 @@ See [Plugins](../guides/plugins.md).
 | `ALC_OIDC_GROUPS_CLAIM` | `groups` | claim holding the `alc-*` group names (`ALC_GROUP_CLAIM` is accepted too); when the access model has `user_from_claims`, its `identity:` settings in `access.yaml` decide instead |
 | `ALC_API_MODEL` | unset | `scripted` plays the offline demo script instead of calling a model (`alchemist serve --scripted`) |
 | `ALC_LAUNCHER` | unset | `package.module:factory` for a launcher that runs plan, analysis and replay steps elsewhere; default runs them on a thread pool in the API process |
+| `ALC_RECONCILE_SECONDS` | `60` | how often the API closes runs whose step died (0: never) |
+| `ALC_LOCAL_WORKERS` | `2` | steps `LocalLauncher` runs at once; more wait in a queue |
+| `ALC_SERVICES_TTL` | `60` | seconds the API reuses the access model and knowledge index between requests |
 | `ALC_WEB_DIST` | `web/dist` | built web app to serve at `/`; the API alone runs if it is missing |
 
 See [Web app](../guides/web-app.md) and [REST API](api.md).

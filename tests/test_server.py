@@ -113,6 +113,7 @@ def test_replay_and_verdict(client, finished):
     r = client.post(f"/api/runs/{finished}:replay", headers=h, json={"mode": "replay"})
     assert r.status_code == 201, r.text
     rep = client.get(f"/api/runs/{r.json()['run_id']}", headers=h).json()
+    assert client.get(f"/api/runs/{finished}", headers=h).json()["question"]["status"] == "completed"  # not the replay's
     assert rep["run"]["status"] == "completed" and rep["result_check"]["status"]["mismatches"] == 0
     assert any(c["run_id"] == rep["run"]["run_id"] for c in client.get(f"/api/runs/{finished}", headers=h).json()["children"])
     v = client.post(f"/api/runs/{finished}/verdict", headers=h, json={"verdict": "confirmed", "note": "matches the lab"})
@@ -126,7 +127,30 @@ def test_only_the_asker_approves(client):
     assert client.post(f"/api/runs/{rid}/plan:approve", headers=as_user("eng_p2"), json={}).status_code == 403
     bad = dict(script.PLAN, hypotheses=[dict(script.PLAN["hypotheses"][0], datasets=["historian_line5"])])
     assert client.post(f"/api/runs/{rid}/plan:approve", headers=as_user("eng_p1"), json={"plan": bad}).status_code == 422
-    assert client.post(f"/api/runs/{rid}:stop", headers=as_user("eng_p1")).status_code == 409  # waiting, not running
+    assert client.post(f"/api/runs/{rid}:stop", headers=as_user("eng_p2")).status_code == 403
+    r = client.post(f"/api/runs/{rid}:stop", headers=as_user("eng_p1"))  # waiting for approval: cancelled at once
+    assert r.status_code == 200 and r.json()["result"] == "cancelled"
+    run = client.get(f"/api/runs/{rid}", headers=as_user("eng_p1")).json()
+    assert run["run"]["status"] == "cancelled" and run["closed"]["actor"] == "eng_p1"
+    assert not run["permissions"]["stop"] and not run["permissions"]["approve"]
+    assert client.post(f"/api/runs/{rid}/plan:approve", headers=as_user("eng_p1"), json={}).status_code == 409
+
+
+def test_too_many_active_runs_is_429(client, svc):
+    from alchemist.run import cancel, create
+
+    held = create(svc, user="eng_p2", workspace="quality", project="line2-api", question="Holds a run slot",
+                  scope={})["run_id"]
+    before = svc.settings.max_active_runs
+    svc.settings.max_active_runs = len(svc.catalog.active_runs())  # full
+    try:
+        r = client.post("/api/questions", headers=as_user("eng_p1"),
+                        json={"workspace": "quality", "project": "line2-api", "question": script.QUESTION,
+                              "scope": script.SCOPE})
+        assert r.status_code == 429
+    finally:
+        svc.settings.max_active_runs = before
+        cancel(svc, held, user="eng_p2")
 
 
 def test_asking_outside_your_plants_is_refused(client):
@@ -198,3 +222,35 @@ def test_alb_token_is_verified(monkeypatch):
         verify_alb_jwt(token(claims, signer="arn:other"), key_loader=lambda region, kid: pem)
     with pytest.raises(NotSignedIn):
         verify_alb_jwt(token(claims)[:-4] + "AAAA", key_loader=lambda region, kid: pem)
+
+
+def test_pause_and_resume_through_the_api(client, svc):
+    from alchemist.agent import ScriptedModel
+    from alchemist.run import ScriptedReviewer, analyse
+
+    h = as_user("eng_p1")
+    r = client.post("/api/questions", headers=h, json={"workspace": "quality", "project": "line2-api",
+                                                       "question": "Pause and resume test", "scope": script.SCOPE})
+    rid = r.json()["run_id"]
+    assert client.post(f"/api/runs/{rid}:pause", headers=h).status_code == 409  # not analysing yet
+    from alchemist.run import start_approval
+
+    start_approval(svc, rid, user="eng_p1")
+    assert client.get(f"/api/runs/{rid}", headers=h).json()["permissions"]["pause"]
+    assert client.post(f"/api/runs/{rid}:pause", headers=as_user("eng_p2")).status_code in (403, 404)
+    assert client.post(f"/api/runs/{rid}:pause", headers=h).status_code == 200
+    analyse(svc, rid, user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
+            reviewer=ScriptedReviewer(script.REVIEW), should_stop=lambda: "pause" if svc.catalog.run(rid) else None)
+    run = client.get(f"/api/runs/{rid}", headers=h).json()
+    assert run["run"]["status"] == "paused" and run["permissions"]["resume"] and run["permissions"]["stop"]
+    svc.catalog.transition(rid, "paused", "running")  # stands in for a resume
+    calls = []
+    analyse(svc, rid, user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
+            reviewer=ScriptedReviewer(script.REVIEW),
+            should_stop=lambda: calls.append(1) or ("pause" if len(calls) > 4 else None))
+    assert client.get(f"/api/runs/{rid}", headers=h).json()["run"]["status"] == "paused"
+    with client.stream("GET", f"/api/runs/{rid}/events", headers=h) as s:
+        assert '"status": "paused"' in "".join(s.iter_text())  # the live view ends on a pause
+    r = client.post(f"/api/runs/{rid}:resume", headers=h)  # the inline launcher finishes it here
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/runs/{rid}", headers=h).json()["run"]["status"] == "completed"

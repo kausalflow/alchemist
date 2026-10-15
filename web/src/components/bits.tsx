@@ -8,6 +8,9 @@ const STATUS_LABEL: Record<string, string> = {
   partial: "partial",
   failed: "failed",
   mismatch: "replay mismatch",
+  cancelled: "cancelled",
+  paused: "paused",
+  expired: "plan expired",
 };
 
 export function StatusChip({ status }: { status: string }) {

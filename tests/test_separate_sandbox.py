@@ -140,9 +140,16 @@ class _Svc:
         self.rows = rows
         self.settings = dataclasses.make_dataclass("S", ["workspace_root", "grant_hours"])(workspace, grant_hours)
         self.catalog = self
+        self.db = self
 
     def run(self, run_id):
         return self.rows[run_id]
+
+    def audit(self, *args):
+        pass
+
+    def close(self):
+        pass
 
 
 def test_launcher_writes_grants_and_passes_the_token_only_in_the_execution(tmp_path):
