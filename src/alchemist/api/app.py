@@ -25,6 +25,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from .. import __version__, prompts
+from ..access import AccessDenied
 from ..config import Settings, load_settings
 from ..paths import as_path, read_yaml
 from . import catalog as catalog_api
@@ -67,12 +68,17 @@ def plugin_routers() -> list[tuple[str, APIRouter]]:
 core = APIRouter(tags=["session"])
 
 
+def _known_workspaces(svc) -> set[str]:
+    """Workspaces the access model defines (access.yaml); with identity-provider groups, members' own list adds more."""
+    return set(getattr(svc.access, "data", {}).get("workspaces", {}) or {})
+
+
 @core.get("/me")
 def me(svc: Svc, me: Me) -> dict:
     u = me.user
     return {"id": u.id, "name": me.name or u.id, "email": me.email, "plants": sorted(u.plants),
             "global": u.is_global, "admin": u.is_admin, "catalog_admin": me.is_catalog_admin,
-            "workspaces": sorted(svc.access.data.get("workspaces", {}) if u.is_admin else u.workspaces),
+            "workspaces": sorted(_known_workspaces(svc) if u.is_admin else u.workspaces),
             "readable_plants": sorted(svc.access.all_plants if (u.is_global or u.is_admin) else u.plants)}
 
 
@@ -81,8 +87,12 @@ def workspaces(svc: Svc, me: Me) -> list[dict]:
     """Workspaces the user belongs to, with the plants each covers and its projects."""
     root = as_path(svc.settings.workspace_root) / "workspaces"
     out = []
-    for name, spec in sorted(svc.access.data.get("workspaces", {}).items()):
+    for name in sorted(_known_workspaces(svc) | set(me.user.workspaces)):
         if not in_workspace(me, name):
+            continue
+        try:
+            plants = sorted(svc.access.workspace_plants(name))
+        except AccessDenied:
             continue
         projects = []
         pdir = root / name / "projects"
@@ -92,8 +102,7 @@ def workspaces(svc: Svc, me: Me) -> list[dict]:
                     meta = read_yaml(p / "project.yaml")
                     projects.append({"name": meta.get("name", p.name), "owner": meta.get("owner"),
                                      "plants": meta.get("plants", []), "created_at": meta.get("created_at")})
-        out.append({"name": name, "plants": sorted((spec or {}).get("plants") or svc.access.all_plants),
-                    "projects": projects})
+        out.append({"name": name, "plants": plants, "projects": projects})
     return out
 
 
@@ -157,7 +166,7 @@ def dev_users(svc: Svc) -> list[dict]:
         raise HTTPException(404)
     return [{"id": k, "plants": v.get("plants", []), "workspaces": v.get("workspaces", []),
              "admin": bool(v.get("admin")), "global": bool(v.get("global"))}
-            for k, v in svc.access.data.get("users", {}).items()]
+            for k, v in getattr(svc.access, "data", {}).get("users", {}).items()]
 
 
 def create_app(settings: Settings | None = None, *, launcher=None, services_factory=None,

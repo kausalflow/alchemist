@@ -100,7 +100,7 @@ def ask(body: AskBody, svc: Svc, me: Me, request: Request) -> dict:
     from ..run import create
 
     try:
-        row = create(svc, user=me.user.id, workspace=body.workspace, project=body.project, question=body.question,
+        row = create(svc, user=me.user, workspace=body.workspace, project=body.project, question=body.question,
                      scope=body.scope)
     except AccessDenied as e:
         raise access_error(e) from e
@@ -397,7 +397,7 @@ def approve(run_id: str, body: ApproveBody, svc: Svc, me: Me, request: Request) 
         if unknown:
             raise HTTPException(422, f"datasets not available to this run: {unknown}")
     try:
-        plan = start_approval(svc, run_id, user=me.user.id, plan=body.plan)
+        plan = start_approval(svc, run_id, user=me.user, plan=body.plan)
     except AccessDenied as e:
         raise access_error(e) from e
     except ValueError as e:
@@ -428,7 +428,7 @@ def replay(run_id: str, body: ReplayBody, svc: Svc, me: Me, request: Request) ->
     from ..run import start_replay
 
     try:
-        row = start_replay(svc, run_id, user=me.user.id, mode=body.mode)
+        row = start_replay(svc, run_id, user=me.user, mode=body.mode)
     except AccessDenied as e:
         raise access_error(e) from e
     except ValueError as e:

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import prompts
-from .access import AccessDenied
+from .access import AccessDenied, User
 from .agent import Budget, Model, ToolOutput, run_loop
 from .llm import PydanticAIModel
 from .catalog import Catalog, now
@@ -285,10 +285,16 @@ class ScriptedReviewer:
 
 # ------------------------------------------------------------------ lifecycle
 
-def create(svc: Services, *, user: str, workspace: str, project: str, question: str, scope: dict) -> dict:
+def _resolve(svc: Services, user: "str | User") -> User:
+    """A user id (looked up in the access model) or a User the caller already built, e.g. from verified claims."""
+    return user if isinstance(user, User) else svc.access.user(user)
+
+
+def create(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict) -> dict:
     """Check access, create the question and run folders and index the run. Returns the run row."""
     s, acc = svc.settings, svc.access
-    u = acc.user(user)
+    u = _resolve(svc, user)
+    user = u.id
     plants = acc.run_plants(u, workspace, scope.get("plants"))
     ensure_project(s.workspace_root, workspace, project, owner=user, plants=sorted(plants))
     qid, qdir = create_question(s.workspace_root, workspace, project, text=question, asker=user, scope=scope)
@@ -331,26 +337,28 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     return {"run_id": run_id, "status": status, "plan": ctx.plan, "ended": ended, "path": str(rdir)}
 
 
-def ask(svc: Services, *, user: str, workspace: str, project: str, question: str, scope: dict,
+def ask(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict,
         model: Model | None = None) -> dict:
     """Create a run and plan it; it then waits for approval."""
     row = create(svc, user=user, workspace=workspace, project=project, question=question, scope=scope)
     return plan(svc, row["run_id"], model=model)
 
 
-def approve(svc: Services, run_id: str, *, user: str, plan: dict | None = None, model: Model | None = None,
+def approve(svc: Services, run_id: str, *, user: "str | User", plan: dict | None = None, model: Model | None = None,
             reviewer: Model | None = None, should_stop: Callable[[], bool] | None = None) -> dict:
     start_approval(svc, run_id, user=user, plan=plan)
-    return analyse(svc, run_id, user=user, model=model, reviewer=reviewer, should_stop=should_stop)
+    return analyse(svc, run_id, user=getattr(user, "id", user), model=model, reviewer=reviewer, should_stop=should_stop)
 
 
-def start_approval(svc: Services, run_id: str, *, user: str, plan: dict | None = None) -> dict:
+def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict | None = None) -> dict:
     """Record the approval (with the user's edits, if any) and mark the run running. Returns the approved plan."""
     row = svc.catalog.run(run_id)
     if row["status"] != "awaiting_approval":
         raise ValueError(f"run {run_id} is {row['status']}, not awaiting approval")
     question = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
-    if user != question["asker"] and not svc.access.user(user).is_admin:
+    u = _resolve(svc, user)
+    user = u.id
+    if user != question["asker"] and not u.is_admin:
         raise AccessDenied("only the person who asked (or an admin) can approve the plan")
     ctx = RunContext(svc, row, user=user)
     if plan is not None:  # the user edited the plan
@@ -435,20 +443,21 @@ def _finish(svc: Services, ctx: RunContext, status: str, usage: dict, extra: dic
             **(extra or {}), "conclusion": (ctx.report_out or {}).get("conclusion_text")}
 
 
-def replay(svc: Services, run_id: str, *, user: str, mode: str = "replay") -> dict:
+def replay(svc: Services, run_id: str, *, user: "str | User", mode: str = "replay") -> dict:
     """Re-execute a sealed run's notebook as a new run: on its snapshots (replay) or on current data (rerun)."""
     row = start_replay(svc, run_id, user=user, mode=mode)
     return execute_replay(svc, row["run_id"])
 
 
-def start_replay(svc: Services, run_id: str, *, user: str, mode: str = "replay") -> dict:
+def start_replay(svc: Services, run_id: str, *, user: "str | User", mode: str = "replay") -> dict:
     """Check access and the parent's seal, and create the replay run with the parent's inputs. Returns its row."""
     if mode not in ("replay", "rerun"):
         raise ValueError("mode must be replay or rerun")
     parent = svc.catalog.run(run_id)
     if not parent.get("seal_sha256"):
         raise ValueError("only sealed runs can be replayed")
-    u = svc.access.user(user)
+    u = _resolve(svc, user)
+    user = u.id
     plants = json.loads(parent["plants"])
     if not svc.access.can_view_run(u, parent["workspace"], plants):
         raise AccessDenied(f"{user} may not open run {run_id}")
