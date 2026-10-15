@@ -48,14 +48,14 @@ Models are set per role with [Pydantic AI](https://ai.pydantic.dev) specs, `prov
 | --- | --- | --- |
 | Amazon Bedrock (default) | `bedrock:anthropic.claude-opus-5-5` or an inference profile ARN | AWS credential chain, `AWS_REGION` |
 | Anthropic API | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
-| Google Gemini | `google-gla:gemini-3-pro` | `GOOGLE_API_KEY` |
+| Google Gemini | `google:gemini-3-pro` | `GOOGLE_API_KEY` |
 | OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
 
 ```bash
 export ALC_LEAD_MODEL=bedrock:anthropic.claude-opus-5-5   # plans and analyses
 export ALC_SUB_MODEL=bedrock:anthropic.claude-sonnet-5-5  # reviewer and catalog-card drafter
 export ALC_ALLOWED_PROVIDERS=bedrock                      # default; plant data goes only to listed providers
-alchemist ask "..." --model google-gla:gemini-3-pro ...   # per-run override (provider must be allowed)
+alchemist ask "..." --model google:gemini-3-pro ...   # per-run override (provider must be allowed)
 alchemist ask ... --reviewer-model openai:gpt-5           # review with a different provider than the lead
 ```
 

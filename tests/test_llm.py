@@ -9,7 +9,10 @@ def test_split_spec():
     assert llm.split_spec("bedrock:anthropic.claude-opus-5-5") == ("bedrock", "anthropic.claude-opus-5-5")
     assert llm.split_spec("anthropic.claude-opus-5-5") == ("bedrock", "anthropic.claude-opus-5-5")
     assert llm.split_spec("arn:aws:bedrock:eu-central-1:1:application-inference-profile/x")[0] == "bedrock"
-    assert llm.split_spec("google-gla:gemini-3-pro") == ("google-gla", "gemini-3-pro")
+    assert llm.split_spec("google:gemini-3-pro") == ("google", "gemini-3-pro")
+    assert llm.split_spec("google-gla:gemini-3-pro") == ("google", "gemini-3-pro")  # older prefix
+    assert llm.split_spec("google-vertex:gemini-3-pro") == ("google-cloud", "gemini-3-pro")
+    assert llm.split_spec("us.anthropic.claude-opus-5-5-v1:0") == ("bedrock", "us.anthropic.claude-opus-5-5-v1:0")
     assert llm.split_spec("openai:gpt-5") == ("openai", "gpt-5")
 
 
@@ -17,11 +20,29 @@ def test_provider_allowlist():
     s = Settings()
     assert s.allowed_providers == ["bedrock"]
     llm.check_allowed("anthropic.claude-opus-5-5", s.allowed_providers)
-    for spec in ("anthropic:claude-opus-5-5", "openai:gpt-5", "google-gla:gemini-3-pro"):
+    for spec in ("anthropic:claude-opus-5-5", "openai:gpt-5", "google:gemini-3-pro"):
         with pytest.raises(llm.ProviderNotAllowed):
             llm.check_allowed(spec, s.allowed_providers)
     llm.check_allowed("google-gla:gemini-3-pro", ["bedrock", "google"])
+    llm.check_allowed("google-cloud:gemini-3-pro", ["google-vertex"])
+    with pytest.raises(llm.ProviderNotAllowed):
+        llm.check_allowed("google-cloud:gemini-3-pro", ["google"])
+    llm.check_allowed("openai-chat:gpt-5", ["openai"])
     llm.check_allowed("openai:gpt-5", ["*"])
+
+
+@pytest.mark.parametrize("spec,kind", [("anthropic.claude-opus-5-5", "BedrockConverseModel"),
+                                       ("anthropic:claude-opus-5-5", "AnthropicModel"),
+                                       ("openai:gpt-5", "OpenAIResponsesModel"),
+                                       ("google:gemini-3-pro", "GoogleModel"),
+                                       ("google-gla:gemini-3-pro", "GoogleModel")])
+def test_each_provider_builds(spec, kind, monkeypatch):
+    """Every documented spec resolves to a Pydantic AI model (built only; no request is sent)."""
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.setenv(k, "test-key")
+    s = Settings()
+    s.allowed_providers = ["*"]
+    assert type(llm.PydanticAIModel(s, spec).model).__name__ == kind
 
 
 def test_loop_through_pydantic_ai(tmp_path):

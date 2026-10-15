@@ -14,11 +14,14 @@ per role with Pydantic AI specs, `provider:model-id`. A bare id means Amazon Bed
 | --- | --- | --- |
 | Amazon Bedrock (default) | `bedrock:anthropic.claude-opus-5-5`, or an inference profile ARN | AWS credential chain, `AWS_REGION` |
 | Anthropic API | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
-| Google Gemini | `google-gla:gemini-3-pro` (Vertex AI: `google-vertex:...`) | `GOOGLE_API_KEY` |
+| Google Gemini | `google:gemini-3-pro` (Vertex AI: `google-cloud:gemini-3-pro`) | `GOOGLE_API_KEY`; Vertex uses Google Cloud credentials |
 | OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
 
 Bedrock ids and ARNs contain `:` themselves, so anything that does not start with a known provider prefix is read as a
 Bedrock id.
+
+The older Pydantic AI prefixes `google-gla:` and `google-vertex:` still work and are read as `google:` and
+`google-cloud:`. In `ALC_ALLOWED_PROVIDERS`, `google` (Gemini API) and `google-cloud` (Vertex AI) are separate entries.
 
 ## The provider allow-list
 
@@ -48,7 +51,7 @@ export ALC_LEAD_MODEL=bedrock:anthropic.claude-opus-5-5
 export ALC_SUB_MODEL=bedrock:anthropic.claude-sonnet-5-5
 
 # per-run override of the lead (the provider must be allowed)
-alchemist ask "..." --model google-gla:gemini-3-pro --user eng_p1 --workspace quality --project line2-yield
+alchemist ask "..." --model google:gemini-3-pro --user eng_p1 --workspace quality --project line2-yield
 
 # review with a different provider than the lead, for an independent second opinion
 alchemist approve <run-id> --user eng_p1 --reviewer-model openai:gpt-5
