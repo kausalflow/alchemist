@@ -12,6 +12,7 @@ import json
 import platform
 import re
 from pathlib import Path
+from typing import Callable
 
 from . import prompts
 from .access import AccessDenied, AccessModel
@@ -255,8 +256,8 @@ class ScriptedReviewer:
 
 # ------------------------------------------------------------------ lifecycle
 
-def ask(svc: Services, *, user: str, workspace: str, project: str, question: str, scope: dict,
-        model: Model | None = None) -> dict:
+def create(svc: Services, *, user: str, workspace: str, project: str, question: str, scope: dict) -> dict:
+    """Check access, create the question and run folders and index the run. Returns the run row."""
     s, acc = svc.settings, svc.access
     u = acc.user(user)
     plants = acc.run_plants(u, workspace, scope.get("plants"))
@@ -267,27 +268,52 @@ def ask(svc: Services, *, user: str, workspace: str, project: str, question: str
            "path": str(rdir), "mode": "live", "status": "planning", "plants": json.dumps(sorted(plants))}
     svc.catalog.upsert_run(**row)
     svc.catalog.audit(user, "run.create", rid, {"plants": sorted(plants), "workspace": workspace})
-    row = svc.catalog.run(rid)
+    return svc.catalog.run(rid)
 
+
+def plan(svc: Services, run_id: str, *, model: Model | None = None) -> dict:
+    """The planning step of a created run: search, then submit a plan for approval."""
+    s = svc.settings
+    row = svc.catalog.run(run_id)
+    user = row["user_id"]
     ctx = RunContext(svc, row, user=user)
+    rdir = ctx.run
     model = model or PydanticAIModel(s)
     ctx.models["lead"] = model.name
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     handlers = {"search_catalog": ctx.search_catalog, "search_knowledge": ctx.search_knowledge,
                 "submit_plan": ctx.submit_plan}
-    first = (f"Question from {user}: {question}\nScope given by the user: {json.dumps(scope)}\n"
-             f"Plants this run may read: {sorted(plants)}")
-    ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS), handlers=handlers,
-                     first_message=first, done=lambda: ctx.plan is not None, budget=budget,
-                     transcript=rdir / "logs" / "plan_transcript.jsonl")
+    first = (f"Question from {user}: {ctx.question['text']}\nScope given by the user: {json.dumps(ctx.question.get('scope') or {})}\n"
+             f"Plants this run may read: {sorted(ctx.plants)}")
+    try:
+        ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS),
+                         handlers=handlers, first_message=first, done=lambda: ctx.plan is not None, budget=budget,
+                         transcript=rdir / "logs" / "plan_transcript.jsonl")
+    except Exception as e:  # a model or network failure leaves a failed run, not a run stuck in planning
+        ended = f"error: {type(e).__name__}: {e}"
     status = "awaiting_approval" if ctx.plan else "failed"
-    svc.catalog.upsert_run(run_id=rid, status=status)
+    svc.catalog.upsert_run(run_id=run_id, status=status)
+    if status == "failed":
+        update_question(ctx.qdir, status="failed")
     ctx.write_manifest(status, usage={"planning": budget.as_dict()}, extra={"planning_ended": ended})
-    return {"run_id": rid, "status": status, "plan": ctx.plan, "ended": ended, "path": str(rdir)}
+    return {"run_id": run_id, "status": status, "plan": ctx.plan, "ended": ended, "path": str(rdir)}
+
+
+def ask(svc: Services, *, user: str, workspace: str, project: str, question: str, scope: dict,
+        model: Model | None = None) -> dict:
+    """Create a run and plan it; it then waits for approval."""
+    row = create(svc, user=user, workspace=workspace, project=project, question=question, scope=scope)
+    return plan(svc, row["run_id"], model=model)
 
 
 def approve(svc: Services, run_id: str, *, user: str, plan: dict | None = None, model: Model | None = None,
-            reviewer: Model | None = None) -> dict:
+            reviewer: Model | None = None, should_stop: Callable[[], bool] | None = None) -> dict:
+    start_approval(svc, run_id, user=user, plan=plan)
+    return analyse(svc, run_id, user=user, model=model, reviewer=reviewer, should_stop=should_stop)
+
+
+def start_approval(svc: Services, run_id: str, *, user: str, plan: dict | None = None) -> dict:
+    """Record the approval (with the user's edits, if any) and mark the run running. Returns the approved plan."""
     s = svc.settings
     row = svc.catalog.run(run_id)
     if row["status"] != "awaiting_approval":
@@ -312,7 +338,19 @@ def approve(svc: Services, run_id: str, *, user: str, plan: dict | None = None, 
                            "columns": [{"name": c["name"], "exposure": c.get("exposure", "model")} for c in d["card"]["columns"]]}
     write_json(ctx.run / "inputs" / "views.json", views)
     write_json(ctx.run / "inputs" / "knowledge_index.json", svc.knowledge.copy_structured(ctx.run, ctx.plants))
+    return ctx.plan
 
+
+def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None, reviewer: Model | None = None,
+            should_stop: Callable[[], bool] | None = None) -> dict:
+    """The analysis step of an approved run: query, compute, review, report, seal."""
+    s = svc.settings
+    row = svc.catalog.run(run_id)
+    if row["status"] != "running":
+        raise ValueError(f"run {run_id} is {row['status']}, not approved and running")
+    ctx = RunContext(svc, row, user=user)
+    question = ctx.question
+    views = read_json(ctx.run / "inputs" / "views.json")
     model = model or PydanticAIModel(s)
     reviewer = reviewer or PydanticAIModel(s, s.sub_model, effort="medium")
     ctx.models.update(lead=model.name, reviewer=reviewer.name)
@@ -336,7 +374,9 @@ def approve(svc: Services, run_id: str, *, user: str, plan: dict | None = None, 
         try:
             ended = run_loop(model, system=prompts.ANALYSIS_SYSTEM, tools=prompts.tool_list(prompts.ANALYSIS_TOOLS),
                              handlers=handlers, first_message=first, done=lambda: ctx.report_out is not None,
-                             budget=budget, transcript=ctx.run / "logs" / "transcript.jsonl")
+                             budget=budget, transcript=ctx.run / "logs" / "transcript.jsonl", should_stop=should_stop)
+        except Exception as e:  # a model or network failure still ends in a sealed, partial run
+            ended = f"error: {type(e).__name__}: {e}"
         finally:
             if ctx.report_out is None and ctx._findings():
                 # Budget stop or failure: still leave a partial report of what was found.
@@ -361,6 +401,12 @@ def _finish(svc: Services, ctx: RunContext, status: str, usage: dict, extra: dic
 
 def replay(svc: Services, run_id: str, *, user: str, mode: str = "replay") -> dict:
     """Re-execute a sealed run's notebook as a new run: on its snapshots (replay) or on current data (rerun)."""
+    row = start_replay(svc, run_id, user=user, mode=mode)
+    return execute_replay(svc, row["run_id"])
+
+
+def start_replay(svc: Services, run_id: str, *, user: str, mode: str = "replay") -> dict:
+    """Check access and the parent's seal, and create the replay run with the parent's inputs. Returns its row."""
     if mode not in ("replay", "rerun"):
         raise ValueError("mode must be replay or rerun")
     parent = svc.catalog.run(run_id)
@@ -384,14 +430,23 @@ def replay(svc: Services, run_id: str, *, user: str, mode: str = "replay") -> di
            "parent_run": run_id, "status": "running", "plants": parent["plants"]}
     svc.catalog.upsert_run(**row)
     svc.catalog.audit(user, f"run.{mode}", rid, {"parent": run_id})
-    ctx = RunContext(svc, svc.catalog.run(rid), user=user)
+    return svc.catalog.run(rid)
+
+
+def execute_replay(svc: Services, run_id: str) -> dict:
+    """Run the parent's notebook cells in a fresh kernel, compare findings, then seal."""
+    row = svc.catalog.run(run_id)
+    mode, parent_id = row["mode"], row["parent_run"]
+    prun = as_path(svc.catalog.run(parent_id)["path"])
+    rdir = as_path(row["path"])
+    ctx = RunContext(svc, row, user=row["user_id"])
     ctx.models.update({k: v for k, v in read_json(prun / "manifest.json")["model"].items()})
 
     cells = [c for c in json.loads((prun / "notebook.ipynb").read_text())["cells"] if c["cell_type"] == "code"]
     errors = []
     with Sandbox(str(rdir), run_mode=mode, seed=svc.settings.seed,
                  extra_env={"ALC_PSEUDONYM_KEY": svc.settings.pseudonym_key}) as sb:
-        sb.add_markdown(f"# {mode.capitalize()} of run `{run_id}`\n\n{ctx.question['text']}")
+        sb.add_markdown(f"# {mode.capitalize()} of run `{parent_id}`\n\n{ctx.question['text']}")
         sb.setup()
         for c in cells:
             meta = c.get("metadata", {}).get("alchemist", {})
@@ -407,6 +462,6 @@ def replay(svc: Services, run_id: str, *, user: str, mode: str = "replay") -> di
     status = "completed" if not errors and result_check["status"]["mismatches"] == 0 else "mismatch"
     if mode == "rerun":
         status = "completed" if not errors else "failed"
-    out = _finish(svc, ctx, status, usage={}, extra={"parent_run": run_id, "result_check": result_check,
+    out = _finish(svc, ctx, status, usage={}, extra={"parent_run": parent_id, "result_check": result_check,
                                                      "cell_errors": errors})
     return out
