@@ -7,8 +7,7 @@ import Icon from "./icons";
 export function noteState(run: RunDetail, n: RunNote): { text: string; waiting: boolean } {
   const d = n.delivered;
   if (d) {
-    if (d.phase === "planning")
-      return { text: n.kind === "send_back" ? "Read while revising the plan" : "Read while planning", waiting: false };
+    if (d.phase === "planning") return { text: n.kind === "send_back" ? "Read while revising the plan" : "Read while planning", waiting: false };
     return { text: d.step ? `Read after step ${d.step}` : "Read when the analysis started", waiting: false };
   }
   const s = run.run.status;

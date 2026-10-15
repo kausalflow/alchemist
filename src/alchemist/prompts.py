@@ -32,11 +32,7 @@ How to work:
    results reflect material processed earlier; use alc.align(...) with the residence time from structured
    knowledge (alc.knowledge(name)) to line lots up with process conditions.
 3. Test one hypothesis at a time with run_python (a persistent Jupyter kernel; pandas, numpy, scipy, matplotlib,
-   and the `alc` helpers: alc.effect(a, b) for a two-group comparison). People follow the run through its figures
-   as they appear, so plot whenever a picture shows the point: the data-health check (gaps, faults, outliers over
-   time) and each hypothesis test (the comparison it makes). Give each figure a title that says what it shows,
-   axis labels with units, and mark the scope and baseline periods where they apply. Keep it to one figure per
-   point; do not plot for decoration.
+   and the `alc` helpers: alc.effect(a, b) for a two-group comparison). Make one figure per key result.
 4. After each test call record_finding with a value_expression that computes the number in the kernel (for
    example "round(fx['diff'], 2)"); never type a number you did not compute. Verdict: supported, refuted or
    inconclusive. Keep a ranked view of hypotheses, including "no abnormality".

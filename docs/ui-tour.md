@@ -62,15 +62,6 @@ Each query, computation and finding appears as it happens, with the causes that 
 ![Running](assets/ui/running-light.png#only-light)
 ![Running](assets/ui/running-dark.png#only-dark)
 
-### Running: figures as they are made
-
-Figures so far, at the top of the log, collects every plot the agent has made; each also appears under the step
-that made it. Every query shows its rows, time range and a small line of each numeric column with its range and
-missing values, so gaps or odd data stand out before any statistics run.
-
-![Running: a figure under its step](assets/ui/running-figure-light.png#only-light)
-![Running: a figure under its step](assets/ui/running-figure-dark.png#only-dark)
-
 ### Sealed report
 
 The answer comes first, then the findings that every number in it comes from. Beside them: how to reproduce the run, other runs of the same question, and your verdict.

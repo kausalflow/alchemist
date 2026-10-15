@@ -82,11 +82,6 @@ def test_transparency_endpoints(client, finished):
     assert snap["rows"] > 0 and "operator_name" not in [c["name"] for c in snap["columns"]]
     steps = client.get(f"/api/runs/{finished}/steps", headers=h).json()
     assert steps["planning"] and any(s.get("tool") == "build_report" for s in steps["analysis"])
-    # what people see while it works: figures under the step that made them, and each query result's shape
-    figures = [f for s in steps["analysis"] for f in (s.get("meta") or {}).get("figures", [])]
-    assert len(figures) >= 3 and all(client.get(f"/api/runs/{finished}/files/{f}", headers=h).status_code == 200 for f in figures)
-    preview = next(s["meta"]["preview"] for s in steps["analysis"] if s.get("tool") == "run_query")
-    assert preview["rows"] > 0 and preview["spark"]["first_pass_yield_pct"] and preview["stats"]["start_ts"]["min"]
     report = client.get(f"/api/runs/{finished}/files/report/report.html", headers=h)
     assert report.status_code == 200 and "default-src 'none'" in report.headers["content-security-policy"]
     assert client.get(f"/api/runs/{finished}/files/../../question.yaml", headers=h).status_code in (400, 404)

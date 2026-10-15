@@ -110,39 +110,12 @@ def _summary(df: pd.DataFrame, max_rows: int = 20) -> dict:
     desc = {}
     for col in df.columns:
         s = df[col]
-        if pd.api.types.is_bool_dtype(s):
-            desc[col] = {"distinct": int(s.nunique()), "nulls": int(s.isna().sum())}
-        elif pd.api.types.is_numeric_dtype(s):
+        if pd.api.types.is_numeric_dtype(s):
             desc[col] = {"min": _num(s.min()), "mean": _num(s.mean()), "max": _num(s.max()), "nulls": int(s.isna().sum())}
-        elif pd.api.types.is_datetime64_any_dtype(s):
-            desc[col] = {"min": _iso(s.min()), "max": _iso(s.max()), "nulls": int(s.isna().sum())}
         else:
             desc[col] = {"distinct": int(s.nunique()), "nulls": int(s.isna().sum())}
     return {"rows": int(len(df)), "columns": {c: str(t) for c, t in df.dtypes.items()}, "stats": desc,
-            "head": json.loads(df.head(max_rows).to_json(orient="records", date_format="iso")),
-            "spark": _sparks(df)}
-
-
-def _iso(x):
-    return None if pd.isna(x) else pd.Timestamp(x).isoformat()
-
-
-def _sparks(df: pd.DataFrame, points: int = 48, columns: int = 6) -> dict:
-    """Numeric columns in row order, averaged into `points` buckets: a preview for people following the run (the
-    model is not shown it). NaN buckets stay None, so gaps show."""
-    import numpy as np
-
-    out = {}
-    num = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_bool_dtype(df[c])]
-    for col in num[:columns]:
-        v = df[col].to_numpy(dtype=float)
-        if not len(v):
-            continue
-        edges = np.linspace(0, len(v), min(points, len(v)) + 1).astype(int)
-        out[col] = [None if np.isnan(m) else round(float(m), 4)
-                    for m in (np.nanmean(v[a:b]) if np.isfinite(v[a:b]).any() else np.nan
-                              for a, b in zip(edges[:-1], edges[1:]))]
-    return out
+            "head": json.loads(df.head(max_rows).to_json(orient="records", date_format="iso"))}
 
 
 def _num(x):

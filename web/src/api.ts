@@ -187,7 +187,6 @@ export interface Step {
   at: number;
   type: "model" | "tool" | "note";
   notes?: { n: number; author: string; kind: string; text: string; at: string }[];
-  meta?: { figures?: string[]; cell?: string; preview?: QueryPreview };
   tool?: string;
   input?: Record<string, unknown>;
   is_error?: boolean;
@@ -198,16 +197,6 @@ export interface Step {
   stop_reason?: string;
   text?: string;
   usage?: { input_tokens: number; output_tokens: number };
-}
-
-/** A query result's shape as people following the run see it (the model gets its own summary). */
-export interface QueryPreview {
-  query: string;
-  cell?: string;
-  rows?: number;
-  columns?: Record<string, string>;
-  stats?: Record<string, Record<string, unknown>>;
-  spark?: Record<string, (number | null)[]>;
 }
 
 export interface NotebookCell {
