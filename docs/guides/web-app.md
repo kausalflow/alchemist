@@ -50,6 +50,8 @@ Set `ALC_ALB_ARN` to the load balancer's ARN; tokens signed by anything else are
 
 ## Screens
 
+The [UI tour](../ui-tour.md) has a screenshot of every screen below, in light and dark mode.
+
 The app follows one question through its gates: the agent drafts a plan, the asker approves it, the analysis runs,
 and a sealed report comes out. People act only at the gates.
 

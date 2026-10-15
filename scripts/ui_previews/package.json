@@ -1,0 +1,9 @@
+{
+  "name": "alchemist-ui-previews",
+  "private": true,
+  "type": "module",
+  "description": "Screenshots of the web app for the docs; see run.sh",
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}
