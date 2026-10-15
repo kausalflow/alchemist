@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .catalog import index_dataset
 from .config import load_settings
-from .paths import as_path, read_yaml
+from .paths import as_path, copy_tree, read_yaml
 
 
 def _svc():
@@ -33,6 +33,16 @@ def _model(name: str, phase: str):
     return PydanticAIModel(load_settings(), None if name in ("bedrock", "default") else name)
 
 
+def _user(a, svc=None):
+    """The acting user: verified identity-provider claims (--claims) or a local user from access.yaml (--user)."""
+    if getattr(a, "claims", None):
+        svc = svc or _svc()
+        return svc.access.user_from_claims(json.loads(Path(a.claims).read_text()))
+    if not a.user:
+        sys.exit("give --user (local user in access.yaml) or --claims (verified token claims as JSON)")
+    return a.user
+
+
 def _reviewer(name: str, spec: str | None = None):
     if name == "scripted":
         from .demo import script
@@ -54,6 +64,14 @@ def cmd_demo_setup(a) -> None:
     s = load_settings()
     home = Path(s.db_path).parent
     datasets = generate(home)
+    if a.lake:
+        # Put the demo lake on S3 (or any cloudpathlib location) and register it there.
+        lake, target = str(home / "lake"), a.lake.rstrip("/")
+        copy_tree(lake, target)
+        for spec in datasets.values():
+            for key in ("s3_prefix", "metadata_uri"):
+                spec[key] = spec[key].replace(lake, target, 1)
+        print(f"Uploaded the demo lake to {target}")
     svc = _svc()
     for ds_id, spec in datasets.items():
         svc.catalog.register(id=ds_id, actor="data_admin", **spec)
@@ -105,23 +123,25 @@ def cmd_ask(a) -> None:
     scope = json.loads(a.scope) if a.scope else {}
     if a.plants:
         scope["plants"] = a.plants.split(",")
-    out = ask(svc, user=a.user, workspace=a.workspace, project=a.project, question=a.question, scope=scope,
+    user = _user(a, svc)
+    out = ask(svc, user=user, workspace=a.workspace, project=a.project, question=a.question, scope=scope,
               model=_model(a.model, "plan"))
     print(f"Run {out['run_id']}: {out['status']} ({out['ended']})")
     if out["plan"]:
         _print(out["plan"])
     if a.auto_approve and out["status"] == "awaiting_approval":
-        res = approve(svc, out["run_id"], user=a.user, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model, a.reviewer_model))
+        res = approve(svc, out["run_id"], user=user, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model, a.reviewer_model))
         _report(res)
     elif out["status"] == "awaiting_approval":
-        print(f"\nReview the plan, then: alchemist approve {out['run_id']} --user {a.user}")
+        print(f"\nReview the plan, then: alchemist approve {out['run_id']} " + (f"--claims {a.claims}" if a.claims else f"--user {a.user}"))
 
 
 def cmd_approve(a) -> None:
     from .run import approve
 
     plan = json.loads(Path(a.plan_file).read_text()) if a.plan_file else None
-    res = approve(_svc(), a.run_id, user=a.user, plan=plan, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model, a.reviewer_model))
+    svc = _svc()
+    res = approve(svc, a.run_id, user=_user(a, svc), plan=plan, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model, a.reviewer_model))
     _report(res)
 
 
@@ -152,7 +172,8 @@ def cmd_status(a) -> None:
 def cmd_replay(a) -> None:
     from .run import replay
 
-    res = replay(_svc(), a.run_id, user=a.user, mode=a.mode)
+    svc = _svc()
+    res = replay(svc, a.run_id, user=_user(a, svc), mode=a.mode)
     print(f"{a.mode} of {a.run_id} -> run {res['run_id']}: {res['status']}")
     _print(res["result_check"])
     if res["cell_errors"]:
@@ -198,7 +219,23 @@ def cmd_demo_run(a) -> None:
     st = rep["result_check"]["status"]
     print(f"3. Replay {rep['run_id']}: {rep['status']}, {st['compared']} findings compared, {st['mismatches']} mismatches")
     print(f"4. Verify original: {verify(res['path'], res['seal_sha256'])['ok']}")
-    print(f"\nReport: {Path(res['path']) / 'report' / 'report.html'}")
+    print(f"\nReport: {as_path(res['path']) / 'report' / 'report.html'}")
+
+
+def cmd_access(a) -> None:
+    """Show how the access model sees a user: from verified token claims, or a local user."""
+    from dataclasses import asdict
+
+    svc = _svc()
+    u = svc.access.resolve(_user(a, svc))
+    out = {k: sorted(v) if isinstance(v, frozenset) else v for k, v in asdict(u).items()}
+    out["workspace_plants"] = {}
+    for ws in sorted(u.workspaces if not u.is_admin else svc.access.data.get("workspaces", {})):
+        try:
+            out["workspace_plants"][ws] = sorted(svc.access.run_plants(u, ws))
+        except Exception as e:  # noqa: BLE001 - shown to the operator as is
+            out["workspace_plants"][ws] = f"denied: {e}"
+    _print(out)
 
 
 def cmd_serve(a) -> None:
@@ -245,6 +282,7 @@ def main(argv=None) -> None:
     ds = dsub.add_parser("setup", help="generate demo data, register and index the datasets")
     ds.add_argument("--use-model", action="store_true", help="draft catalog cards with the sub model (ALC_SUB_MODEL)")
     ds.add_argument("--no-approve", action="store_true", help="leave drafts for an admin to review")
+    ds.add_argument("--lake", help="upload the demo lake here (e.g. s3://my-bucket/alchemist-demo/lake) and register it there")
     ds.set_defaults(fn=cmd_demo_setup)
     dsub.add_parser("run", help="ask, approve, replay and verify the demo question offline").set_defaults(fn=cmd_demo_run)
 
@@ -267,7 +305,8 @@ def main(argv=None) -> None:
 
     k = sub.add_parser("ask", help="ask a question; plans and waits for approval")
     k.add_argument("question")
-    k.add_argument("--user", required=True)
+    k.add_argument("--user")
+    k.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
     k.add_argument("--workspace", required=True)
     k.add_argument("--project", required=True)
     k.add_argument("--plants", help="comma-separated plants in scope")
@@ -280,7 +319,8 @@ def main(argv=None) -> None:
 
     ap = sub.add_parser("approve", help="approve (optionally edit) a plan and run the analysis")
     ap.add_argument("run_id")
-    ap.add_argument("--user", required=True)
+    ap.add_argument("--user")
+    ap.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
     ap.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default ALC_SUB_MODEL")
     ap.add_argument("--plan-file", help="edited plan JSON")
     ap.add_argument("--model", default="default",
@@ -295,9 +335,15 @@ def main(argv=None) -> None:
 
     r = sub.add_parser("replay", help="re-execute a sealed run on its snapshots or on current data")
     r.add_argument("run_id")
-    r.add_argument("--user", required=True)
+    r.add_argument("--user")
+    r.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
     r.add_argument("--mode", choices=["replay", "rerun"], default="replay")
     r.set_defaults(fn=cmd_replay)
+
+    w = sub.add_parser("whoami", help="show the plants, workspaces and roles a user gets")
+    w.add_argument("--user")
+    w.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
+    w.set_defaults(fn=cmd_access)
 
     v = sub.add_parser("verify", help="check a sealed run folder against its SEALED hashes")
     v.add_argument("run_id")

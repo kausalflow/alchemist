@@ -8,4 +8,6 @@ COPY src ./src
 RUN uv sync --locked --no-dev && useradd -m alchemist
 ENV PATH="/app/.venv/bin:$PATH" ALC_HOME=/data
 USER alchemist
+# The sandbox has no internet, so DuckDB's S3 extension ships in the image.
+RUN python -c "import duckdb; duckdb.connect().execute('install httpfs')"
 ENTRYPOINT ["alchemist"]

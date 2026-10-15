@@ -19,6 +19,7 @@ from .access import AccessDenied, User
 from .agent import Budget, Model, ToolOutput, run_loop
 from .llm import PydanticAIModel
 from .catalog import Catalog, now
+from .credentials import AMBIENT_AWS_VARS, CredentialBroker
 from .knowledge import Knowledge
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json
 from .plugins import get_registry
@@ -45,12 +46,28 @@ def environment() -> dict:
 
 
 class Services:
-    def __init__(self, settings):
+    """The backends a run uses. Access comes from the registered access provider (ALC_ACCESS_PROVIDER); any
+    backend can also be passed in directly. `broker` needs issue() (credentials.Broker)."""
+
+    def __init__(self, settings, *, catalog=None, access=None, knowledge=None, broker=None):
         reg = get_registry()
         self.settings = settings
-        self.catalog = Catalog(settings.db_path)
-        self.access = reg.access_providers.get(settings.access_provider).load(settings)
-        self.knowledge = Knowledge(settings.knowledge_root, packs=list(reg.knowledge_packs))
+        self.catalog = catalog or Catalog(settings.db_path)
+        self.access = access or reg.access_providers.get(settings.access_provider).load(settings)
+        self.knowledge = knowledge or Knowledge(settings.knowledge_root, packs=list(reg.knowledge_packs))
+        self.broker = broker or CredentialBroker.from_settings(settings)
+
+    def sandbox_env(self, ctx: "RunContext", views: dict) -> dict:
+        """Kernel environment: the pseudonym key, and the run's own S3 credentials when a run role is set."""
+        env = {"ALC_PSEUDONYM_KEY": self.settings.pseudonym_key}
+        creds = self.broker.issue(run_id=ctx.row["run_id"], user_id=ctx.user_id, workspace=ctx.row["workspace"],
+                                  run_dir=str(ctx.run), read_globs=[v["glob"] for v in views.values()],
+                                  policy_out=ctx.run / "logs" / "session_policy.json")
+        ctx.credentials = creds.record() if creds else {"mode": "ambient"}
+        if creds:
+            env.update(creds.env())
+            env.update({k: None for k in AMBIENT_AWS_VARS})
+        return env
 
 
 def plugin_tools(phase: str, ctx: "RunContext") -> tuple[list, dict]:
@@ -74,6 +91,7 @@ class RunContext:
 
     def __init__(self, svc: Services, run_row: dict, *, user: str):
         self.svc, self.row, self.user_id = svc, run_row, user
+        self.credentials: dict = {}
         self.run = as_path(run_row["path"])
         self.qdir = self.run.parent.parent
         self.question = read_yaml(self.qdir / "question.yaml")
@@ -221,7 +239,7 @@ class RunContext:
             "question": {"id": self.question["id"], "text": self.question["text"], "scope": self.question.get("scope")},
             "plan": self.plan,
             "access": {"user": self.user_id, "workspace": self.row["workspace"], "project": self.row["project"],
-                       "plants": sorted(self.plants)},
+                       "plants": sorted(self.plants), "credentials": self.credentials},
             "environment": environment(),
             "model": self.models,
             "plugins": get_registry().summary(),
@@ -285,15 +303,10 @@ class ScriptedReviewer:
 
 # ------------------------------------------------------------------ lifecycle
 
-def _resolve(svc: Services, user: "str | User") -> User:
-    """A user id (looked up in the access model) or a User the caller already built, e.g. from verified claims."""
-    return user if isinstance(user, User) else svc.access.user(user)
-
-
 def create(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict) -> dict:
     """Check access, create the question and run folders and index the run. Returns the run row."""
     s, acc = svc.settings, svc.access
-    u = _resolve(svc, user)
+    u = svc.access.resolve(user)
     user = u.id
     plants = acc.run_plants(u, workspace, scope.get("plants"))
     ensure_project(s.workspace_root, workspace, project, owner=user, plants=sorted(plants))
@@ -356,7 +369,7 @@ def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict
     if row["status"] != "awaiting_approval":
         raise ValueError(f"run {run_id} is {row['status']}, not awaiting approval")
     question = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
-    u = _resolve(svc, user)
+    u = svc.access.resolve(user)
     user = u.id
     if user != question["asker"] and not u.is_admin:
         raise AccessDenied("only the person who asked (or an admin) can approve the plan")
@@ -395,8 +408,7 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     ctx.models.update(lead=model.name, reviewer=reviewer.name)
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     ended = "error"
-    with Sandbox(str(ctx.run), run_mode="live", seed=s.seed,
-                 extra_env={"ALC_PSEUDONYM_KEY": s.pseudonym_key}) as sb:
+    with Sandbox(str(ctx.run), run_mode="live", seed=s.seed, extra_env=svc.sandbox_env(ctx, views)) as sb:
         ctx.sandbox = sb
         sb.add_markdown(f"# {question['text']}\n\nRun `{run_id}` · approved plan v{ctx.plan.get('version')} · "
                         f"plants {', '.join(sorted(ctx.plants))}\n\nSet `run_mode = 'replay'` in the next cell to "
@@ -456,7 +468,7 @@ def start_replay(svc: Services, run_id: str, *, user: "str | User", mode: str = 
     parent = svc.catalog.run(run_id)
     if not parent.get("seal_sha256"):
         raise ValueError("only sealed runs can be replayed")
-    u = _resolve(svc, user)
+    u = svc.access.resolve(user)
     user = u.id
     plants = json.loads(parent["plants"])
     if not svc.access.can_view_run(u, parent["workspace"], plants):
@@ -489,8 +501,10 @@ def execute_replay(svc: Services, run_id: str) -> dict:
 
     cells = [c for c in json.loads((prun / "notebook.ipynb").read_text())["cells"] if c["cell_type"] == "code"]
     errors = []
-    with Sandbox(str(rdir), run_mode=mode, seed=svc.settings.seed,
-                 extra_env={"ALC_PSEUDONYM_KEY": svc.settings.pseudonym_key}) as sb:
+    views = read_json(rdir / "inputs" / "views.json") if (rdir / "inputs" / "views.json").exists() else {}
+    if mode == "replay":
+        views = {}  # a replay reads only the snapshots in its own folder, never the lake
+    with Sandbox(str(rdir), run_mode=mode, seed=svc.settings.seed, extra_env=svc.sandbox_env(ctx, views)) as sb:
         sb.add_markdown(f"# {mode.capitalize()} of run `{parent_id}`\n\n{ctx.question['text']}")
         sb.setup()
         for c in cells:

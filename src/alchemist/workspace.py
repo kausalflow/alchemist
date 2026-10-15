@@ -20,7 +20,7 @@ import os
 import stat
 
 from .catalog import now
-from .paths import as_path, is_cloud, new_id, read_yaml, sha256_file, write_yaml
+from .paths import as_path, create_exclusive, is_cloud, new_id, read_yaml, sha256_file, write_yaml
 
 
 def workspace_dir(root, workspace: str):
@@ -78,14 +78,19 @@ def _files(run):
 def seal(run, run_id: str) -> str:
     """Write SEALED (SHA-256 per file) and return the hash of SEALED itself.
 
-    In production the run's write credentials expire at this point; locally the
-    files are made read-only as a stand-in.
+    SEALED is created only if it does not exist (an S3 conditional put), so a run
+    is sealed once. The sandbox kernel has stopped by now, and its per-run
+    credentials may never write SEALED; anything changed or added later shows up
+    in verify(). Locally the files are also made read-only.
     """
     run = as_path(run)
     files = {rel: sha256_file(f) for rel, f in _files(run)}
     body = {"schema": "alchemist.sealed/v1", "run_id": run_id, "sealed_at": now(), "files": files}
     text = json.dumps(body, indent=2, sort_keys=True) + "\n"
-    (run / "SEALED").write_text(text)
+    try:
+        create_exclusive(run / "SEALED", text)
+    except FileExistsError:
+        raise ValueError(f"run {run_id} is already sealed") from None
     if not is_cloud(run):
         for _, f in _files(run):
             os.chmod(f, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)

@@ -17,8 +17,12 @@ class Settings:
     workspace_root: str = field(default_factory=lambda: os.environ.get("ALC_WORKSPACE") or _home("workspace"))
     # Catalog / index database (SQLite in the MVP; Aurora PostgreSQL in the target design).
     db_path: str = field(default_factory=lambda: os.environ.get("ALC_DB") or _home("alchemist.db"))
-    # Who may see which plants and workspaces (stands in for identity-provider groups).
+    # Plants, workspaces and how identity-provider groups map to them; may also list local users (fallback).
     access_file: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS") or _home("access.yaml"))
+    # Role the credential broker assumes once per run, narrowed by a session policy to the run's data and folder.
+    # Unset: the sandbox uses the process's own AWS credentials (laptops, tests).
+    run_role_arn: str | None = field(default_factory=lambda: os.environ.get("ALC_RUN_ROLE_ARN") or None)
+    run_credential_seconds: int = field(default_factory=lambda: int(os.environ.get("ALC_RUN_CREDENTIAL_SECONDS", "3600")))
     # Which registered access provider supplies users, plant groups and workspaces ("yaml" reads access_file).
     access_provider: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS_PROVIDER", "yaml"))
     # Searchable domain documents (markdown with front matter).

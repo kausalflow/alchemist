@@ -28,7 +28,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = [
+    "moto[s3,server,sts]>=5.1",
+    "pytest>=8",
+]
 
 [project.scripts]
 alchemist = "alchemist.cli:main"

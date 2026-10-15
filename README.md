@@ -94,11 +94,11 @@ uv run alchemist verify <run-id>
 
 | Rule | MVP | Target design |
 | --- | --- | --- |
-| Plant groups decide data, workspaces decide projects | `access.yaml`, checked in the tool layer | identity-provider groups, per-run STS credentials enforced by S3 |
+| Plant groups decide data, workspaces decide projects | identity-provider groups (or local users in `access.yaml`); tool layer, plus per-run STS credentials enforced by S3 when `ALC_RUN_ROLE_ARN` is set | same, always with per-run credentials |
 | Only approved, registered datasets are queryable | views built from approved cards; SQL guard | same, plus the run role can only read registered prefixes |
 | Hidden and pseudonymised columns | dropped or keyed-hashed in the views | same |
 | The kernel cannot reach the model or the internet | not enforced (local process) | separate Fargate task, no route to Bedrock, no NAT |
-| Sealed runs cannot change | files made read-only + SHA-256 tamper evidence | run credentials expire; optional Object Lock |
+| Sealed runs cannot change | SEALED written once (S3 conditional put), run credentials may not write it, SHA-256 tamper evidence | same |
 | Catalog and run index | SQLite | Aurora PostgreSQL + pgvector |
 | Document search | keyword ranking | hybrid (embeddings + full text) |
 
@@ -114,6 +114,8 @@ src/alchemist/
   agent.py      tool loop with budgets and a transcript; ScriptedModel for offline runs
   prompts.py    system prompts and tool definitions (their hash goes into each manifest)
   run.py        ask / approve / replay lifecycle and the tool handlers
+  access.py     plant groups and workspaces from identity-provider claims or access.yaml
+  credentials.py  per-run STS credentials scoped to the run's data and folder
   report.py     conclusion card and HTML report
   workspace.py  S3 (or local) folder layout, sealing and verification
   knowledge.py  document passages and structured knowledge
@@ -121,7 +123,8 @@ src/alchemist/
 ```
 
 Paths go through cloudpathlib, so setting `ALC_WORKSPACE=s3://alchemist-workspace` and registering `s3://` dataset
-prefixes uses S3 directly (DuckDB reads it with the `credential_chain` secret).
+prefixes uses S3 directly. With `ALC_RUN_ROLE_ARN` set, each run's kernel gets its own STS credentials that can read
+only its plants' registered prefixes and write only its run folder. See the S3 guide in the docs.
 
 ## Not in the MVP yet
 
