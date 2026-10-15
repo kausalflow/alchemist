@@ -8,3 +8,4 @@ alchemist-home/
 dist/
 site/
 cdk.out/
+node_modules/
