@@ -17,6 +17,7 @@ src/alchemist/
   workspace.py  S3 (or local) folder layout, sealing and verification
   knowledge.py  document passages and structured knowledge
   paths.py      cloudpathlib helpers, ULIDs, hashing, glob expansion
+  plugins.py    plugin registry and extension-point types; the built-in defaults are registered here
   demo/
     generate.py synthetic plant with a planted root cause
     script.py   the scripted investigation used by `demo run` and the tests
@@ -37,6 +38,8 @@ infra/          AWS CDK app (its own pyproject), see guides/deploy-aws.md
     observability.py alarms, CloudTrail, break-glass role
     lambdas/broker/  per-run credential broker (boto3 only)
   tests/        template security checks and broker tests
+examples/
+  alchemist-example-plugin/   a working plugin of most extension kinds (see guides/plugins.md)
 ```
 
 ## How the pieces call each other
@@ -55,6 +58,10 @@ flowchart TB
     NB --> DUCK[(DuckDB on S3 / local)]
     RUN --> REP[report.py]
     RUN --> WS[workspace.py: folders, seal, verify]
+    PLG[plugins.py: registry] -.-> CAT
+    PLG -.-> LLM
+    PLG -.-> RUN
+    PLG -.-> NB
 ```
 
 The orchestration (`run.py`, `agent.py`, `llm.py`) talks to the model; everything that touches data runs in the kernel

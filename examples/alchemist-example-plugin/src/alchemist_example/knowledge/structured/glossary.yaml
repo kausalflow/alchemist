@@ -1,0 +1,7 @@
+schema: alchemist.knowledge/v1
+version: "1"
+plant: global
+terms:
+  FPY: First-pass yield, the share of lots that pass inspection without rework.
+  MFI: Melt flow index, grams of polymer per 10 minutes through a standard die; a resin property.
+  CUSUM: Cumulative sum control chart, sensitive to small persistent shifts in a process mean.
