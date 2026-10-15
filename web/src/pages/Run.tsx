@@ -8,6 +8,7 @@ import PlanEditor from "../components/PlanEditor";
 import StepList, { isReviewing } from "../components/StepList";
 import Stepper from "../components/Stepper";
 import { SteerPanel } from "../components/Steer";
+import { FigureStrip } from "../components/Visuals";
 import { QuestionRuns, ReproducePanel, VerdictPanel, useReplay } from "../components/tabs";
 import { runTabs } from "../runTabs";
 
@@ -162,8 +163,8 @@ function PlanningView({ run, steps, onStop, reload }: { run: RunDetail; steps: S
             What happens next
           </h2>
           <p className="small muted">
-            When the plan is ready it waits under Needs approval. {run.question?.asker} reviews the candidate causes, the data and the methods
-            before anything is read. You can leave this page.
+            When the plan is ready it waits under Needs approval. {run.question?.asker} reviews the candidate causes, the data and the
+            methods before anything is read. You can leave this page.
           </p>
           {run.permissions?.stop && (
             <>
@@ -202,12 +203,17 @@ function RunningView({
   const tokens = steps.reduce((n, s) => n + (s.usage?.output_tokens ?? 0), 0);
   const found = new Map<string, number>();
   for (const s of steps)
-    if (s.tool === "record_finding" && typeof s.input?.hypothesis === "string") found.set(s.input.hypothesis, (found.get(s.input.hypothesis) ?? 0) + 1);
+    if (s.tool === "record_finding" && typeof s.input?.hypothesis === "string")
+      found.set(s.input.hypothesis, (found.get(s.input.hypothesis) ?? 0) + 1);
 
   const limits = meta
     ? [
         { name: "Tool calls", used: tools, max: meta.budgets.max_steps },
-        { name: "Output tokens", used: tokens, max: meta.budgets.max_output_tokens },
+        {
+          name: "Output tokens",
+          used: tokens,
+          max: meta.budgets.max_output_tokens,
+        },
       ]
     : [];
 
@@ -243,26 +249,34 @@ function RunningView({
         )}
       </aside>
 
-      <section aria-labelledby="log" className="panel center-col">
-        <div className="panel-head">
-          <h2 id="log" className="h-panel">
-            {paused ? "What it did before pausing" : "What it is doing"}
-          </h2>
-          <span className="muted small">Every query and computation becomes a notebook cell in the run folder.</span>
-          {run.has_notebook && (
-            <a className="push small" href={fileUrl(r.run_id, "notebook.ipynb", true)}>
-              Download the notebook so far
-            </a>
-          )}
-        </div>
-        <StepList
-          steps={steps}
-          live={!paused}
-          liveText={
-            r.mode !== "live" ? "Re-executing the original notebook cells in a fresh kernel…" : reviewing ? "A second model is reviewing the findings…" : undefined
-          }
-        />
-      </section>
+      <div className="center-col stack">
+        <FigureStrip runId={r.run_id} steps={steps} />
+        <section aria-labelledby="log" className="panel">
+          <div className="panel-head">
+            <h2 id="log" className="h-panel">
+              {paused ? "What it did before pausing" : "What it is doing"}
+            </h2>
+            <span className="muted small">Every query and computation becomes a notebook cell in the run folder.</span>
+            {run.has_notebook && (
+              <a className="push small" href={fileUrl(r.run_id, "notebook.ipynb", true)}>
+                Download the notebook so far
+              </a>
+            )}
+          </div>
+          <StepList
+            steps={steps}
+            runId={r.run_id}
+            live={!paused}
+            liveText={
+              r.mode !== "live"
+                ? "Re-executing the original notebook cells in a fresh kernel…"
+                : reviewing
+                  ? "A second model is reviewing the findings…"
+                  : undefined
+            }
+          />
+        </section>
+      </div>
 
       <aside className="side-right stack">
         <section aria-labelledby="ctl" className="panel pad stack-sm">
@@ -288,7 +302,9 @@ function RunningView({
               <button type="button" className="primary" onClick={act("resume")}>
                 <Icon name="play" /> Resume
               </button>
-              <div className="small muted">Re-runs the notebook on its stored snapshots in a fresh kernel, then carries on from the last step.</div>
+              <div className="small muted">
+                Re-runs the notebook on its stored snapshots in a fresh kernel, then carries on from the last step.
+              </div>
             </>
           )}
           {run.permissions?.stop && (
@@ -401,10 +417,14 @@ function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
         </div>
         <ErrorNote error={error} />
         {r.status === "partial" && (
-          <div className="callout warn small">Partial report: the run was stopped before every cause was tested. The findings so far were reviewed and sealed.</div>
+          <div className="callout warn small">
+            Partial report: the run was stopped before every cause was tested. The findings so far were reviewed and sealed.
+          </div>
         )}
         {r.status === "mismatch" && (
-          <div className="callout bad small">This {r.mode} did not reproduce the original values. See the comparison under Replay result.</div>
+          <div className="callout bad small">
+            This {r.mode} did not reproduce the original values. See the comparison under Replay result.
+          </div>
         )}
 
         {run.conclusion_html ? (

@@ -52,10 +52,13 @@ helpers. The agent then works with these tools:
 :   One read-only `SELECT` over `ds.<dataset>` views, checked by DuckDB's own parser. The dataset's glob is expanded
     once and the query runs on that explicit file list; every source object's key, ETag, size and modified time is
     recorded. The result is saved as `inputs/<sha256>.parquet` and loaded in the kernel as `df_<query_id>`. The model
-    sees only the row count, column types, summary statistics and the first rows.
+    sees only the row count, column types, summary statistics and the first rows; people following the run also see a
+    sparkline of each numeric column (kept in the transcript, never sent to the model).
 
 `run_python`
-:   A cell in the persistent kernel. Output is truncated before it reaches the model; figures are saved to `figures/`.
+:   A cell in the persistent kernel. Output is truncated before it reaches the model; figures are saved to `figures/`
+    and shown to people following the run as soon as the cell finishes. The prompt asks for a figure at the data-health
+    check and at each hypothesis test.
 
 `record_finding`
 :   A claim plus a Python expression that computes its supporting number **in the kernel**. The model never types the

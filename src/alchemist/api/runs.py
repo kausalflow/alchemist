@@ -75,7 +75,8 @@ def _transcript_steps(path) -> list[dict]:
         elif "tool" in e:
             steps.append({"at": e["at"], "type": "tool", "tool": e["tool"], "input": e.get("input"),
                           "is_error": e.get("is_error", False), "seconds": e.get("seconds"),
-                          "output": (e.get("output") or "")[:2000], "images": e.get("images", 0)})
+                          "output": (e.get("output") or "")[:2000], "images": e.get("images", 0),
+                          **({"meta": e["meta"]} if e.get("meta") else {})})
         elif "model" in e:
             texts = [b.get("text", "") for b in e["message"]["content"] if b.get("type") == "text"]
             steps.append({"at": e["at"], "type": "model", "model": e["model"], "stop_reason": e.get("stop_reason"),
