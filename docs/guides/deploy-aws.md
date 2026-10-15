@@ -87,6 +87,8 @@ validated on load, so a typo fails at synth time. The main sections:
 | `image` | empty to build from the repository `Dockerfile`, or `ecr_repository_arn` and `digest` for a scanned image |
 | `sizes`, `database`, `workflow` | task sizes, Aurora capacity, approval and analysis timeouts, the nightly index schedule |
 | `commands` | the container commands; see [Deployment contract](../reference/deployment.md) |
+| `modules` | optional parts of the stack: `edge`, `observability`, `indexers` |
+| `plugins` | app plugins installed into the image and selected for every container, and infrastructure plugins; see [Extend the deployment](#extend-the-deployment) |
 | `operations` | alarm e-mail, log retention, CloudTrail, break-glass principals |
 
 !!! warning
@@ -126,6 +128,50 @@ After the first deployment:
 3. **Alarms.** Confirm the SNS e-mail subscription if `operations.alarm_email` is set.
 4. **Gate for phase 1.** Start a run as a user of plant A only and check at S3 (CloudTrail data events) that its
    sandbox is denied when reading a plant-B prefix.
+
+## Extend the deployment
+
+The stack has three layers, so a site can add to it without forking `infra/`:
+
+| Layer | What | How to change it |
+| --- | --- | --- |
+| Core | network, storage, database, Bedrock, services, run workflow | always on; holds the security rules |
+| Modules | `edge` (CloudFront and the SPA), `observability` (alarms, CloudTrail, break-glass), `indexers` (nightly schedules) | switch off in `modules:`, for example when the company already has a front door or central logging |
+| Plugins | app plugins in the image; infrastructure plugins that add AWS resources | `plugins:` in the environment file |
+
+### App plugins
+
+[App plugins](plugins.md) are Python packages installed next to `alchemist` in the image. List them in
+`plugins.packages` (pip specs; pin versions, or give a wheel path inside the repository) and the image is built with
+them through the `EXTRA_PACKAGES` build argument. Select what loads with `plugins.enabled` (`ALC_PLUGINS`; empty means
+built-ins only, which is the safe default), `plugins.modules` (`ALC_PLUGIN_MODULES`) and `plugins.access_provider`
+(`ALC_ACCESS_PROVIDER`). `plugins.env` adds settings a plugin reads. All of these reach every container, so the API,
+orchestrator, sandbox and indexers load the same plugins. With a pinned image (`image.digest`), bake the packages into
+that image instead; the config refuses both at once.
+
+```yaml
+plugins:
+  packages: ["acme-alchemist==1.2.0"]
+  enabled: [acme]
+  access_provider: alb-oidc
+```
+
+### Infrastructure plugins
+
+An infrastructure plugin is a Python module with `register(ctx)`, named in `plugins.infra` or installed with the
+entry-point group `alchemist.infra`. It runs after the core and the modules, and gets an `InfraContext` with the
+config and every construct (`ctx.network`, `ctx.storage`, `ctx.services`, `ctx.workflow`, ...). Use
+`ctx.scope(name)` for its resources, `ctx.services.add_task(...)` for a task on the Alchemist image,
+`ctx.allow_s3_bucket(name)` to let tasks reach another bucket through the S3 endpoint, and, sparingly,
+`ctx.allow_run_writer(role_arn)` for a role that must write inside run folders. Endpoint and sealing policies are
+finalised after the plugins, so these calls take effect. `infra/tests/sample_infra_plugin.py` is a working example;
+the stack output `InfraPlugins` lists what was loaded.
+
+```toml
+# pyproject.toml of a site package
+[project.entry-points."alchemist.infra"]
+acme = "acme_infra:register"
+```
 
 ## Promote to staging and prod
 

@@ -49,6 +49,19 @@ bedrock:                          # placeholder: application inference profiles 
   invocation_logging: true
   guardrail: true
 
+modules:                          # optional parts; the core (network, data, services, run workflow) is always on
+  edge: true                      # CloudFront + SPA
+  observability: true             # alarms, CloudTrail, break-glass
+  indexers: true                  # nightly catalog index and knowledge ingestion
+
+plugins:                          # see docs/guides/plugins.md and docs/guides/deploy-aws.md
+  packages: []                    # pip specs installed into the image, e.g. ["acme-alchemist==1.2.0"]
+  enabled: []                     # ALC_PLUGINS (empty = built-ins only); keep explicit in production
+  modules: []                     # ALC_PLUGIN_MODULES
+  access_provider: alb-oidc       # ALC_ACCESS_PROVIDER
+  env: {}                         # extra settings for plugins
+  infra: []                       # infrastructure plugins: modules with register(ctx)
+
 database:
   min_acu: 0.5
   max_acu: 16

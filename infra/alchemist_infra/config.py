@@ -122,6 +122,35 @@ class Image(_Model):
         return self
 
 
+class Modules(_Model):
+    """Optional parts of the stack. The core (network, storage, database, Bedrock, services, run workflow) is always on."""
+
+    edge: bool = True            # CloudFront and the SPA bucket deployment; off if another front door is used
+    observability: bool = True   # alarms, CloudTrail, break-glass role
+    indexers: bool = True        # nightly catalog index and knowledge ingestion schedules
+
+
+class Plugins(_Model):
+    """App plugins (see docs/guides/plugins.md) and infrastructure plugins (see docs/guides/deploy-aws.md)."""
+
+    # pip requirement specs installed into the image next to alchemist, e.g. "acme-alchemist==1.2.0" or a wheel
+    # path relative to the repository root. Pin versions: the image digest is what a manifest records.
+    packages: list[str] = []
+    # ALC_PLUGINS: entry-point names to load. Keep it explicit in production; "*" loads every installed plugin.
+    enabled: list[str] = []
+    # ALC_PLUGIN_MODULES: importable modules to load without an entry point.
+    modules: list[str] = []
+    # ALC_ACCESS_PROVIDER: the registered access provider for users, plant groups and workspaces. In AWS the
+    # identity comes from the ALB OIDC header, so the default names that provider rather than the MVP's yaml file.
+    access_provider: str = "alb-oidc"
+    # Extra environment for every app container, e.g. settings a plugin reads.
+    env: dict[str, str] = {}
+    # Infrastructure plugins: importable modules with `register(ctx: InfraContext)`, in addition to installed
+    # packages that declare the entry-point group `alchemist.infra`.
+    infra: list[str] = []
+    discover_infra_entry_points: bool = True
+
+
 class TaskSize(_Model):
     cpu: int
     memory_mib: int
@@ -187,6 +216,8 @@ class EnvConfig(_Model):
     domain: Domain
     bedrock: Bedrock
     image: Image = Image()
+    modules: Modules = Modules()
+    plugins: Plugins = Plugins()
     sizes: Sizes = Sizes()
     database: Database = Database()
     commands: Commands = Commands()
@@ -200,6 +231,14 @@ class EnvConfig(_Model):
     def _object_lock_needs_versioning(self):
         if self.storage.object_lock_governance_days and not self.storage.workspace_versioning:
             raise ValueError("storage.object_lock_governance_days needs storage.workspace_versioning: true")
+        return self
+
+    @model_validator(mode="after")
+    def _packages_need_a_build(self):
+        if self.plugins.packages and self.image.ecr_repository_arn:
+            raise ValueError("plugins.packages are installed at image build; with a pinned image, bake them into it")
+        if self.plugins.env.keys() & {"ALC_PLUGINS", "ALC_PLUGIN_MODULES", "ALC_ACCESS_PROVIDER"}:
+            raise ValueError("set plugin selection with plugins.enabled, plugins.modules and plugins.access_provider")
         return self
 
     @property

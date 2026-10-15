@@ -1,4 +1,9 @@
-"""One stack per environment: network, storage, database, Bedrock, services, run workflow, edge, observability."""
+"""One stack per environment.
+
+Core constructs (always on): network, storage, database, Bedrock, services, run workflow.
+Optional modules (`modules:` in the config): edge (CloudFront), observability (alarms, CloudTrail, break-glass).
+Infrastructure plugins (`plugins.infra`, entry-point group `alchemist.infra`) run after both; see plugins.py.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,7 @@ from .database import Database
 from .edge import Edge
 from .network import Network
 from .observability import Observability
+from .plugins import InfraContext, load_plugins
 from .services import Services
 from .storage import Storage
 from .workflow import RunWorkflow
@@ -32,26 +38,32 @@ class AlchemistStack(Stack):
         self.services = Services(self, "Services", cfg=cfg, network=self.network, storage=self.storage,
                                  database=self.database, bedrock=self.bedrock)
         self.workflow = RunWorkflow(self, "Workflow", cfg=cfg, network=self.network, services=self.services)
-        self.edge = Edge(self, "Edge", cfg=cfg, storage=self.storage, services=self.services)
+        self.edge = Edge(self, "Edge", cfg=cfg, storage=self.storage, services=self.services) \
+            if cfg.modules.edge else None
         self.observability = Observability(self, "Observability", cfg=cfg, storage=self.storage,
-                                           services=self.services, workflow=self.workflow)
+                                           services=self.services, workflow=self.workflow) \
+            if cfg.modules.observability else None
+
+        self.plugins = InfraContext(cfg=cfg, stack=self, network=self.network, storage=self.storage,
+                                    database=self.database, bedrock=self.bedrock, services=self.services,
+                                    workflow=self.workflow)
+        load_plugins(self.plugins)
 
         # Endpoint policies: S3 only to Alchemist's buckets and the lake; Bedrock only to allow-listed models.
         s = self.storage
         self.network.limit_s3_endpoint(
-            [s.workspace.bucket_name, s.knowledge.bucket_name, s.web.bucket_name, *s.lake_bucket_names], cfg.region)
+            [s.workspace.bucket_name, s.knowledge.bucket_name, s.web.bucket_name, *s.lake_bucket_names,
+             *self.plugins.extra_s3_buckets], cfg.region)
         self.network.limit_bedrock_endpoint(self.bedrock.endpoint_arns(), self.bedrock.guardrail_arns)
 
         # Sealing: only run, orchestrator and sealer roles (and break-glass) may write in run folders.
         writers = [self.services.run_role.role_arn, self.services.orchestrator_role.role_arn,
-                   self.services.sealer_role.role_arn]
-        if self.observability.break_glass_role:
+                   self.services.sealer_role.role_arn, *self.plugins.extra_run_writer_arns]
+        if self.observability and self.observability.break_glass_role:
             writers.append(self.observability.break_glass_role.role_arn)
         s.seal_workspace(writers)
 
-        for name, value in {
-            "Url": f"https://{cfg.domain.name}",
-            "DistributionDomain": self.edge.distribution.distribution_domain_name,
+        outputs = {
             "AlbDns": self.services.alb.load_balancer_dns_name,
             "WorkspaceBucket": s.workspace.bucket_name,
             "KnowledgeBucket": s.knowledge.bucket_name,
@@ -62,7 +74,12 @@ class AlchemistStack(Stack):
             "DatabaseEndpoint": self.database.cluster.cluster_endpoint.hostname,
             "RunRoleArn": self.services.run_role.role_arn,
             "BrokerFunction": self.services.broker.function_name,
-        }.items():
+            "InfraPlugins": ", ".join(self.plugins.loaded) or "none",
+        }
+        if self.edge:
+            outputs |= {"Url": f"https://{cfg.domain.name}",
+                        "DistributionDomain": self.edge.distribution.distribution_domain_name}
+        for name, value in outputs.items():
             CfnOutput(self, name, value=value)
 
     @property

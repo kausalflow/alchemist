@@ -36,6 +36,7 @@ infra/          AWS CDK app (its own pyproject), see guides/deploy-aws.md
     workflow.py      Step Functions run workflow
     edge.py          CloudFront for the SPA and the API
     observability.py alarms, CloudTrail, break-glass role
+    plugins.py       InfraContext and loading of infrastructure plugins
     lambdas/broker/  per-run credential broker (boto3 only)
   tests/        template security checks and broker tests
 examples/

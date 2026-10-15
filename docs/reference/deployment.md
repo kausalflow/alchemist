@@ -29,12 +29,17 @@ All tasks run the one image built from the repository `Dockerfile` (entry point 
 | `ALC_PLANT_PREFIX_TEMPLATE` | all | e.g. `s3://{bucket}/plant={plant}/` |
 | `ALC_ALLOWED_PROVIDERS` | all | `bedrock` |
 | `ALC_IMAGE_DIGEST` | all | image digest when the image is pinned, else empty |
+| `ALC_PLUGINS` | all | `plugins.enabled`, comma-separated; `none` when empty |
+| `ALC_PLUGIN_MODULES` | all | `plugins.modules`, comma-separated |
+| `ALC_EXTRA_PACKAGES` | all | `plugins.packages` installed into the image, for the manifest |
+| (any) | all | `plugins.env` |
 | `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME` | api, orchestrator, sealer, indexer | Aurora writer endpoint, port, `alchemist` |
 | `ALC_DB` | api, orchestrator, sealer, indexer | `postgresql://<host>:<port>/alchemist`, without credentials |
 | `ALC_DB_USER`, `ALC_DB_PASSWORD` | api, orchestrator, sealer, indexer | from the generated database secret |
 | `ALC_LEAD_MODEL`, `ALC_SUB_MODEL`, `ALC_EMBEDDING_MODEL` | api, orchestrator, indexer | from `bedrock:` |
 | `ALC_BEDROCK_GUARDRAIL_ID`, `ALC_BEDROCK_GUARDRAIL_VERSION` | api, orchestrator, indexer | when `bedrock.guardrail` is on |
 | `ALC_IDENTITY`, `ALC_GROUP_CLAIM` | api | `alb-oidc`, `groups` |
+| `ALC_ACCESS_PROVIDER` | api | `plugins.access_provider`, default `alb-oidc` (an access provider reading the ALB's OIDC header must be registered by the app or a plugin) |
 | `ALC_STATE_MACHINE_ARN` | api | the run workflow |
 | `ALC_CLUSTER_ARN` | orchestrator | to look up the sandbox's address |
 | `ALC_PSEUDONYM_KEY` | sandbox, indexer | from Secrets Manager |

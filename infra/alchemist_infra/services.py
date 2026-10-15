@@ -60,7 +60,10 @@ class Services(Construct):
             self.image = ecs.ContainerImage.from_registry(f"{repo.repository_uri}@{cfg.image.digest}")
             self._repo = repo
         else:
-            self.image = ecs.ContainerImage.from_asset(str(REPO_ROOT), exclude=IMAGE_EXCLUDES)
+            # Plugin packages are installed next to alchemist at build time (Dockerfile ARG EXTRA_PACKAGES).
+            build_args = {"EXTRA_PACKAGES": " ".join(cfg.plugins.packages)} if cfg.plugins.packages else None
+            self.image = ecs.ContainerImage.from_asset(str(REPO_ROOT), exclude=IMAGE_EXCLUDES,
+                                                       build_args=build_args)
             self._repo = None
 
         # ---------------------------------------------------------------- secrets
@@ -178,6 +181,10 @@ class Services(Construct):
             "ALC_PLANT_PREFIX_TEMPLATE": cfg.lake.plant_prefix_template,
             "ALC_ALLOWED_PROVIDERS": "bedrock",
             "ALC_IMAGE_DIGEST": cfg.image.digest or "",
+            "ALC_PLUGINS": ",".join(cfg.plugins.enabled) or "none",
+            "ALC_PLUGIN_MODULES": ",".join(cfg.plugins.modules),
+            "ALC_EXTRA_PACKAGES": " ".join(cfg.plugins.packages),
+            **cfg.plugins.env,
         }
         self.db_env = {
             "ALC_DB_HOST": db.cluster_endpoint.hostname,
@@ -195,27 +202,28 @@ class Services(Construct):
             "ALC_EMBEDDING_MODEL": cfg.bedrock.embedding_model,
             **bedrock.env(),
         }
-        self.identity_env = {"ALC_IDENTITY": "alb-oidc", "ALC_GROUP_CLAIM": cfg.oidc.group_claim}
+        self.identity_env = {"ALC_IDENTITY": "alb-oidc", "ALC_ACCESS_PROVIDER": cfg.plugins.access_provider,
+                             "ALC_GROUP_CLAIM": cfg.oidc.group_claim}
         pseudonym = {"ALC_PSEUDONYM_KEY": ecs.Secret.from_secrets_manager(self.pseudonym_key)}
 
         # ---------------------------------------------------------------- task definitions
         sz = cfg.sizes
-        self.api_task, self.api_container = self._task(
+        self.api_task, self.api_container = self.add_task(
             "Api", "api", sz.api, self.api_role, cfg.commands.api,
             {**self.common_env, **self.db_env, **self.identity_env, **self.model_env}, self.db_secrets,
             port=cfg.commands.api_port)
-        self.orchestrator_task, self.orchestrator_container = self._task(
+        self.orchestrator_task, self.orchestrator_container = self.add_task(
             "Orchestrator", "orchestrator", sz.orchestrator, self.orchestrator_role, cfg.commands.plan,
             {**self.common_env, **self.db_env, **self.model_env, "ALC_CLUSTER_ARN": self.cluster.cluster_arn},
             self.db_secrets)
-        self.sandbox_task, self.sandbox_container = self._task(
+        self.sandbox_task, self.sandbox_container = self.add_task(
             "Sandbox", "sandbox", sz.sandbox, self.sandbox_role, cfg.commands.sandbox,
             {**self.common_env, "ALC_BROKER_FUNCTION": self.broker.function_arn}, pseudonym,
             port=cfg.commands.sandbox_port)
-        self.sealer_task, self.sealer_container = self._task(
+        self.sealer_task, self.sealer_container = self.add_task(
             "Sealer", "sealer", sz.sealer, self.sealer_role, cfg.commands.seal,
             {**self.common_env, **self.db_env}, self.db_secrets)
-        self.indexer_task, self.indexer_container = self._task(
+        self.indexer_task, self.indexer_container = self.add_task(
             "Indexer", "indexer", sz.indexer, self.indexer_role, cfg.commands.catalog_index,
             {**self.common_env, **self.db_env, **self.model_env}, {**self.db_secrets, **pseudonym})
 
@@ -260,8 +268,9 @@ class Services(Construct):
         self.target_group = tg
 
         # ---------------------------------------------------------------- scheduled indexers
-        for name, command in (("CatalogIndex", cfg.commands.catalog_index),
-                              ("KnowledgeIngest", cfg.commands.knowledge_ingest)):
+        schedules = (("CatalogIndex", cfg.commands.catalog_index),
+                     ("KnowledgeIngest", cfg.commands.knowledge_ingest)) if cfg.modules.indexers else ()
+        for name, command in schedules:
             events.Rule(self, f"{name}Schedule", schedule=events.Schedule.expression(cfg.workflow.index_schedule),
                         description=f"Alchemist nightly {name}",
                         targets=[targets.EcsTask(
@@ -274,8 +283,9 @@ class Services(Construct):
     def origin_header_value(self) -> str:
         return self.origin_secret.secret_value.unsafe_unwrap()
 
-    def _task(self, id: str, name: str, size: TaskSize, role: iam.IRole, command: list[str], env: dict[str, str],
-              secrets: dict[str, ecs.Secret], port: int | None = None):
+    def add_task(self, id: str, name: str, size: TaskSize, role: iam.IRole, command: list[str], env: dict[str, str],
+                 secrets: dict[str, ecs.Secret], port: int | None = None):
+        """A Fargate task definition running the Alchemist image; also used by infrastructure plugins."""
         td = ecs.FargateTaskDefinition(
             self, f"{id}Task", family=f"{self.cfg.prefix}-{name}", cpu=size.cpu, memory_limit_mib=size.memory_mib,
             ephemeral_storage_gib=size.ephemeral_gib if size.ephemeral_gib > 20 else None, task_role=role,
