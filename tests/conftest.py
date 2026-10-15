@@ -27,6 +27,9 @@ def svc(home):
     svc.catalog = Catalog(s.db_path)
     svc.access = AccessModel.load(s.access_file)
     svc.knowledge = Knowledge(s.knowledge_root)
+    from alchemist.credentials import CredentialBroker
+
+    svc.broker = CredentialBroker(None)
     for ds_id, spec in datasets.items():
         svc.catalog.register(id=ds_id, actor="data_admin", **spec)
         res = index_dataset(svc.catalog, s, ds_id)

@@ -19,7 +19,7 @@ from typing import Any
 
 import duckdb
 
-from .paths import as_path, expand_glob, object_info, read_structured
+from .paths import as_path, duckdb_connect, expand_glob, is_cloud, object_info, read_structured
 
 SCHEMA = """
 create table if not exists datasets (
@@ -351,7 +351,7 @@ def sample_dataset(catalog: Catalog, ds: dict, rows: int = 200):
     files = expand_glob(catalog.data_glob(ds))
     if not files:
         return [], None
-    con = duckdb.connect()
+    con = duckdb_connect(s3=any(is_cloud(f) for f in files))
     reader = {"parquet": "read_parquet", "csv": "read_csv_auto", "json": "read_json_auto"}[ds["file_format"]]
     file_list = ", ".join(f"'{f}'" for f in files[:20])
     rel = con.sql(f"select * from {reader}([{file_list}]) limit {rows}")

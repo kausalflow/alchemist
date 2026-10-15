@@ -2,8 +2,9 @@
 
 Every piece of code the agent runs, including each query and each finding,
 becomes a notebook cell with its outputs, saved to the run folder after every
-cell. In production the kernel runs in its own container with no network route
-to Bedrock and only the run's S3 credentials; in the MVP it is a local process.
+cell. The kernel gets the run's own scoped S3 credentials when a run role is set
+(credentials.py). In production it also runs in its own container with no
+network route to Bedrock; in the MVP it is a local process.
 """
 
 from __future__ import annotations
@@ -59,9 +60,10 @@ class Sandbox:
         self.run = as_path(run_dir)
         self.run_mode = run_mode
         self.seed = seed
-        self.env = {**os.environ, "ALC_RUN_DIR": str(self.run), "MPLBACKEND": "module://matplotlib_inline.backend_inline",
-                    "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
-                    **(extra_env or {})}
+        env = {**os.environ, "ALC_RUN_DIR": str(self.run), "MPLBACKEND": "module://matplotlib_inline.backend_inline",
+               "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+               **(extra_env or {})}
+        self.env = {k: v for k, v in env.items() if v is not None}  # None in extra_env removes a variable
         self.nb = nbformat.v4.new_notebook()
         self.nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
         self.nb.metadata["alchemist"] = {"run_mode": run_mode}

@@ -25,7 +25,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from .paths import as_path, expand_glob, object_info, put_file, read_json, write_json
+from .paths import as_path, duckdb_s3_secret, expand_glob, object_info, put_file, read_json, write_json
 from .sqlguard import check_sql
 
 RESULT_MARKER = "ALC_RESULT "
@@ -56,8 +56,8 @@ def init(run_dir: str, run_mode: str = "live", seed: int = 1729) -> None:
     con = duckdb.connect()
     con.execute("set threads = 1")
     if any(v["glob"].startswith("s3://") for v in views.values()):
-        con.execute("install httpfs; load httpfs")
-        con.execute("create secret (type s3, provider credential_chain)")
+        con.execute("install httpfs; load httpfs")  # a no-op when the image ships the extension
+        con.execute(duckdb_s3_secret())
     roots = sorted({_root(v["glob"]) for v in views.values()} | {str(tmp)})
     con.execute("set allowed_directories = " + "[" + ", ".join(f"'{r}'" for r in roots) + "]")
     con.execute("set enable_external_access = false")

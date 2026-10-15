@@ -28,3 +28,37 @@ def test_global_user_limited_by_workspace():
     assert m.run_plants(m.user("g"), "maint") == {"P02"}
     assert m.can_view_run(m.user("g"), "quality", ["P01", "P02"])
     assert not m.can_view_run(m.user("a"), "quality", ["P01", "P02"])
+
+
+ID = {**DATA, "users": {}}
+
+
+def test_claims_map_groups_to_plants_workspaces_and_roles():
+    m = AccessModel(ID)
+    u = m.user_from_claims({"preferred_username": "kim", "groups": ["alc-plant-P01", "alc-ws-quality", "other"]})
+    assert (u.id, u.plants, u.workspaces, u.is_global, u.is_admin, u.source) == (
+        "kim", {"P01"}, {"quality"}, False, False, "oidc")
+    assert m.run_plants(u, "quality") == {"P01"}
+
+
+def test_claims_ignore_unknown_plants_and_workspaces():
+    m = AccessModel(ID)
+    u = m.user_from_claims({"sub": "s1", "groups": "alc-plant-P09 alc-ws-finance alc-global"})
+    assert u.plants == frozenset() and u.workspaces == frozenset() and u.is_global
+    with pytest.raises(AccessDenied):
+        m.run_plants(u, "quality")
+
+
+def test_claims_with_custom_names_and_group_ids():
+    m = AccessModel({**ID, "identity": {"group_claim": "roles", "plant_group": "Plant.{plant}.Reader",
+                                        "workspace_group": "WS-{workspace}", "admin_group": "Alchemist.Admin",
+                                        "group_aliases": {"7f3c-guid": "Plant.P02.Reader"}}})
+    u = m.user_from_claims({"email": "a@x.com", "roles": ["Plant.P01.Reader", "7f3c-guid", "WS-maint"]})
+    assert u.id == "a@x.com" and u.plants == {"P01", "P02"} and u.workspaces == {"maint"}
+    assert m.run_plants(u, "maint") == {"P02"}
+    assert m.user_from_claims({"email": "b", "roles": ["Alchemist.Admin"]}).is_admin
+
+
+def test_claims_need_a_user_id():
+    with pytest.raises(AccessDenied):
+        AccessModel(ID).user_from_claims({"groups": ["alc-admin"]})

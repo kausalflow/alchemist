@@ -4,7 +4,8 @@
 src/alchemist/
   cli.py        the `alchemist` command
   config.py     settings from environment variables
-  access.py     plant groups and workspaces; which plants a run may read
+  access.py     plant groups and workspaces from identity-provider claims or access.yaml; which plants a run may read
+  credentials.py  per-run STS credentials and their session policy (the credential broker)
   catalog.py    registry, catalog cards (drafted by a model or a heuristic), search, suggestions, run index, audit
   sqlguard.py   read-only SQL guard on DuckDB's parser
   nb.py         helpers used inside the kernel as `alc` (query, finding, align, effect, check_results)
@@ -16,7 +17,7 @@ src/alchemist/
   report.py     conclusion card and HTML report, filled from findings
   workspace.py  S3 (or local) folder layout, sealing and verification
   knowledge.py  document passages and structured knowledge
-  paths.py      cloudpathlib helpers, ULIDs, hashing, glob expansion
+  paths.py      cloudpathlib helpers, DuckDB on S3, conditional writes, ULIDs, hashing, glob expansion
   demo/
     generate.py synthetic plant with a planted root cause
     script.py   the scripted investigation used by `demo run` and the tests

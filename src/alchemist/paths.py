@@ -11,9 +11,15 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
-from cloudpathlib import AnyPath, CloudPath
+
+# Several processes (the orchestrator and the sandbox kernel) read and write the same run folder, so a local
+# copy of an S3 object must never be trusted across calls: drop it as soon as the file is closed.
+os.environ.setdefault("CLOUDPATHLIB_FILE_CACHE_MODE", "close_file")
+
+from cloudpathlib import AnyPath, CloudPath  # noqa: E402
 
 _ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
@@ -41,6 +47,65 @@ def write_text(path, text: str) -> None:
     if not is_cloud(path):
         path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
+
+
+def create_exclusive(path, text: str) -> None:
+    """Write a file only if it does not exist yet (S3 conditional put; O_EXCL locally)."""
+    path = as_path(path)
+    if is_cloud(path):
+        from botocore.exceptions import ClientError
+
+        try:
+            path.client.client.put_object(Bucket=path.bucket, Key=path.key, Body=text.encode(), IfNoneMatch="*")
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") in ("PreconditionFailed", "ConditionalRequestConflict"):
+                raise FileExistsError(str(path)) from e
+            raise
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "x") as f:
+        f.write(text)
+
+
+def s3_endpoint() -> str | None:
+    """Custom S3 endpoint (MinIO, moto, LocalStack), read from the standard AWS variables."""
+    return os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get("AWS_ENDPOINT_URL") or None
+
+
+def duckdb_s3_secret() -> str:
+    """DuckDB S3 secret built from the environment; keys never appear in a notebook.
+
+    With per-run credentials in the environment the secret uses exactly those keys, so
+    DuckDB cannot fall back to any other identity; otherwise it uses the AWS credential chain.
+    """
+    def lit(v: str) -> str:
+        return "'" + v.replace("'", "''") + "'"
+
+    opts = ["type s3"]
+    if os.environ.get("AWS_SESSION_TOKEN") and os.environ.get("AWS_ACCESS_KEY_ID"):
+        opts += ["provider config", f"key_id {lit(os.environ['AWS_ACCESS_KEY_ID'])}",
+                 f"secret {lit(os.environ['AWS_SECRET_ACCESS_KEY'])}", f"session_token {lit(os.environ['AWS_SESSION_TOKEN'])}"]
+    else:
+        opts.append("provider credential_chain")
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    if region:
+        opts.append(f"region {lit(region)}")
+    endpoint = s3_endpoint()
+    if endpoint:
+        u = urlparse(endpoint)
+        opts += [f"endpoint {lit(u.netloc or u.path)}", "url_style 'path'", f"use_ssl {str(u.scheme == 'https').lower()}"]
+    return f"create secret ({', '.join(opts)})"
+
+
+def duckdb_connect(s3: bool = False):
+    """A DuckDB connection; with s3=True it reads S3 with the same endpoint and credentials as boto3."""
+    import duckdb
+
+    con = duckdb.connect()
+    if s3:
+        con.execute("install httpfs; load httpfs")  # a no-op when the image ships the extension
+        con.execute(duckdb_s3_secret())
+    return con
 
 
 def write_json(path, data: Any) -> None:
