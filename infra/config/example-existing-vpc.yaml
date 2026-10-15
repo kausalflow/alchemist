@@ -1,0 +1,13 @@
+# Fragment: replace the `network:` block of an environment file with this to deploy into an existing VPC.
+# Lists are aligned with availability_zones. App and sandbox subnets must have no route to a NAT or internet gateway.
+network:
+  existing:
+    vpc_id: vpc-0123456789abcdef0
+    vpc_cidr: 10.20.0.0/16
+    availability_zones: [eu-central-1a, eu-central-1b]
+    public_subnet_ids: [subnet-0aaa, subnet-0bbb]
+    app_subnet_ids: [subnet-0ccc, subnet-0ddd]
+    app_route_table_ids: [rtb-0ccc, rtb-0ddd]
+    sandbox_subnet_ids: [subnet-0eee, subnet-0fff]
+    sandbox_route_table_ids: [rtb-0eee, rtb-0fff]
+    data_subnet_ids: [subnet-0ggg, subnet-0hhh]

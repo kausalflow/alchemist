@@ -7,3 +7,4 @@ alchemist-home/
 *.egg-info/
 dist/
 site/
+cdk.out/

@@ -1,0 +1,8 @@
+{
+  "app": "uv run --frozen python app.py",
+  "watch": {"include": ["alchemist_infra/**", "config/**", "app.py"]},
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:target-partitions": ["aws"]
+  }
+}

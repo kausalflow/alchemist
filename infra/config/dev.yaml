@@ -1,0 +1,83 @@
+# Example environment. Every value marked "placeholder" must be replaced before `cdk deploy`.
+# `cdk synth -c env=dev` works with these placeholders, so tests and CI need no AWS account.
+env_name: dev
+account: "111111111111"          # placeholder
+region: eu-central-1
+
+network:
+  cidr: 10.40.0.0/20
+  availability_zones: [eu-central-1a, eu-central-1b]
+  api_egress: true                # API only: HTTPS out to verify the ALB's signed identity header
+  # To deploy into a landing-zone VPC instead, set `existing:` (see config/example-existing-vpc.yaml).
+
+lake:
+  buckets:
+    - name: example-plant-lake    # placeholder: the data-lake buckets Alchemist may read
+      kms_key_arn: null
+  plant_prefix_template: "s3://{bucket}/plant={plant}/"
+
+storage:
+  workspace_versioning: false     # open question 1 in the technical design
+  work_expiry_days: 90
+  shared_sqlite: true             # the app's index is SQLite today; shared on EFS until Postgres
+  retain_data: false              # dev only; keep true for staging and prod
+
+oidc:                             # placeholder: your identity provider's OIDC app
+  issuer: https://idp.example.com
+  authorization_endpoint: https://idp.example.com/oauth2/authorize
+  token_endpoint: https://idp.example.com/oauth2/token
+  user_info_endpoint: https://idp.example.com/oauth2/userinfo
+  client_id: alchemist-dev
+  client_secret_name: alchemist-dev/oidc-client-secret
+  scope: openid email profile groups
+  group_claim: groups
+
+domain:                           # placeholder
+  name: alchemist-dev.example.com
+  cloudfront_certificate_arn: arn:aws:acm:us-east-1:111111111111:certificate/00000000-0000-0000-0000-000000000000
+  api_origin_name: alchemist-dev-origin.example.com
+  alb_certificate_arn: arn:aws:acm:eu-central-1:111111111111:certificate/00000000-0000-0000-0000-000000000001
+
+bedrock:                          # placeholder: application inference profiles in one geography
+  lead_model: arn:aws:bedrock:eu-central-1:111111111111:application-inference-profile/lead-placeholder
+  sub_model: arn:aws:bedrock:eu-central-1:111111111111:application-inference-profile/sub-placeholder
+  embedding_model: amazon.titan-embed-text-v2:0
+  allowed_model_arns:
+    - arn:aws:bedrock:eu-central-1:111111111111:application-inference-profile/lead-placeholder
+    - arn:aws:bedrock:eu-central-1:111111111111:application-inference-profile/sub-placeholder
+    - arn:aws:bedrock:eu-*::foundation-model/anthropic.claude-opus-5-5*
+    - arn:aws:bedrock:eu-*::foundation-model/anthropic.claude-sonnet-5-5*
+    - arn:aws:bedrock:eu-central-1::foundation-model/amazon.titan-embed-text-v2:0
+  invocation_logging: true
+  guardrail: true
+
+modules:                          # optional parts; the core (network, data, services, run workflow) is always on
+  edge: true                      # CloudFront + SPA
+  observability: true             # alarms, CloudTrail, break-glass
+  indexers: true                  # nightly catalog index and knowledge ingestion
+
+plugins:                          # see docs/guides/plugins.md and docs/guides/deploy-aws.md
+  packages: []                    # pip specs installed into the image, e.g. ["acme-alchemist==1.2.0"]
+  enabled: []                     # ALC_PLUGINS (empty = built-ins only); keep explicit in production
+  modules: []                     # ALC_PLUGIN_MODULES
+  access_provider: alb-oidc       # ALC_ACCESS_PROVIDER; users from verified OIDC claims, rules from s3://<workspace>/_config/access.yaml
+  env: {}                         # extra settings for plugins
+  infra: []                       # infrastructure plugins: modules with register(ctx)
+
+database:
+  min_acu: 0.5
+  max_acu: 4
+  deletion_protection: false      # dev only
+
+workflow:
+  sandbox_mode: in_process        # what the app supports today; `separate` is the target design
+  approval_timeout_days: 14
+
+operations:
+  alarm_email: null
+  create_trail: true
+  break_glass_principal_arns: []
+
+tags:
+  project: alchemist
+  environment: dev

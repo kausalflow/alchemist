@@ -33,6 +33,23 @@ tests/          pytest suite, including an end-to-end run, replay and verify, an
 web/            React single-page app (Vite, TypeScript) over the REST API
   src/pages/    Ask, Runs, Run, Catalog, Dataset, Catalog admin, About
   src/runTabs.tsx  registry of run page tabs
+infra/          AWS CDK app (its own pyproject), see guides/deploy-aws.md
+  app.py        entry point: `cdk synth -c env=dev` reads config/dev.yaml
+  config/       one YAML file per environment; every account-specific value lives here
+  alchemist_infra/
+    config.py        validated settings (pydantic)
+    stack.py         one stack per environment wiring the constructs below
+    network.py       VPC tiers, security groups, VPC endpoints and their policies
+    storage.py       KMS key, workspace/knowledge/web/log buckets, sealing bucket policy
+    database.py      Aurora PostgreSQL Serverless v2
+    bedrock.py       guardrail, invocation logging, model allow-list
+    services.py      ECS cluster, image, roles, task definitions, API service and ALB, broker, indexers
+    workflow.py      Step Functions run workflow
+    edge.py          CloudFront for the SPA and the API
+    observability.py alarms, CloudTrail, break-glass role
+    plugins.py       InfraContext and loading of infrastructure plugins
+    lambdas/broker/  per-run credential broker (boto3 only)
+  tests/        template security checks and broker tests
 examples/
   alchemist-example-plugin/   a working plugin of most extension kinds (see guides/plugins.md)
 ```

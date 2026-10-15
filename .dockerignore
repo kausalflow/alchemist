@@ -1,0 +1,8 @@
+.git
+.venv
+**/.venv
+alchemist-home
+infra/cdk.out
+site
+**/__pycache__
+**/.pytest_cache

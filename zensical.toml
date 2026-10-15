@@ -28,6 +28,7 @@ nav = [
     "guides/catalog-admin.md",
     "guides/s3.md",
     "guides/plugins.md",
+    "guides/deploy-aws.md",
   ] },
   { "Reference" = [
     "reference/cli.md",
@@ -36,6 +37,7 @@ nav = [
     "reference/run-folder.md",
     "reference/agent-tools.md",
     "reference/code-layout.md",
+    "reference/deployment.md",
   ] },
   { "MVP and target design" = "design.md" },
   { "Contributing" = "contributing.md" },

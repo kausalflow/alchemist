@@ -50,7 +50,8 @@ flowchart TB
 
 ## Not in the MVP yet
 
-- Step Functions orchestration and the AWS infrastructure code (CDK).
+- Deployment: the AWS infrastructure (CDK in `infra/`, see [Deploy to AWS](guides/deploy-aws.md)) is written and
+  synthesizes, including Step Functions orchestration, but has not been deployed yet.
 - The separate sandbox container. The credential broker exists; refreshing run credentials past one hour does not.
 - pgvector search and knowledge ingestion from PDFs.
 - PDF reports.
