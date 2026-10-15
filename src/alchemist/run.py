@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib.metadata
 import json
 import platform
@@ -19,7 +20,7 @@ from .access import AccessDenied, User
 from .agent import Budget, Model, ToolOutput, run_loop
 from .llm import PydanticAIModel
 from .catalog import Catalog, now
-from .credentials import AMBIENT_AWS_VARS, CredentialBroker
+from .credentials import CredentialBroker, RefreshingCredentials
 from .knowledge import Knowledge
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json
 from .plugins import get_registry
@@ -65,17 +66,28 @@ class Services:
         self.knowledge = knowledge or Knowledge(settings.knowledge_root, packs=list(reg.knowledge_packs))
         self.broker = broker or CredentialBroker.from_settings(settings)
 
-    def sandbox_env(self, ctx: "RunContext", views: dict) -> dict:
-        """Kernel environment: the pseudonym key, and the run's own S3 credentials when a run role is set."""
+    def sandbox_env(self, ctx: "RunContext", views: dict) -> tuple[dict, RefreshingCredentials | None]:
+        """Kernel environment: the pseudonym key, and the run's own S3 credentials when a run role is set.
+
+        The credentials come with the refresher that re-issues them before they expire; the caller starts it and
+        stops it with the kernel.
+        """
         env = {"ALC_PSEUDONYM_KEY": self.settings.pseudonym_key}
-        creds = self.broker.issue(run_id=ctx.row["run_id"], user_id=ctx.user_id, workspace=ctx.row["workspace"],
-                                  run_dir=str(ctx.run), read_globs=[v["glob"] for v in views.values()],
-                                  policy_out=ctx.run / "logs" / "session_policy.json")
-        ctx.credentials = creds.record() if creds else {"mode": "ambient"}
-        if creds:
-            env.update(creds.env())
-            env.update({k: None for k in AMBIENT_AWS_VARS})
-        return env
+
+        def issue(policy_out=None):
+            return self.broker.issue(run_id=ctx.row["run_id"], user_id=ctx.user_id, workspace=ctx.row["workspace"],
+                                     run_dir=str(ctx.run), read_globs=[v["glob"] for v in views.values()],
+                                     policy_out=policy_out)
+
+        creds = issue(ctx.run / "logs" / "session_policy.json")  # later sessions carry the same policy
+        if not creds:
+            ctx.credentials = {"mode": "ambient"}
+            return env, None
+        lifetime = (creds.expires_at() - dt.datetime.now(dt.timezone.utc)).total_seconds()
+        refresher = RefreshingCredentials(issue, first=creds, refresh_before=min(1800, max(lifetime / 2, 60)))
+        ctx.credentials = refresher.record()
+        env.update(refresher.env())
+        return env, refresher
 
     def sandbox(self, ctx: "RunContext", views: dict, *, run_mode: str, sandbox_url: str | None = None) -> Sandbox:
         """The run's kernel: a local child process, or the separate sandbox task at sandbox_url."""
@@ -84,7 +96,11 @@ class Services:
             return Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)
         if self.settings.sandbox_mode == "separate":
             raise ValueError("ALC_SANDBOX_MODE=separate: give the sandbox's address (--sandbox-task-arn or --sandbox-url)")
-        return Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, extra_env=self.sandbox_env(ctx, views))
+        env, refresher = self.sandbox_env(ctx, views)
+        sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, extra_env=env)
+        if refresher:
+            sb.on_stop.append(refresher.start().stop)
+        return sb
 
     @property
     def seals_in_worker(self) -> bool:

@@ -9,7 +9,7 @@ What the infrastructure in `infra/` gives the application, and what it expects b
 
 | Mode | Kernel | Data credentials | Report and seal | Status |
 | --- | --- | --- | --- | --- |
-| `in_process` (default) | inside the analyse task | the analyse task assumes the run role (`ALC_RUN_ROLE_ARN`) with a per-run session policy; fixed for one hour | done by `worker analyse` | default |
+| `in_process` (default) | inside the analyse task | the analyse task assumes the run role (`ALC_RUN_ROLE_ARN`) with a per-run session policy, again before each session expires | done by `worker analyse` | default |
 | `separate` | its own sandbox task (`sandbox serve`) with no route to Bedrock | the kernel's `credential_process` calls the broker Lambda, again whenever they expire; the sandbox role can do nothing else | `worker report` and `worker seal` steps | built; not yet run in an AWS account |
 
 In `in_process` mode the process that calls Bedrock also holds data credentials for the run, so the split between

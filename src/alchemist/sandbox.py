@@ -163,13 +163,18 @@ class Sandbox:
         self.nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3", "language": "python"}
         self.nb.metadata["alchemist"] = {"run_mode": run_mode}
         self.counter = 0
+        self.on_stop: list = []  # e.g. the credential refresher of an in-process kernel
 
     # ---------- lifecycle ----------
     def start(self) -> None:
         self.kernel.start()
 
     def stop(self) -> None:
-        self.kernel.stop()
+        try:
+            self.kernel.stop()
+        finally:
+            while self.on_stop:
+                self.on_stop.pop()()
 
     def __enter__(self):
         self.start()

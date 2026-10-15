@@ -63,13 +63,16 @@ in AWS only the orchestrator's security group can reach the port.
 ## `broker credentials`
 
 ```text
-alchemist broker credentials [--run-id RUN]
+alchemist broker credentials [--run-id RUN] [--file PATH]
 ```
 
 An AWS `credential_process`: invokes the broker Lambda (`ALC_BROKER_FUNCTION`) with the run id (`ALC_RUN_ID`) and its
 token (`ALC_BROKER_TOKEN`) and prints the credential-process JSON, or exits non-zero if the broker refuses. It ignores
 `AWS_PROFILE` and `AWS_CONFIG_FILE`, so it calls the Lambda with the sandbox task's own role rather than through the
 profile that runs it.
+
+With `--file` (in-process kernels) it prints the credentials the worker keeps fresh in that file instead; the worker
+writes the file and points the kernel's profile at it, so this is not run by hand.
 
 ## `catalog`
 
