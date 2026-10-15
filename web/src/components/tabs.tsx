@@ -509,7 +509,7 @@ export function StepsTab({ run }: { run: RunDetail }) {
           {data.analysis.length > 0 && (
             <>
               <h3>Analysis</h3>
-              <StepList steps={data.analysis} />
+              <StepList steps={data.analysis} runId={run.run.run_id} />
             </>
           )}
         </>

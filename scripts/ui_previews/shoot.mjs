@@ -225,6 +225,9 @@ await new Promise((r) => setTimeout(r, 1500));
 await api(eng, "POST", `/runs/${runId}/notes`, { text: "The melt-flow sensor on line 2 drifted in March; check its readings against the lab values before using them." });
 await open(eng, `/runs/${runId}`);
 await shoot(eng, "running");
+// A figure under the step that made it: the data-health check.
+await eng.locator("#step-4").evaluate((el) => el.scrollIntoView({ block: "start" }));
+await shoot(eng, "running-figure");
 if (HOLD && existsSync(HOLD)) rmSync(HOLD);
 
 await until("the sealed report", async () => ["completed", "partial"].includes(await status(eng, runId)), 120_000);

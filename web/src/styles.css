@@ -549,6 +549,19 @@ pre.doc-text { white-space: pre-wrap; font-size: 13px; line-height: 20px; max-he
 .k-steer { background: var(--accent); color: var(--accent-ink); }
 .log-row.steer { background: color-mix(in srgb, var(--accent-bg) 55%, transparent); }
 .steer-text { white-space: pre-wrap; }
+.figs { display: flex; flex-wrap: wrap; gap: 8px; }
+.fig { display: block; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: #fff; }
+.fig img { display: block; max-width: 100%; max-height: 320px; }
+.qprev { display: flex; flex-direction: column; gap: 6px; }
+.qprev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; }
+.qprev-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qprev-col .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spark { display: block; }
+.figstrip { display: flex; gap: 12px; overflow-x: auto; padding: 12px 16px 16px; }
+.figstrip-item { flex: 0 0 auto; width: 220px; display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: inherit; }
+.figstrip-item img { width: 220px; height: 120px; object-fit: contain; background: #fff; border: 1px solid var(--line); border-radius: var(--radius); }
+.figstrip-item:hover img, .figstrip-item:focus-visible img { border-color: var(--accent); }
+.log-row:target { background: color-mix(in srgb, var(--accent-bg) 55%, transparent); }
 .notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .notes li { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 3px solid var(--accent-bg); }
 .notes li.waiting { border-left-color: var(--warn-bg); }
