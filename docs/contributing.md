@@ -39,7 +39,7 @@ marks every image as changed.
 The script builds the web app, sets up the demo in a temporary folder, starts `alchemist serve --scripted` on port
 8123 (`ALC_PREVIEW_PORT`) and walks it with Playwright (`scripts/ui_previews/shoot.mjs`): ask, approve the plan, a
 run held part-way (`preview_launcher.py`), the sealed report and its tabs, a replay, the catalog and every admin page,
-each in light and dark. Run ids and times in API responses are swapped for fixed stand-ins, and `sync.py` keeps an
+each in light and dark. Run ids, times, step durations and the Python patch version in API responses are swapped for fixed stand-ins, and `sync.py` keeps an
 existing image unless more than 0.05% of its pixels changed (`ALC_PREVIEW_THRESHOLD`), so only screens that really
 changed show up in the diff, where GitHub's image view shows the before and after. To add a screen, add a `shoot()`
 call to `shoot.mjs` and the image to `docs/ui-tour.md`.

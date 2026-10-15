@@ -19,6 +19,9 @@ if [[ "${SKIP_WEB_BUILD:-}" != 1 ]]; then (cd web && npm ci --no-audit --no-fund
 (cd "$here" && npm ci --no-audit --no-fund)
 
 export ALC_HOME="$work/home" ALC_PREVIEW_HOLD="$work/hold"
+# The Provenance tab shows the Python version, so every machine runs the demo on the same minor version, in its own
+# environment so the project's .venv is left alone.
+export UV_PROJECT_ENVIRONMENT="$work/venv" UV_PYTHON="${ALC_PREVIEW_PYTHON:-3.12}"
 uv run alchemist demo setup > "$work/setup.log"
 touch "$ALC_PREVIEW_HOLD"
 
@@ -38,6 +41,7 @@ if [[ "${ALC_PREVIEW_DOCKER:-auto}" != 0 ]] && docker info > /dev/null 2>&1; the
 elif [[ "${ALC_PREVIEW_DOCKER:-auto}" == 1 ]]; then
   echo "ALC_PREVIEW_DOCKER=1 but Docker is not available" >&2; exit 1
 else
+  echo "Docker is not available: using the local Chromium, whose text rendering may differ from CI's" >&2
   shoot=(node "$here/shoot.mjs")
 fi
 if ! "${shoot[@]}"; then

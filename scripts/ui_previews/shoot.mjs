@@ -23,11 +23,14 @@ const shots = [];
 
 // Every demo run has new ids and timestamps. So that a screen changes only when the app does, API responses are
 // rewritten on the way to the browser: ids become stable stand-ins (in order of first sight, which the fixed flow
-// keeps the same) and timestamps near now move to FIXED, rounded to the hour. Requests map the stand-ins back.
+// keeps the same), timestamps near now (ISO strings, or epoch seconds) move to FIXED rounded to the hour, step
+// durations become 0.1 s, and the Python patch version is dropped. Requests map the stand-ins back. The live step
+// stream of a running run is replaced by one built from its steps so far, so it gets the same treatment.
 const FIXED = Date.parse("2026-09-01T09:00:00Z");
 const START = Date.now();
 const ULID = /\b[0-9A-HJKMNP-TV-Z]{26}\b/g;
 const ISO = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g;
+const EPOCH = /(?<=[:[,]\s*)\d{10}(?:\.\d+)?(?=\s*[,}\]])/g; // transcript times are epoch seconds in JSON
 const HOUR = 3_600_000;
 const toFake = new Map();
 const toReal = new Map();
@@ -41,12 +44,22 @@ function fakeId(id) {
   return toFake.get(id);
 }
 
+const near = (t) => !isNaN(t) && t > START - 86_400_000 && t < START + 60 * 86_400_000;
+const moved = (t) => FIXED + Math.round((t - START) / HOUR) * HOUR;
+
 function steady(text) {
-  return text.replace(ULID, fakeId).replace(ISO, (iso) => {
-    const t = Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`);
-    if (isNaN(t) || t < START - 86_400_000 || t > START + 60 * 86_400_000) return iso;
-    return new Date(FIXED + Math.round((t - START) / HOUR) * HOUR).toISOString();
-  });
+  return text
+    .replace(EPOCH, (n) => {
+      const t = Number(n) * 1000;
+      return near(t) ? String(moved(t) / 1000) : n;
+    })
+    .replace(/("seconds":\s*)\d+(?:\.\d+)?/g, (_, key) => `${key}0.1`)
+    .replace(/("python":\s*"\d+\.\d+)\.\d+"/g, '$1"') // patch releases differ between machines
+    .replace(ULID, fakeId)
+    .replace(ISO, (iso) => {
+      const t = Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`);
+      return near(t) ? new Date(moved(t)).toISOString() : iso;
+    });
 }
 
 const real = (url) => url.replace(/01DEMO\d{20}/g, (f) => toReal.get(f) ?? f);
@@ -81,7 +94,17 @@ async function offline(route) {
 
 async function steadyRoute(route) {
   const url = real(route.request().url());
-  if (url.includes("/events")) return route.continue({ url });
+  if (url.endsWith("/events")) {
+    const base = url.slice(0, -"/events".length);
+    const run = await (await route.fetch({ url: base })).json();
+    const steps = await (await route.fetch({ url: `${base}/steps` })).json();
+    const sse = (event, data) => `event: ${event}\ndata: ${steady(JSON.stringify(data))}\n\n`;
+    const body = [
+      sse("status", { status: run.run.status }),
+      ...["planning", "analysis"].flatMap((phase) => steps[phase].map((s) => sse("step", { phase, ...s }))),
+    ].join("");
+    return route.fulfill({ status: 200, contentType: "text/event-stream", body });
+  }
   const res = await route.fetch({ url });
   const type = res.headers()["content-type"] ?? "";
   if (!/json|text|html|javascript/.test(type)) return route.fulfill({ response: res });
