@@ -51,8 +51,9 @@ def resolve(svc, headers, cookies) -> Principal:
         user = svc.access.user(user_id)
     except AccessDenied as e:
         raise NotSignedIn(str(e)) from e
-    raw = svc.access.data.get("users", {}).get(user_id, {})
-    return Principal(user=user, is_catalog_admin=user.is_admin or bool(raw.get("catalog_admin")), name=user_id)
+    raw = getattr(svc.access, "data", {}).get("users", {}).get(user_id, {})
+    return Principal(user=user, is_catalog_admin=user.is_admin or bool(raw.get("catalog_admin"))
+                     or bool(getattr(user, "is_catalog_admin", False)), name=user_id)
 
 
 # ------------------------------------------------------------------ ALB OIDC
@@ -102,7 +103,12 @@ def verify_alb_jwt(token: str, *, key_loader=_alb_public_key) -> dict:
 
 
 def principal_from_claims(svc, claims: dict) -> Principal:
-    groups_claim = os.environ.get("ALC_OIDC_GROUPS_CLAIM", "groups")
+    if hasattr(svc.access, "user_from_claims"):
+        # The access model maps claims itself (group patterns configurable in access.yaml `identity:`).
+        user = svc.access.user_from_claims(claims)
+        return Principal(user=user, is_catalog_admin=user.is_admin or bool(getattr(user, "is_catalog_admin", False)),
+                         email=claims.get("email"), name=claims.get("name") or claims.get("email") or user.id)
+    groups_claim = os.environ.get("ALC_OIDC_GROUPS_CLAIM") or os.environ.get("ALC_GROUP_CLAIM", "groups")
     groups = claims.get(groups_claim) or []
     if isinstance(groups, str):
         groups = [g for g in groups.replace(",", " ").split() if g]

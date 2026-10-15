@@ -14,7 +14,8 @@ Every request is made as a user, resolved by `alchemist.api.identity`:
 
 - `ALC_AUTH=dev` (default): the `X-Alchemist-User` header or the `alc_user` cookie names a user in `access.yaml`.
 - `ALC_AUTH=alb-oidc`: the load balancer's signed `x-amzn-oidc-data` header; groups map to plants and workspaces as in
-  [Web app](../guides/web-app.md#signing-in).
+  [Web app](../guides/web-app.md#signing-in). The signature is checked against the load balancer's public key, fetched
+  from `public-keys.auth.elb.<region>.amazonaws.com`, so the API needs outbound HTTPS to that host.
 
 A request without a valid user gets `401`. Rights then follow [Access](../concepts/access.md): a run's contents are
 returned only to a workspace member entitled to every plant the run used; other members get its question, owner and
@@ -52,6 +53,9 @@ All paths are under `/api`.
 | `GET /runs/{id}/files/{path}` | one file from the run folder (`?download=true` to save it) | entitled viewer |
 | `GET /runs/{id}/bundle` | the whole run folder as a zip | entitled viewer |
 | `GET /runs/{id}/verify` | check the folder against `SEALED` | entitled viewer |
+
+On S3, `files/{path}` answers with a redirect to a presigned GET URL valid for five minutes, issued only after the
+entitlement check. `GET /healthz` (and `/api/health`) answer `200` for load balancer health checks.
 
 Reports are served with a content security policy that blocks scripts, since their text comes from a model.
 

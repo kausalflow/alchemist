@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import markdown
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..access import AccessDenied
@@ -298,8 +298,12 @@ def run_file(run_id: str, path: str, svc: Svc, me: Me, download: bool = False):
         # Reports are generated from model text: no scripts, and only same-origin images.
         headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
     if is_cloud(f):
-        # Target design: redirect to a presigned GET URL issued after the check above.
-        return Response(f.read_bytes(), media_type=media, headers=headers)
+        # S3: a short-lived presigned GET, issued only after the entitlement check above.
+        params = {"Bucket": f.bucket, "Key": f.key, "ResponseContentType": media}
+        if download:
+            params["ResponseContentDisposition"] = headers["Content-Disposition"]
+        url = f.client.client.generate_presigned_url("get_object", Params=params, ExpiresIn=300)
+        return RedirectResponse(url, status_code=307)
     return FileResponse(str(f), media_type=media, headers=headers)
 
 

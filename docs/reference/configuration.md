@@ -49,7 +49,7 @@ See [Plugins](../guides/plugins.md).
 | `ALC_AUTH` | `dev` | `dev`: the user comes from the `X-Alchemist-User` header or `alc_user` cookie (local only); `alb-oidc`: the load balancer's signed OIDC header |
 | `ALC_ALB_ARN` | unset | in `alb-oidc` mode, the only load balancer whose tokens are accepted |
 | `ALC_OIDC_USER_CLAIM` | `email` | claim used as the user id (falls back to `sub`) |
-| `ALC_OIDC_GROUPS_CLAIM` | `groups` | claim holding the `alc-*` group names |
+| `ALC_OIDC_GROUPS_CLAIM` | `groups` | claim holding the `alc-*` group names (`ALC_GROUP_CLAIM` is accepted too); when the access model has `user_from_claims`, its `identity:` settings in `access.yaml` decide instead |
 | `ALC_API_MODEL` | unset | `scripted` plays the offline demo script instead of calling a model (`alchemist serve --scripted`) |
 | `ALC_LAUNCHER` | unset | `package.module:factory` for a launcher that runs plan, analysis and replay steps elsewhere; default runs them on a thread pool in the API process |
 | `ALC_WEB_DIST` | `web/dist` | built web app to serve at `/`; the API alone runs if it is missing |

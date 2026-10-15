@@ -189,6 +189,7 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
         app.state.plugins.append(name)
 
     @app.get("/api/health", include_in_schema=False)
+    @app.get("/healthz", include_in_schema=False)  # load balancer health check
     def health():
         return {"ok": True}
 
@@ -202,7 +203,7 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
 
         @app.get("/{path:path}", include_in_schema=False)
         def spa(path: str):
-            if path.startswith("api/"):
+            if path.startswith("api/") or path == "healthz":
                 raise HTTPException(404)
             f = (dist / path).resolve()
             if path and f.is_file() and dist.resolve() in f.parents:

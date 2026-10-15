@@ -213,6 +213,29 @@ def cmd_serve(a) -> None:
     uvicorn.run(create_app(), host=a.host, port=a.port, log_level="info")
 
 
+def cmd_worker(a) -> None:
+    """One step of a run in its own process (an ECS task started by the run's Step Functions execution)."""
+    from .api.jobs import models, stop_requested
+    from .run import analyse, execute_replay, plan
+
+    svc = _svc()
+    row = svc.catalog.run(a.run_id)
+    if a.step == "plan":
+        model, _ = models(svc.settings, "plan")
+        out = plan(svc, a.run_id, model=model, should_stop=lambda: stop_requested(svc, a.run_id))
+    elif a.step == "analyse":
+        model, reviewer = models(svc.settings, "analysis")
+        q = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
+        user = (q.get("plan") or {}).get("approved_by") or row["user_id"]
+        out = analyse(svc, a.run_id, user=user, model=model, reviewer=reviewer,
+                      should_stop=lambda: stop_requested(svc, a.run_id))
+    else:
+        out = execute_replay(svc, a.run_id)
+    _print({k: v for k, v in out.items() if k in ("run_id", "status", "ended", "analysis_ended", "seal_sha256")})
+    if out["status"] == "failed":
+        sys.exit(1)
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="alchemist", description="AI research system for process questions")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -280,12 +303,17 @@ def main(argv=None) -> None:
     v.add_argument("run_id")
     v.set_defaults(fn=cmd_verify)
 
-    sv = sub.add_parser("serve", help="run the API and the web app")
+    sv = sub.add_parser("serve", aliases=["api"], help="run the API and the web app")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8000)
     sv.add_argument("--scripted", action="store_true",
                     help="plan and analyse with the offline demo script instead of a model (demo question only)")
     sv.set_defaults(fn=cmd_serve)
+
+    w = sub.add_parser("worker", help="run one step of a run (planning, analysis or replay) in this process")
+    w.add_argument("step", choices=["plan", "analyse", "replay"])
+    w.add_argument("--run-id", required=True)
+    w.set_defaults(fn=cmd_worker)
 
     pl = sub.add_parser("plugins", help="list loaded plugins, or show every registered extension")
     pl.add_argument("action", choices=["list", "show"], nargs="?", default="list")
