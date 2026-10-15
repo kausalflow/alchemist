@@ -30,8 +30,8 @@ flowchart TB
     API & PLAN & AN --> FS[(EFS: shared SQLite index)]
 ```
 
-With `workflow.sandbox_mode: separate` (the target design), the analyse task drives a sandbox task in the sandbox
-subnets instead, and only the sandbox gets data credentials, from the broker Lambda. See
+With `workflow.sandbox_mode: separate`, the analyse task drives a sandbox task in the sandbox subnets instead, and only
+the sandbox gets data credentials, from the broker Lambda (refreshed as they expire). See
 [Deployment contract](../reference/deployment.md#two-sandbox-modes).
 
 | Piece | Where it is | Notes |
@@ -186,11 +186,13 @@ passes in staging (technical design, Operations). Pin the image by digest (`imag
 
 ## Known gaps
 
-- The default deployment matches the app today: the kernel runs inside the analyse task and the index is SQLite on
-  EFS. `sandbox_mode: separate` and Aurora need `sandbox serve`, `worker report`, `worker seal`, the broker client and
-  Postgres support in the app; `knowledge ingest` is not a command yet, so that nightly schedule fails until it is.
+- The default deployment keeps the kernel inside the analyse task; `sandbox_mode: separate` is built but has not run
+  in an AWS account yet, so try it in dev first. The index is SQLite on EFS: Aurora needs Postgres support in the app,
+  and `knowledge ingest` is not a command yet, so that nightly schedule fails until it is.
 - The broker token travels in the execution input and the sandbox task's environment, so people who can read
-  execution history or describe ECS tasks can see it. It is bound to one run and expires with the grant.
+  execution history or describe ECS tasks (the orchestrator role can) can see it. Only the sandbox role may invoke the
+  broker, and the token is bound to one run and expires with the grant.
+- The sandbox's kernel API has no authentication of its own; only the orchestrator's security group reaches it.
 - WAF on CloudFront, Bedrock Guardrails being passed on each model call, S3 Access Grants (for lakes not split by
   plant prefix), cross-region replication, and an alarm for writes to sealed prefixes are not in this stack yet.
 - SQLite on EFS locks unreliably with several concurrent writers, so the stack runs one API task while

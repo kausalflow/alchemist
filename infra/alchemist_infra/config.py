@@ -208,10 +208,10 @@ class Commands(_Model):
 
 
 class Workflow(_Model):
-    # in_process: the analyse task runs the kernel itself, assumes the run role (ALC_RUN_ROLE_ARN) for data access,
-    #   and builds the report and seals the run; this is what the app does today.
-    # separate: the target design; the kernel runs in a sandbox task that gets data credentials only from the
-    #   broker Lambda and has no route to Bedrock; Report and Seal are their own steps.
+    # in_process (default): the analyse task runs the kernel itself, assumes the run role (ALC_RUN_ROLE_ARN) for data
+    #   access, and builds the report and seals the run.
+    # separate: the kernel runs in a sandbox task (`alchemist sandbox serve`) that gets data credentials only from the
+    #   broker Lambda, refreshed as they expire, and has no route to Bedrock; Report and Seal are their own steps.
     sandbox_mode: Literal["in_process", "separate"] = "in_process"
     approval_timeout_days: int = 14
     analysis_timeout_hours: int = 6

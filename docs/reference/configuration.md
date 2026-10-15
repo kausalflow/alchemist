@@ -20,6 +20,16 @@ Alchemist reads its settings from environment variables, with local-friendly def
 | `ALC_RUN_CREDENTIAL_SECONDS` | `3600` | lifetime of a run's credentials (one hour at most with role chaining) |
 | `AWS_ENDPOINT_URL_S3` | unset | custom S3 endpoint (MinIO, moto, LocalStack), used by boto3, cloudpathlib and DuckDB |
 
+## Separate sandbox
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_SANDBOX_MODE` | `in_process` | `separate`: workers drive a sandbox task's kernel and leave report and seal to their own steps; the Step Functions launcher writes broker grants ([Deployment contract](deployment.md#two-sandbox-modes)) |
+| `ALC_GRANT_HOURS` | `8` | how long a run's broker grant stays valid after approval |
+| `ALC_GRANTS_PREFIX` | `_grants/` | where the launcher writes grants in the workspace bucket |
+| `ALC_SANDBOX_TASK_ARN`, `ALC_CLUSTER_ARN`, `ALC_SANDBOX_PORT` | unset, unset, `8888` | how a worker finds the sandbox task's kernel |
+| `ALC_BROKER_FUNCTION`, `ALC_BROKER_TOKEN`, `ALC_RUN_ID` | unset | on the sandbox task: the broker Lambda, the run's token, the run it serves |
+
 See [S3 and the workspace](../guides/s3.md).
 
 ## Models

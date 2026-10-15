@@ -153,7 +153,9 @@ class Services(Construct):
         ws.grant_read(self.orchestrator_role)
         hidden = [ws.arn_for_objects(f"{GRANTS_PREFIX}*")]
         if not in_process:
-            hidden += [ws.arn_for_objects("workspaces/*/runs/*/inputs/*"),
+            # Query snapshots and intermediates hold rows; views.json, queries.json and knowledge in inputs/ are
+            # metadata the orchestrator needs for the manifest and report.
+            hidden += [ws.arn_for_objects("workspaces/*/runs/*/inputs/*.parquet"),
                        ws.arn_for_objects("workspaces/*/runs/*/work/*")]
         self.orchestrator_role.add_to_policy(iam.PolicyStatement(
             effect=iam.Effect.DENY, actions=["s3:GetObject"], resources=hidden))
@@ -200,6 +202,7 @@ class Services(Construct):
             "ALC_PLUGINS": ",".join(cfg.plugins.enabled) or "none",
             "ALC_PLUGIN_MODULES": ",".join(cfg.plugins.modules),
             "ALC_EXTRA_PACKAGES": " ".join(cfg.plugins.packages),
+            "ALC_SANDBOX_MODE": cfg.workflow.sandbox_mode,
             **cfg.plugins.env,
         }
         self.db_env = {
@@ -225,7 +228,9 @@ class Services(Construct):
                              "ALC_ACCESS_PROVIDER": cfg.plugins.access_provider,
                              "ALC_OIDC_GROUPS_CLAIM": cfg.oidc.group_claim, "ALC_GROUP_CLAIM": cfg.oidc.group_claim,
                              "ALC_LAUNCHER": "alchemist.sfn_launcher:StepFunctionsLauncher",
-                             "ALC_APPROVALS": f"s3://{ws.bucket_name}/{APPROVALS_PREFIX}"}
+                             "ALC_APPROVALS": f"s3://{ws.bucket_name}/{APPROVALS_PREFIX}",
+                             # How long a run's broker grant lasts after approval (separate sandbox).
+                             "ALC_GRANT_HOURS": str(cfg.workflow.analysis_timeout_hours + 2)}
         run_env = {"ALC_RUN_ROLE_ARN": self.run_role.role_arn, "ALC_RUN_CREDENTIAL_SECONDS": "3600"} \
             if in_process else {}
         pseudonym = {"ALC_PSEUDONYM_KEY": ecs.Secret.from_secrets_manager(self.pseudonym_key)}
@@ -241,7 +246,7 @@ class Services(Construct):
         self.orchestrator_task, self.orchestrator_container = self.add_task(
             "Orchestrator", "orchestrator", orch_size, self.orchestrator_role, cfg.commands.plan,
             {**self.common_env, **self.db_env, **self.model_env, **run_env,
-             "ALC_CLUSTER_ARN": self.cluster.cluster_arn},
+             "ALC_CLUSTER_ARN": self.cluster.cluster_arn, "ALC_SANDBOX_PORT": str(cfg.commands.sandbox_port)},
             {**self.db_secrets, **(pseudonym if in_process else {})})
         self.sandbox_task = self.sandbox_container = self.sealer_task = self.sealer_container = None
         if not in_process:

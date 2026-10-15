@@ -1,5 +1,7 @@
 """Security properties of the synthesized template. Each test names a rule from the technical design."""
 
+import json
+
 import pytest
 from aws_cdk.assertions import Match
 
@@ -83,7 +85,7 @@ def test_orchestrator_has_bedrock_but_no_direct_lake_access(resources, dev_cfg):
 
 def test_separate_sandbox_keeps_raw_rows_and_seal_away_from_the_orchestrator(separate_resources):
     _, policy = _policies_of(separate_resources, "OrchestratorRole")
-    assert "/runs/*/inputs/*" in policy and "/runs/*/work/*" in policy
+    assert "/runs/*/inputs/*.parquet" in policy and "/runs/*/work/*" in policy
     assert "sts:AssumeRole" not in policy
     role = next(v for k, v in separate_resources.items() if v["Type"] == "AWS::IAM::Role" and "RunRole" in k)
     assert "OrchestratorRole" not in dumps(role["Properties"]["AssumeRolePolicyDocument"])
@@ -138,8 +140,39 @@ def test_run_workflow_waits_on_plan_approval(resources):
 
 def test_separate_workflow_always_reports_and_seals(separate_resources):
     d = _definition(separate_resources)
-    for state in ("StartSandbox", "Analyse", "Report", "StopSandbox", "Seal"):
+    for state in ("StartSandbox", "Analyse", "Report", "StopSandbox", "Seal",
+                  "StartReplaySandbox", "Replay", "StopReplaySandbox", "SealReplay"):
         assert f'\\"{state}\\"' in d
+    assert "--sandbox-task-arn" in d
+
+
+def _states(resources) -> dict:
+    """The state machine's states, with CloudFormation references replaced by a placeholder."""
+    (sm,) = find(resources, "AWS::StepFunctions::StateMachine").values()
+    parts = sm["Properties"]["DefinitionString"]["Fn::Join"][1]
+    return json.loads("".join(p if isinstance(p, str) else "REF" for p in parts))["States"]
+
+
+def test_only_the_sandbox_task_gets_the_broker_token(separate_resources):
+    """The orchestrator steps get the sandbox's task ARN; the broker token goes to the sandbox task alone."""
+    with_token = set()
+    for name, st in _states(separate_resources).items():
+        for o in st.get("Parameters", {}).get("Overrides", {}).get("ContainerOverrides", []):
+            if any(e["Name"] == "ALC_BROKER_TOKEN" for e in o.get("Environment", [])):
+                with_token.add((name, o["Name"]))
+    assert with_token == {("StartSandbox", "sandbox"), ("StartReplaySandbox", "sandbox")}
+
+
+def test_separate_mode_contract_environment(separate_resources):
+    def env_of(task):
+        td = next(v for k, v in separate_resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and task in k)
+        (c,) = td["Properties"]["ContainerDefinitions"]
+        return {e["Name"]: e.get("Value") for e in c["Environment"]}
+
+    api, orch, sandbox = env_of("ApiTask"), env_of("OrchestratorTask"), env_of("SandboxTask")
+    assert api["ALC_SANDBOX_MODE"] == orch["ALC_SANDBOX_MODE"] == "separate"
+    assert api["ALC_GRANT_HOURS"] == "8" and orch["ALC_SANDBOX_PORT"] == "8888"
+    assert "ALC_BROKER_FUNCTION" in sandbox and "ALC_RUN_ROLE_ARN" not in orch
 
 
 def test_state_machine_does_not_log_execution_data(resources):
