@@ -191,7 +191,7 @@ export function ModelsPage() {
                       <td>
                         {canEdit ? (
                           <input
-                            className="mono"
+                            className="mono model-input"
                             aria-label={`${r.label} model`}
                             list="model-suggestions"
                             value={value(r)}

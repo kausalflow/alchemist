@@ -332,6 +332,7 @@ dl.facts dd { margin: 0; min-width: 0; }
 .table tr.changed td { background: var(--sel); }
 .table tr.selected td { background: var(--sel); }
 .edit-table td { padding: 6px 8px; }
+.model-input { width: 100%; min-width: 22rem; }
 .scrollx { overflow-x: auto; }
 .col { display: inline-block; margin: 0 6px 4px 0; padding: 0 6px; border-radius: 4px; background: var(--panel-2); font-family: var(--mono); font-size: 12px; }
 .col.never_to_model { background: var(--bad-bg); color: var(--bad-text); }
