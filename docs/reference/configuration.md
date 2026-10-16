@@ -40,13 +40,17 @@ See [S3 and the workspace](../guides/s3.md).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALC_LEAD_MODEL` | `anthropic.claude-opus-5-5` | lead model spec; a bare id means Bedrock |
-| `ALC_SUB_MODEL` | `anthropic.claude-sonnet-5-5` | reviewer and catalog-card drafter |
+| `ALC_PLANNING_MODEL` | `ALC_LEAD_MODEL`, else `bedrock:anthropic.claude-opus-5-5` | writes the plan; a bare id means Bedrock |
+| `ALC_ANALYSIS_MODEL` | `ALC_LEAD_MODEL`, else `bedrock:anthropic.claude-sonnet-5-5` | writes the queries and Python and decides what to check next |
+| `ALC_REVIEWER_MODEL` | `ALC_SUB_MODEL`, else `bedrock:anthropic.claude-opus-5-5` | independent reviewer of the conclusion |
+| `ALC_SMALL_MODEL` | `ALC_SUB_MODEL`, else `bedrock:anthropic.claude-haiku-5-5` | small jobs: drafting catalog cards |
+| `ALC_LEAD_MODEL`, `ALC_SUB_MODEL` | unset | older shared settings, still read: lead for planning and analysis, sub for the reviewer and small jobs |
 | `ALC_ALLOWED_PROVIDERS` | `bedrock` | comma-separated providers plant data may go to; `*` for all |
 | `ALC_EFFORT` | `high` | thinking effort of the lead; `off` disables thinking |
 | `AWS_REGION` | `eu-central-1` | Bedrock region |
 
-Provider credentials are read the usual way: the AWS credential chain for Bedrock, `ANTHROPIC_API_KEY`,
+An admin's choice on the admin "Models and limits" page overrides these for new steps (it is saved in the app
+database). Provider credentials are read the usual way: the AWS credential chain for Bedrock, `ANTHROPIC_API_KEY`,
 `GOOGLE_API_KEY`, `OPENAI_API_KEY`. See [Model providers](../guides/models.md).
 
 ## Plugins

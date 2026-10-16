@@ -52,14 +52,16 @@ Models are set per role with [Pydantic AI](https://ai.pydantic.dev) specs, `prov
 | OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
 
 ```bash
-export ALC_LEAD_MODEL=bedrock:anthropic.claude-opus-5-5   # plans and analyses
-export ALC_SUB_MODEL=bedrock:anthropic.claude-sonnet-5-5  # reviewer and catalog-card drafter
+export ALC_PLANNING_MODEL=bedrock:anthropic.claude-opus-5-5    # writes the plan
+export ALC_ANALYSIS_MODEL=bedrock:anthropic.claude-sonnet-5-5  # writes the queries and Python
+export ALC_REVIEWER_MODEL=bedrock:anthropic.claude-opus-5-5    # checks the conclusion
+export ALC_SMALL_MODEL=bedrock:anthropic.claude-haiku-5-5      # drafts catalog cards
 export ALC_ALLOWED_PROVIDERS=bedrock                      # default; plant data goes only to listed providers
 alchemist ask "..." --model google:gemini-3-pro ...   # per-run override (provider must be allowed)
 alchemist ask ... --reviewer-model openai:gpt-5           # review with a different provider than the lead
 ```
 
-Because plant data is private, any provider other than Bedrock is refused until it is added to `ALC_ALLOWED_PROVIDERS`
+Admins can change each role's model on the admin "Models and limits" page. Because plant data is private, any provider other than Bedrock is refused until it is added to `ALC_ALLOWED_PROVIDERS`
 (comma-separated, `*` for all). The manifest records the exact `provider:model` used for each role.
 
 ## Run it on a real model

@@ -122,7 +122,7 @@ class PydanticAIModel:
     retry_seconds: float = 300.0  # ALC_MODEL_RETRY_SECONDS
 
     def __init__(self, settings, spec: str | None = None, effort: str | None = None, max_tokens: int = 16000):
-        self.spec = check_allowed(spec or settings.lead_model, settings.allowed_providers)
+        self.spec = check_allowed(spec or settings.analysis_model, settings.allowed_providers)
         self.name = self.spec
         self.model = build_model(self.spec, settings)
         effort = effort or settings.effort
@@ -212,6 +212,14 @@ def from_pydantic_response(resp) -> dict:
         stop = {"length": "max_tokens", "content_filter": "refusal"}.get(reason, "end_turn")
     return {"content": content, "stop_reason": stop,
             "usage": {"input_tokens": resp.usage.input_tokens, "output_tokens": resp.usage.output_tokens}}
+
+
+def role_model(settings, role: str) -> PydanticAIModel:
+    """The model for a role (planning, analysis, reviewer, small; see model_roles.py) at that role's effort."""
+    from .model_roles import ROLES
+
+    r = ROLES[role]
+    return PydanticAIModel(settings, getattr(settings, r.field), effort=r.effort)
 
 
 def complete(settings, spec: str, *, system: str, user: str, effort: str = "low", max_tokens: int = 8000) -> str:

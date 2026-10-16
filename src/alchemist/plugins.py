@@ -403,8 +403,8 @@ def _register_builtins(r: Registry) -> None:
         return llm_draft(req.settings, req.dataset_id, req.metadata_text, req.sample, req.sample_columns)
 
     r.card_drafters.add(CardDrafter("heuristic", heuristic, "maps common metadata spellings, no model"))
-    r.card_drafters.add(CardDrafter("model", model, "the sub model (ALC_SUB_MODEL) reads the metadata file",
-                                    drafted_by=lambda s: s.sub_model))
+    r.card_drafters.add(CardDrafter("model", model, "the small-jobs model (ALC_SMALL_MODEL) reads the metadata file",
+                                    drafted_by=lambda s: s.small_model))
 
     def bedrock(model_id: str, settings):
         from pydantic_ai.models.bedrock import BedrockConverseModel

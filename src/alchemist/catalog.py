@@ -394,7 +394,7 @@ def llm_draft(settings, dataset_id: str, meta_text: str, sample, sample_cols: di
     user = (f"Dataset id: {dataset_id}\n\nColumns found in the data with types: {json.dumps(sample_cols)}\n\n"
             f"Metadata file:\n<metadata>\n{meta_text[:20000]}\n</metadata>\n\n"
             f"First rows of the data:\n<sample>\n{sample.head(15).to_csv(index=False) if sample is not None else ''}\n</sample>")
-    text = complete(settings, settings.sub_model, system=LLM_DRAFT_PROMPT, user=user, effort="low")
+    text = complete(settings, settings.small_model, system=LLM_DRAFT_PROMPT, user=user, effort="low")
     m = re.search(r"\{.*\}", text, re.S)
     drafted = json.loads(m.group(0)) if m else {}
     card = empty_card(dataset_id)

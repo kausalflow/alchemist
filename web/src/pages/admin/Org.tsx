@@ -1,6 +1,7 @@
-import type { DevUser, Workspace } from "../../api";
+import { useState } from "react";
+import { api, type DevUser, type ModelRole, type ModelSettings, type Workspace } from "../../api";
 import { useApi, useSession } from "../../session";
-import { ErrorNote, Loading } from "../../components/bits";
+import { day, ErrorNote, Loading } from "../../components/bits";
 import { plantTitle, useAdmin } from "./AdminLayout";
 
 function Head({ title, crumb = "Organisation" }: { title: string; crumb?: string }) {
@@ -124,30 +125,150 @@ export function AccessPage() {
   );
 }
 
-/** Models and run limits from /meta (read-only: set in the deployment's configuration). */
+/** The model for each role (admins change them; catalog admins see them) and the run limits from /meta. */
 export function ModelsPage() {
-  const { meta } = useSession();
+  const { meta, me } = useSession();
+  const { data, error, setData } = useApi<ModelSettings>("/admin/models");
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const canEdit = !!me?.admin;
+  const value = (r: ModelRole) => draft[r.role] ?? r.spec;
+  const changed = data ? data.roles.filter((r) => value(r).trim() !== r.spec) : [];
+
+  const save = async (models: Record<string, string | null>, done: string) => {
+    setBusy(true);
+    setSaveError(null);
+    setMsg(null);
+    try {
+      setData(await api.put<ModelSettings>("/admin/models", { models }));
+      setDraft({});
+      setMsg(done);
+    } catch (err) {
+      setSaveError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const models = Object.fromEntries(changed.map((r) => [r.role, value(r).trim() || null]));
+    save(models, `Saved. New planning and analysis steps use these models; earlier runs keep the models they recorded.`);
+  };
+
   if (!meta) return <Loading />;
   return (
     <div className="page">
       <Head title="Models and limits" />
       <div className="section stack measure-wide">
-        <p className="muted measure">The model provider, models and limits are set in the deployment's configuration and shown here read-only.</p>
+        <p className="muted measure">
+          Each part of a run uses its own model. The deployment's configuration sets them; {canEdit ? "you" : "an admin"} can choose another one
+          here. A model is a <span className="mono">provider:model-id</span>, and only providers allowed to receive plant data (
+          <span className="mono">{meta.models.allowed_providers.join(", ")}</span>) are accepted.
+        </p>
+        {meta.models.scripted && <p className="warn-text small">This server plays the offline demo script, so runs do not call these models.</p>}
+        <ErrorNote error={error} />
+        {!data && !error && <Loading />}
+        {data && (
+          <form onSubmit={submit} className="stack">
+            <div className="table-wrap">
+              <table className="table edit-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Role</th>
+                    <th scope="col">Model</th>
+                    <th scope="col">Set by</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.roles.map((r) => (
+                    <tr key={r.role}>
+                      <td>
+                        <div className="strong-ish">{r.label}</div>
+                        <div className="muted small">{r.does}</div>
+                      </td>
+                      <td>
+                        {canEdit ? (
+                          <input
+                            className="mono model-input"
+                            aria-label={`${r.label} model`}
+                            list="model-suggestions"
+                            value={value(r)}
+                            onChange={(e) => setDraft({ ...draft, [r.role]: e.target.value })}
+                            spellCheck={false}
+                          />
+                        ) : (
+                          <span className="mono">{r.spec}</span>
+                        )}
+                        {r.ignored && (
+                          <div className="warn-text small">
+                            The saved choice <span className="mono">{r.ignored.spec}</span> is ignored: its provider is no longer allowed.
+                          </div>
+                        )}
+                      </td>
+                      <td className="small">
+                        {r.source === "admin" ? (
+                          <>
+                            <div>
+                              {r.updated_by}, {day(r.updated_at)}
+                            </div>
+                            {canEdit && (
+                              <button
+                                type="button"
+                                className="ghost small"
+                                disabled={busy}
+                                onClick={() => save({ [r.role]: null }, `${r.label} uses the configured model again.`)}
+                              >
+                                Use the configured {r.configured}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="muted">
+                            configuration (<span className="mono">{r.configured_from === "default" ? "built-in default" : r.configured_from}</span>)
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <datalist id="model-suggestions">
+                {[...new Set(data.roles.flatMap((r) => [r.default, r.configured]))].map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+            </div>
+            <ErrorNote error={saveError} />
+            {msg && (
+              <p className="ok-text small" role="status">
+                {msg}
+              </p>
+            )}
+            {canEdit && (
+              <div className="row-center">
+                <button className="primary" disabled={busy || changed.length === 0}>
+                  {busy ? "Saving…" : "Save models"}
+                </button>
+                {changed.length > 0 && (
+                  <button type="button" className="ghost" onClick={() => setDraft({})}>
+                    Undo changes
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="muted small measure">
+              Each run records the models it used, so its report and replays stay tied to them after a change. On Bedrock, the deployment's
+              role must also be allowed to call the model you pick.
+            </p>
+          </form>
+        )}
+
+        <h2 className="h-section">Limits</h2>
         <div className="table-wrap">
           <table className="table kv">
             <tbody>
-              <tr>
-                <th scope="row">Lead model</th>
-                <td className="mono">{meta.models.scripted ? "offline demo script" : meta.models.lead}</td>
-              </tr>
-              <tr>
-                <th scope="row">Reviewer and card drafter</th>
-                <td className="mono">{meta.models.scripted ? "offline demo script" : meta.models.sub}</td>
-              </tr>
-              <tr>
-                <th scope="row">Providers allowed to receive plant data</th>
-                <td className="mono">{meta.models.allowed_providers.join(", ")}</td>
-              </tr>
               <tr>
                 <th scope="row">Tool calls per run step</th>
                 <td className="mono">{meta.budgets.max_steps}</td>

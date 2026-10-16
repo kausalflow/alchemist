@@ -89,6 +89,8 @@ admins only.
 | `POST /admin/plants` | add or rename a plant: `{id, name, description}`. Who may read its data is still decided by the `alc-plant-<id>` group |
 | `GET /admin/plants/{plant}` | the plant's datasets (with card status), documents, fact tables, lines and open suggestions |
 | `PUT /admin/plants/{plant}/lines` | replace the plant's lines `{lines: [{id, name, description}]}`; also writes the searchable document `LINES-<plant>` |
+| `GET /admin/models` | each role's model (`planning`, `analysis`, `reviewer`, `small`): the spec in use, whether it is an admin's choice or the configuration, and the configured value |
+| `PUT /admin/models` | admins only: `{models: {role: spec}}` sets a role's model (allowed providers only; audited as `models.update`), `{role: null}` goes back to the configured one |
 | `POST /admin/plants/{plant}/preview` | `{question}`: what an agent on a question scoped to that plant would find (catalog search, knowledge search, fact tables, lines) |
 | `GET /admin/documents/{id}` | a document's details and Markdown body |
 | `POST /admin/documents` | save a document `{id?, plant, title, type, lines, review_date, content}`; an existing id gets the next version |

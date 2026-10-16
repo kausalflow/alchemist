@@ -20,14 +20,19 @@ export default function AboutPage() {
             <th scope="row">Version</th>
             <td>{meta.version}</td>
           </tr>
-          <tr>
-            <th scope="row">Lead model</th>
-            <td>{meta.models.scripted ? "offline demo script" : meta.models.lead}</td>
-          </tr>
-          <tr>
-            <th scope="row">Reviewer and card drafter</th>
-            <td>{meta.models.scripted ? "offline demo script" : meta.models.sub}</td>
-          </tr>
+          {(
+            [
+              ["Planning model", "planning"],
+              ["Analysis model", "analysis"],
+              ["Reviewer model", "reviewer"],
+              ["Small-jobs model (catalog cards)", "small"],
+            ] as const
+          ).map(([label, role]) => (
+            <tr key={role}>
+              <th scope="row">{label}</th>
+              <td>{meta.models.scripted ? "offline demo script" : meta.models.roles[role]}</td>
+            </tr>
+          ))}
           <tr>
             <th scope="row">Providers allowed to receive plant data</th>
             <td>{meta.models.allowed_providers.join(", ")}</td>

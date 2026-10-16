@@ -46,6 +46,9 @@ def test_manifest_and_seal(sealed_run):
     m = read_json(os.path.join(sealed_run["path"], "manifest.json"))
     assert m["schema"] == "alchemist.manifest/v1" and set(m["result_hashes"]) == {"F1", "F2", "F3", "F4", "F5"}
     assert {c["dataset"] for c in m["catalog"]} >= {"quality_lots", "historian_line2"}
+    # each role's model, the planning one carried over from the planning step
+    assert {k: m["model"][k] for k in ("planning", "analysis", "reviewer")} == {
+        "planning": "scripted", "analysis": "scripted", "reviewer": "scripted-reviewer"}
     assert verify(sealed_run["path"], sealed_run["seal_sha256"])["ok"]
 
 

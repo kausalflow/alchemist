@@ -52,13 +52,37 @@ export interface Me {
 export interface Meta {
   version: string;
   auth: string;
-  models: { lead: string; sub: string; allowed_providers: string[]; scripted: boolean };
+  models: { roles: Record<ModelRoleName, string>; allowed_providers: string[]; scripted: boolean };
   budgets: { max_steps: number; max_output_tokens: number };
   tools: { planning: Tool[]; analysis: Tool[] };
   prompts: string;
   plugins: (string | { name: string; version?: string | null })[];
   launcher: string;
   options: { data_formats: string[]; card_drafters: string[] };
+}
+
+export type ModelRoleName = "planning" | "analysis" | "reviewer" | "small";
+
+/** A role's model now (GET /admin/models): an admin's choice, or the deployment's configured model. */
+export interface ModelRole {
+  role: ModelRoleName;
+  label: string;
+  does: string;
+  env: string;
+  legacy_env: string;
+  spec: string;
+  source: "admin" | "configuration";
+  configured: string;
+  configured_from: string;
+  default: string;
+  updated_by: string | null;
+  updated_at: string | null;
+  ignored: { spec: string; reason: string } | null;
+}
+
+export interface ModelSettings {
+  roles: ModelRole[];
+  allowed_providers: string[];
 }
 
 export interface Tool {

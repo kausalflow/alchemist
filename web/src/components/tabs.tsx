@@ -9,6 +9,17 @@ import StepList from "./StepList";
 // ------------------------------------------------------------------ answer
 
 /** Replays and reruns: how the re-executed findings compared with the original. */
+
+/** The models a run recorded per role. Runs from before the four roles recorded one "lead" for planning and analysis. */
+function runModels(model: Record<string, string> | undefined): [string, string][] {
+  if (!model) return [];
+  const rows: [string, string | undefined][] = [
+    ["Planning", model.planning ?? model.lead],
+    ["Analysis", model.analysis ?? model.lead],
+    ["Reviewer", model.reviewer],
+  ];
+  return rows.filter((r): r is [string, string] => !!r[1]);
+}
 export function ResultCheck({ run }: { run: RunDetail }) {
   const check = run.result_check?.status;
   if (run.run.mode === "live" || !check) return null;
@@ -615,8 +626,9 @@ export function ReproducePanel({ run }: { run: RunDetail }) {
           <>
             <dt>Models</dt>
             <dd className="mono small">
-              {m.model.lead}
-              {m.model.reviewer && ` + reviewer ${m.model.reviewer}`}
+              {runModels(m.model)
+                .map(([label, spec]) => `${label.toLowerCase()} ${spec}`)
+                .join(" · ")}
             </dd>
           </>
         )}
@@ -759,14 +771,12 @@ export function ProvenanceTab({ run, reload }: { run: RunDetail; reload: () => v
       <div className="table-wrap">
         <table className="table kv">
           <tbody>
-            <tr>
-              <th scope="row">Lead model</th>
-              <td className="mono">{m.model?.lead}</td>
-            </tr>
-            <tr>
-              <th scope="row">Reviewer model</th>
-              <td className="mono">{m.model?.reviewer}</td>
-            </tr>
+            {runModels(m.model).map(([label, spec]) => (
+              <tr key={label}>
+                <th scope="row">{label} model</th>
+                <td className="mono">{spec}</td>
+              </tr>
+            ))}
             <tr>
               <th scope="row">Prompts and tools</th>
               <td>
