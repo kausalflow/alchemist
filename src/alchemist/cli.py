@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -55,6 +56,36 @@ def _reviewer(name: str, spec: str | None = None):
 
         return PydanticAIModel(load_settings(), spec, effort="medium")
     return None
+
+
+# Characters a run folder adds below the workspace root, e.g. the demo's deepest file:
+# \workspaces\quality\projects\line2-yield\questions\<id>\runs\<id>\inputs\<sha256>.parquet
+RUN_PATH_CHARS = 190
+WINDOWS_MAX_PATH = 259
+
+
+def _windows_long_paths() -> bool:
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as k:
+            return winreg.QueryValueEx(k, "LongPathsEnabled")[0] == 1
+    except OSError:
+        return False
+
+
+def windows_path_warning(workspace_root: str, platform: str = sys.platform, long_paths=None) -> str | None:
+    """On Windows without long-path support, files deep in a run folder fail to open past 259 characters."""
+    if platform != "win32" or "://" in workspace_root:
+        return None
+    root = os.path.abspath(workspace_root)
+    if len(root) + RUN_PATH_CHARS <= WINDOWS_MAX_PATH:
+        return None
+    if (_windows_long_paths() if long_paths is None else long_paths):
+        return None
+    return (f"warning: run files under {root} may exceed Windows' {WINDOWS_MAX_PATH}-character path limit and fail "
+            f"with FileNotFoundError. Set ALC_HOME to a short folder (e.g. C:\\alc) or enable Windows long paths "
+            f"(LongPathsEnabled).")
 
 
 # ---------------------------------------------------------------- commands
@@ -547,6 +578,10 @@ def main(argv=None) -> None:
         cp.set_defaults(fn=command.run)
 
     a = p.parse_args(argv)
+    if a.cmd in ("demo", "ask", "approve", "replay", "serve", "api", "worker"):
+        warning = windows_path_warning(load_settings().workspace_root)
+        if warning:
+            print(warning, file=sys.stderr)
     a.fn(a)
 
 

@@ -265,3 +265,13 @@ def test_demo_run_says_why_an_analysis_did_not_finish(tmp_path, monkeypatch):
         cli.main(["demo", "run"])
     assert "did not finish (partial): stopped: model ended its turn" in str(e.value)
     assert "First failed step (run_python):\nZeroDivisionError" in str(e.value)
+
+
+def test_windows_warns_when_run_paths_would_be_too_long():
+    from alchemist.cli import windows_path_warning
+
+    deep = "/" + "d" * 80 + "/workspace"  # like C:\Users\me\git\github\org\alchemist\alchemist-home\workspace
+    assert "259-character" in windows_path_warning(deep, platform="win32", long_paths=False)
+    assert windows_path_warning("/alc/workspace", platform="win32", long_paths=False) is None
+    assert windows_path_warning(deep, platform="win32", long_paths=True) is None
+    assert windows_path_warning(deep, platform="linux") is None

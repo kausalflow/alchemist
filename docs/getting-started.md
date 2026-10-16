@@ -20,6 +20,11 @@ to `./alchemist-home`.
 export ALC_HOME=./alchemist-home
 ```
 
+!!! note "Windows"
+    Run folders nest deeply, and Windows limits paths to 259 characters unless long paths are enabled. Use a short
+    home such as `$env:ALC_HOME = "C:\alc"` in PowerShell (Alchemist warns when the home is too deep). The
+    deployment runs on Linux; Windows is supported for trying the demo locally.
+
 ## Run the demo
 
 ```bash

@@ -20,6 +20,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import warnings
 from pathlib import Path
 
 import nbformat
@@ -88,8 +89,16 @@ class LocalKernel:
 
     def start(self) -> None:
         ksm = KernelSpecManager(kernel_dirs=[_kernel_spec_dir()])
-        self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, **kernel_transport())
-        self.km.start_kernel(env=self.env)
+        transport = kernel_transport()
+        self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, **transport)
+        extra = []
+        if transport["transport"] == "tcp":
+            # Windows only: localhost TCP is expected there, so drop ipykernel's "running over TCP without
+            # encryption" notice, and pyzmq's note that it adds a selector thread to the Proactor event loop.
+            extra = ["--IPKernelApp.log_level=ERROR"]
+            warnings.filterwarnings("ignore", message="Proactor event loop does not implement add_reader",
+                                    category=RuntimeWarning)
+        self.km.start_kernel(env=self.env, extra_arguments=extra)
         self.kc = self.km.client()
         self.kc.start_channels()
         self.kc.wait_for_ready(timeout=60)
