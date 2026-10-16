@@ -254,7 +254,14 @@ def test_demo_run_says_why_an_analysis_did_not_finish(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("ALC_HOME", str(tmp_path))
     cli.main(["demo", "setup"])
+    run = tmp_path / "the-run"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "transcript.jsonl").write_text(
+        json.dumps({"tool": "run_query", "is_error": False, "output": "ok"}) + "\n"
+        + json.dumps({"tool": "run_python", "is_error": True, "output": "ZeroDivisionError: division by zero"}) + "\n")
     monkeypatch.setattr(run_mod, "approve", lambda svc, run_id, **kw: {
-        "status": "partial", "analysis_ended": "error: OSError: disk full", "path": "the-run"})
-    with pytest.raises(SystemExit, match="did not finish \\(partial\\): error: OSError: disk full"):
+        "status": "partial", "analysis_ended": "stopped: model ended its turn", "path": str(run)})
+    with pytest.raises(SystemExit) as e:
         cli.main(["demo", "run"])
+    assert "did not finish (partial): stopped: model ended its turn" in str(e.value)
+    assert "First failed step (run_python):\nZeroDivisionError" in str(e.value)

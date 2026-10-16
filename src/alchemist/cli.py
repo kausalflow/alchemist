@@ -247,13 +247,25 @@ def cmd_demo_run(a) -> None:
         raise
     if res["status"] != "completed":  # nothing to replay; say why instead of failing on missing findings
         sys.exit(f"2. The analysis did not finish ({res['status']}): {res.get('analysis_ended')}\n"
-                 f"   Run folder: {res['path']}")
+                 f"   Run folder: {res['path']}{_first_tool_error(res['path'])}")
     print(f"2. Analysed and sealed: {res['status']}\n\n{res['conclusion']}")
     rep = replay(svc, out["run_id"], user="eng_p1")
     st = rep["result_check"]["status"]
     print(f"3. Replay {rep['run_id']}: {rep['status']}, {st['compared']} findings compared, {st['mismatches']} mismatches")
     print(f"4. Verify original: {verify(res['path'], res['seal_sha256'])['ok']}")
     print(f"\nReport: {as_path(res['path']) / 'report' / 'report.html'}")
+
+
+def _first_tool_error(run_dir: str) -> str:
+    """The first failed tool call in a run's transcript: in the scripted demo, the step every later one tripped on."""
+    log = as_path(run_dir) / "logs" / "transcript.jsonl"
+    if not log.exists():
+        return ""
+    for line in log.read_text().splitlines():
+        rec = json.loads(line)
+        if rec.get("is_error"):
+            return f"\n   First failed step ({rec['tool']}):\n{str(rec.get('output', ''))[:3000]}"
+    return ""
 
 
 def cmd_access(a) -> None:
