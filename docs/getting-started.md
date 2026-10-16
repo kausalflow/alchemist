@@ -20,6 +20,11 @@ to `./alchemist-home`.
 export ALC_HOME=./alchemist-home
 ```
 
+!!! note "Windows"
+    Run folders nest deeply, and Windows limits paths to 259 characters unless long paths are enabled. Use a short
+    home such as `$env:ALC_HOME = "C:\alc"` in PowerShell (Alchemist warns when the home is too deep). The
+    deployment runs on Linux; Windows is supported for trying the demo locally.
+
 ## Run the demo
 
 ```bash
@@ -36,6 +41,9 @@ quality_lots: card v1 approved; missing facts: []
 resin_lots: card v1 approved; missing facts: ['grain', 'time_zone', 'join_keys', 'unit for cert_mfi_g10min']
 historian_line5: card v1 approved; missing facts: ['grain', 'join_keys', 'unit for barrel_temp_c']
 ```
+
+Running `demo setup` again on the same `ALC_HOME` is safe: cards whose metadata did not change are kept and print
+`unchanged since the last setup`. To start over from scratch, delete the `ALC_HOME` folder first.
 
 `demo run` goes through the whole loop: ask, plan, approve, analyse, review, report, seal, replay and verify.
 

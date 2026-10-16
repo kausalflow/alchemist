@@ -223,3 +223,55 @@ def test_step_functions_resume_starts_a_new_execution_and_reconcile_pauses_a_dea
     l.reconcile()
     assert svc.catalog.run(rid)["status"] == "paused"  # it has a checkpoint: resumable, not failed
     svc.catalog.transition(rid, "paused", "failed")
+
+
+
+def test_demo_run_that_crashes_does_not_hold_a_run_slot(tmp_path, monkeypatch):
+    import alchemist.run as run_mod
+    from alchemist import cli
+
+    for var in ("ALC_DB", "ALC_DB_HOST", "ALC_WORKSPACE", "ALC_ACCESS", "ALC_KNOWLEDGE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ALC_HOME", str(tmp_path))  # its own home, so the shared test runs are untouched
+    cli.main(["demo", "setup"])
+
+    def approve_then_crash(svc, run_id, **kw):  # the analysis started, then its kernel failed
+        svc.catalog.transition(run_id, "awaiting_approval", "running")
+        raise RuntimeError("kernel died")
+
+    monkeypatch.setattr(run_mod, "approve", approve_then_crash)
+    with pytest.raises(RuntimeError):
+        cli.main(["demo", "run"])
+    (row,) = cli._svc().catalog.runs()
+    assert row["status"] == "failed"
+
+
+def test_demo_run_says_why_an_analysis_did_not_finish(tmp_path, monkeypatch):
+    import alchemist.run as run_mod
+    from alchemist import cli
+
+    for var in ("ALC_DB", "ALC_DB_HOST", "ALC_WORKSPACE", "ALC_ACCESS", "ALC_KNOWLEDGE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ALC_HOME", str(tmp_path))
+    cli.main(["demo", "setup"])
+    run = tmp_path / "the-run"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "transcript.jsonl").write_text(
+        json.dumps({"tool": "run_query", "is_error": False, "output": "ok"}) + "\n"
+        + json.dumps({"tool": "run_python", "is_error": True, "output": "ZeroDivisionError: division by zero"}) + "\n")
+    monkeypatch.setattr(run_mod, "approve", lambda svc, run_id, **kw: {
+        "status": "partial", "analysis_ended": "stopped: model ended its turn", "path": str(run)})
+    with pytest.raises(SystemExit) as e:
+        cli.main(["demo", "run"])
+    assert "did not finish (partial): stopped: model ended its turn" in str(e.value)
+    assert "First failed step (run_python):\nZeroDivisionError" in str(e.value)
+
+
+def test_windows_warns_when_run_paths_would_be_too_long():
+    from alchemist.cli import windows_path_warning
+
+    deep = "/" + "d" * 80 + "/workspace"  # like C:\Users\me\git\github\org\alchemist\alchemist-home\workspace
+    assert "259-character" in windows_path_warning(deep, platform="win32", long_paths=False)
+    assert windows_path_warning("/alc/workspace", platform="win32", long_paths=False) is None
+    assert windows_path_warning(deep, platform="win32", long_paths=True) is None
+    assert windows_path_warning(deep, platform="linux") is None

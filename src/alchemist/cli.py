@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -57,6 +58,36 @@ def _reviewer(name: str, spec: str | None = None):
     return None
 
 
+# Characters a run folder adds below the workspace root, e.g. the demo's deepest file:
+# \workspaces\quality\projects\line2-yield\questions\<id>\runs\<id>\inputs\<sha256>.parquet
+RUN_PATH_CHARS = 190
+WINDOWS_MAX_PATH = 259
+
+
+def _windows_long_paths() -> bool:
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as k:
+            return winreg.QueryValueEx(k, "LongPathsEnabled")[0] == 1
+    except OSError:
+        return False
+
+
+def windows_path_warning(workspace_root: str, platform: str = sys.platform, long_paths=None) -> str | None:
+    """On Windows without long-path support, files deep in a run folder fail to open past 259 characters."""
+    if platform != "win32" or "://" in workspace_root:
+        return None
+    root = os.path.abspath(workspace_root)
+    if len(root) + RUN_PATH_CHARS <= WINDOWS_MAX_PATH:
+        return None
+    if (_windows_long_paths() if long_paths is None else long_paths):
+        return None
+    return (f"warning: run files under {root} may exceed Windows' {WINDOWS_MAX_PATH}-character path limit and fail "
+            f"with FileNotFoundError. Set ALC_HOME to a short folder (e.g. C:\\alc) or enable Windows long paths "
+            f"(LongPathsEnabled).")
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_demo_setup(a) -> None:
@@ -77,9 +108,13 @@ def cmd_demo_setup(a) -> None:
     for ds_id, spec in datasets.items():
         svc.catalog.register(id=ds_id, actor="data_admin", **spec)
         res = index_dataset(svc.catalog, s, ds_id, use_model=a.use_model)
-        if not a.no_approve:
+        # Rerunning setup on the same home finds the cards unchanged; approve only what is still a draft.
+        status = svc.catalog.latest_card(ds_id, status=None)["status"]
+        if status == "draft" and not a.no_approve:
             svc.catalog.approve(ds_id, res["version"], reviewer="data_admin")
-        print(f"{ds_id}: card v{res['version']} {'approved' if not a.no_approve else 'drafted'}; missing facts: {res.get('missing')}")
+            status = "approved"
+        note = f"missing facts: {res['missing']}" if "missing" in res else "unchanged since the last setup"
+        print(f"{ds_id}: card v{res['version']} {status}; {note}")
     print(f"\nDemo home: {home.resolve()}")
 
 
@@ -233,13 +268,35 @@ def cmd_demo_run(a) -> None:
     out = ask(svc, user="eng_p1", workspace="quality", project="line2-yield", question=script.QUESTION,
               scope=script.SCOPE, model=_model("scripted", "plan"))
     print(f"1. Planned run {out['run_id']}: {out['status']}")
-    res = approve(svc, out["run_id"], user="eng_p1", model=_model("scripted", "analysis"), reviewer=_reviewer("scripted"))
+    try:
+        res = approve(svc, out["run_id"], user="eng_p1", model=_model("scripted", "analysis"),
+                      reviewer=_reviewer("scripted"))
+    except BaseException as e:  # a crash or Ctrl+C must not leave the run counting against the user's run limit
+        from .api.jobs import mark_failed
+
+        mark_failed(svc, out["run_id"], e if isinstance(e, Exception) else "interrupted")
+        raise
+    if res["status"] != "completed":  # nothing to replay; say why instead of failing on missing findings
+        sys.exit(f"2. The analysis did not finish ({res['status']}): {res.get('analysis_ended')}\n"
+                 f"   Run folder: {res['path']}{_first_tool_error(res['path'])}")
     print(f"2. Analysed and sealed: {res['status']}\n\n{res['conclusion']}")
     rep = replay(svc, out["run_id"], user="eng_p1")
     st = rep["result_check"]["status"]
     print(f"3. Replay {rep['run_id']}: {rep['status']}, {st['compared']} findings compared, {st['mismatches']} mismatches")
     print(f"4. Verify original: {verify(res['path'], res['seal_sha256'])['ok']}")
     print(f"\nReport: {as_path(res['path']) / 'report' / 'report.html'}")
+
+
+def _first_tool_error(run_dir: str) -> str:
+    """The first failed tool call in a run's transcript: in the scripted demo, the step every later one tripped on."""
+    log = as_path(run_dir) / "logs" / "transcript.jsonl"
+    if not log.exists():
+        return ""
+    for line in log.read_text().splitlines():
+        rec = json.loads(line)
+        if rec.get("is_error"):
+            return f"\n   First failed step ({rec['tool']}):\n{str(rec.get('output', ''))[:3000]}"
+    return ""
 
 
 def cmd_access(a) -> None:
@@ -521,6 +578,10 @@ def main(argv=None) -> None:
         cp.set_defaults(fn=command.run)
 
     a = p.parse_args(argv)
+    if a.cmd in ("demo", "ask", "approve", "replay", "serve", "api", "worker"):
+        warning = windows_path_warning(load_settings().workspace_root)
+        if warning:
+            print(warning, file=sys.stderr)
     a.fn(a)
 
 

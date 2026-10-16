@@ -20,6 +20,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import warnings
 from pathlib import Path
 
 import nbformat
@@ -68,6 +69,15 @@ def kernel_env(run_dir: str, extra_env: dict | None = None, base: dict | None = 
     return {k: v for k, v in env.items() if v is not None}
 
 
+def kernel_transport(platform: str = sys.platform) -> dict[str, str]:
+    """How this process talks to its kernel: Unix sockets in a private folder, so other local users cannot connect.
+
+    ZeroMQ has no IPC transport on Windows, so there it falls back to TCP on localhost (fine for a local demo)."""
+    if platform == "win32":
+        return {"transport": "tcp", "ip": "127.0.0.1"}
+    return {"transport": "ipc", "ip": str(Path(tempfile.mkdtemp(prefix="alc-ipc-")) / "kernel")}
+
+
 class LocalKernel:
     """A Jupyter kernel in a child process of this one."""
 
@@ -79,9 +89,16 @@ class LocalKernel:
 
     def start(self) -> None:
         ksm = KernelSpecManager(kernel_dirs=[_kernel_spec_dir()])
-        self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, transport="ipc",
-                                ip=str(Path(tempfile.mkdtemp(prefix="alc-ipc-")) / "kernel"))
-        self.km.start_kernel(env=self.env)
+        transport = kernel_transport()
+        self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, **transport)
+        extra = []
+        if transport["transport"] == "tcp":
+            # Windows only: localhost TCP is expected there, so drop ipykernel's "running over TCP without
+            # encryption" notice, and pyzmq's note that it adds a selector thread to the Proactor event loop.
+            extra = ["--IPKernelApp.log_level=ERROR"]
+            warnings.filterwarnings("ignore", message="Proactor event loop does not implement add_reader",
+                                    category=RuntimeWarning)
+        self.km.start_kernel(env=self.env, extra_arguments=extra)
         self.kc = self.km.client()
         self.kc.start_channels()
         self.kc.wait_for_ready(timeout=60)
