@@ -30,9 +30,11 @@ def _model(name: str, phase: str):
         from .demo import script
 
         return ScriptedModel(script.PLAN_TURNS if phase == "plan" else script.ANALYSIS_TURNS)
+    if name in ("bedrock", "default"):
+        return None  # the run uses the role's model (ALC_PLANNING_MODEL / ALC_ANALYSIS_MODEL, or an admin's choice)
     from .llm import PydanticAIModel
 
-    return PydanticAIModel(load_settings(), None if name in ("bedrock", "default") else name)
+    return PydanticAIModel(load_settings(), name)
 
 
 def _user(a, svc=None):
@@ -448,7 +450,7 @@ def main(argv=None) -> None:
     d = sub.add_parser("demo", help="synthetic plant data and an offline end-to-end run")
     dsub = d.add_subparsers(dest="demo_cmd", required=True)
     ds = dsub.add_parser("setup", help="generate demo data, register and index the datasets")
-    ds.add_argument("--use-model", action="store_true", help="draft catalog cards with the sub model (ALC_SUB_MODEL)")
+    ds.add_argument("--use-model", action="store_true", help="draft catalog cards with the small-jobs model (ALC_SMALL_MODEL)")
     ds.add_argument("--no-approve", action="store_true", help="leave drafts for an admin to review")
     ds.add_argument("--lake", help="upload the demo lake here (e.g. s3://my-bucket/alchemist-demo/lake) and register it there")
     ds.set_defaults(fn=cmd_demo_setup)
@@ -480,8 +482,8 @@ def main(argv=None) -> None:
     k.add_argument("--plants", help="comma-separated plants in scope")
     k.add_argument("--scope", help='JSON, e.g. {"line": "L2", "period": ["2026-08-03", "2026-08-09"]}')
     k.add_argument("--model", default="default",
-                   help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
-    k.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default ALC_SUB_MODEL")
+                   help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default: the planning model for planning, the analysis model for analysis")
+    k.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default: the reviewer model (ALC_REVIEWER_MODEL)")
     k.add_argument("--auto-approve", action="store_true")
     k.set_defaults(fn=cmd_ask)
 
@@ -489,10 +491,10 @@ def main(argv=None) -> None:
     ap.add_argument("run_id")
     ap.add_argument("--user")
     ap.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
-    ap.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default ALC_SUB_MODEL")
+    ap.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default: the reviewer model (ALC_REVIEWER_MODEL)")
     ap.add_argument("--plan-file", help="edited plan JSON")
     ap.add_argument("--model", default="default",
-                   help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
+                   help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default: the planning model for planning, the analysis model for analysis")
     ap.set_defaults(fn=cmd_approve)
 
     nt = sub.add_parser("note", help="leave a note the agent reads before its next step")
@@ -508,7 +510,7 @@ def main(argv=None) -> None:
     sb_.add_argument("--user")
     sb_.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
     sb_.add_argument("--model", default="default",
-                     help="provider:model-id for the lead model, or 'scripted' for the offline demo; default ALC_LEAD_MODEL")
+                     help="provider:model-id for the lead model, or 'scripted' for the offline demo; default: the planning model for planning, the analysis model for analysis")
     sb_.set_defaults(fn=cmd_send_back)
 
     sub.add_parser("runs", help="list runs").set_defaults(fn=cmd_runs)

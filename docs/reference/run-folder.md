@@ -43,7 +43,7 @@ runs/<run-id>/
 | `plan` | the plan with its version, `approved_by` and `approved_at` |
 | `access` | user, workspace, project and plants |
 | `environment` | Python, platform, package versions, `uv_lock_sha256`, image digest |
-| `model` | `lead` and `reviewer` specs and the `prompts` hash of system prompts and tool definitions (plugin tools included) |
+| `model` | `planning`, `analysis` and `reviewer` specs (older runs: one `lead` for planning and analysis) and the `prompts` hash of system prompts and tool definitions (plugin tools included) |
 | `plugins` | loaded plugins with module, distribution, version and contributions; replays report `plugin_drift` against it |
 | `catalog` | `{dataset, card_version}` for each pinned view |
 | `knowledge` | citations and structured knowledge used |

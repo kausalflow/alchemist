@@ -13,6 +13,12 @@ def _home(*parts: str) -> str:
     return str(Path(os.environ.get("ALC_HOME", "./alchemist-home")).joinpath(*parts))
 
 
+def _model(role: str) -> str:
+    from .model_roles import from_env
+
+    return from_env(role)
+
+
 @dataclass
 class Settings:
     # Root of the workspace store: s3://alchemist-workspace in production, a folder locally.
@@ -39,8 +45,12 @@ class Settings:
     knowledge_root: str = field(default_factory=lambda: os.environ.get("ALC_KNOWLEDGE") or _home("knowledge"))
     # Models are Pydantic AI specs `provider:model-id`; a bare id means Bedrock (and may be an inference profile ARN).
     aws_region: str = field(default_factory=lambda: os.environ.get("AWS_REGION", "eu-central-1"))
-    lead_model: str = field(default_factory=lambda: os.environ.get("ALC_LEAD_MODEL", "anthropic.claude-opus-5-5"))
-    sub_model: str = field(default_factory=lambda: os.environ.get("ALC_SUB_MODEL", "anthropic.claude-sonnet-5-5"))
+    # One model per job (see model_roles.py). Each falls back to the older ALC_LEAD_MODEL (planning, analysis) or
+    # ALC_SUB_MODEL (reviewer, small jobs), then to the default. An admin's choice in the database overrides these.
+    planning_model: str = field(default_factory=lambda: _model("planning"))
+    analysis_model: str = field(default_factory=lambda: _model("analysis"))
+    reviewer_model: str = field(default_factory=lambda: _model("reviewer"))
+    small_model: str = field(default_factory=lambda: _model("small"))
     # Providers plant data may be sent to. Anything else is refused unless listed (or '*').
     allowed_providers: list[str] = field(default_factory=lambda: [p.strip() for p in os.environ.get("ALC_ALLOWED_PROVIDERS", "bedrock").split(",") if p.strip()])
     effort: str = field(default_factory=lambda: os.environ.get("ALC_EFFORT", "high"))

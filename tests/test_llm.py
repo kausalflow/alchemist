@@ -93,3 +93,25 @@ def test_message_conversion_keeps_images_and_thinking():
     assert ret.tool_name == "run_python" and len(ret.content) == 2
     back = llm.from_pydantic_response(out[1])
     assert back["stop_reason"] == "tool_use" and back["content"][1]["input"] == {"code": "1"}
+
+
+def test_role_models_fall_back_to_the_shared_settings(monkeypatch):
+    from alchemist import model_roles
+    from alchemist.config import Settings
+
+    for r in model_roles.ROLES.values():
+        monkeypatch.delenv(r.env, raising=False)
+        monkeypatch.delenv(r.legacy_env, raising=False)
+    s = Settings()
+    assert (s.planning_model, s.analysis_model, s.reviewer_model, s.small_model) == (
+        "bedrock:anthropic.claude-opus-5-5", "bedrock:anthropic.claude-sonnet-5-5",
+        "bedrock:anthropic.claude-opus-5-5", "bedrock:anthropic.claude-haiku-5-5")
+
+    monkeypatch.setenv("ALC_LEAD_MODEL", "anthropic.lead")
+    monkeypatch.setenv("ALC_SUB_MODEL", "anthropic.sub")
+    monkeypatch.setenv("ALC_ANALYSIS_MODEL", "anthropic.analysis")
+    s = Settings()
+    assert (s.planning_model, s.analysis_model, s.reviewer_model, s.small_model) == (
+        "anthropic.lead", "anthropic.analysis", "anthropic.sub", "anthropic.sub")
+    assert model_roles.env_source("analysis") == "ALC_ANALYSIS_MODEL"
+    assert model_roles.env_source("planning") == "ALC_LEAD_MODEL"

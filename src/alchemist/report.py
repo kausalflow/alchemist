@@ -106,7 +106,7 @@ TEMPLATE = """<!doctype html>
 <h2>Reproduction</h2>
 <p>Run folder: <code>{{ run_path }}</code></p>
 <p>Replay exactly from the stored snapshots: <code>alchemist replay {{ run_id }}</code>. Re-run the same code on current data: <code>alchemist replay {{ run_id }} --mode rerun</code>. Or open <code>notebook.ipynb</code> with <code>ALC_RUN_DIR</code> set to the run folder, set <code>run_mode = "replay"</code> and run all cells.</p>
-<p class="muted">Environment: Python {{ env.python }} · duckdb {{ env.packages.duckdb }} · pandas {{ env.packages.pandas }} · lead model {{ models.lead }} · prompts {{ models.prompts }}</p>
+<p class="muted">Environment: Python {{ env.python }} · duckdb {{ env.packages.duckdb }} · pandas {{ env.packages.pandas }} · models: planning {{ models.planning or models.lead }} · analysis {{ models.analysis or models.lead }} · reviewer {{ models.reviewer }} · prompts {{ models.prompts }}</p>
 </body></html>"""
 
 

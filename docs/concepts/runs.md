@@ -75,7 +75,7 @@ reads structured knowledge.
 
 ## 4. Review
 
-When the agent calls `finish_analysis`, a second model (the reviewer, `ALC_SUB_MODEL` by default) reads the plan, a
+When the agent calls `finish_analysis`, a second model (the reviewer, `ALC_REVIEWER_MODEL`) reads the plan, a
 digest of the notebook and the findings once, and returns issues such as unsupported claims, confounders and data gaps.
 The agent addresses them before reporting. The reviewer runs once, at the end, not on the plan.
 

@@ -18,10 +18,11 @@ from typing import Callable
 from . import prompts, steering
 from .access import AccessDenied, User
 from .agent import Budget, Model, ToolOutput, run_loop
-from .llm import PydanticAIModel
+from .llm import role_model
 from .catalog import Catalog, now
 from .credentials import CredentialBroker, RefreshingCredentials
 from .knowledge import Knowledge
+from .model_roles import with_choices
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json
 from .plugins import get_registry
 from .report import ReportError, render
@@ -60,8 +61,9 @@ class Services:
 
     def __init__(self, settings, *, catalog=None, access=None, knowledge=None, broker=None):
         reg = get_registry()
-        self.settings = settings
         self.catalog = catalog or Catalog(settings.db_path)
+        # The role models, with any an admin picked on the "Models and limits" page (model_roles.py).
+        self.settings = settings = with_choices(settings, self.catalog.db)
         self.access = access or reg.access_providers.get(settings.access_provider).load(settings)
         self.knowledge = knowledge or Knowledge(settings.knowledge_root, packs=list(reg.knowledge_packs))
         self.broker = broker or CredentialBroker.from_settings(settings)
@@ -505,8 +507,8 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     user = row["user_id"]
     ctx = RunContext(svc, row, user=user)
     rdir = ctx.run
-    model = model or PydanticAIModel(s)
-    ctx.models["lead"] = model.name
+    model = model or role_model(s, "planning")
+    ctx.models["planning"] = model.name
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     saved = _read_checkpoint(rdir / PLAN_CHECKPOINT)
     if ctx.plan:  # sent back: keep the earlier version, draft the next one
@@ -612,6 +614,17 @@ def checkpoint_of(run) -> dict | None:
     return _read_checkpoint(as_path(run) / CHECKPOINT)
 
 
+def planned_models(run) -> dict:
+    """The planning model the run's planning step recorded, so the analysis step's manifest keeps it."""
+    f = as_path(run) / "manifest.json"
+    try:
+        recorded = (read_json(f).get("model") or {}) if f.exists() else {}
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
+    planning = recorded.get("planning") or recorded.get("lead")  # "lead": manifests from before the four roles
+    return {"planning": planning} if planning else {}
+
+
 def _read_checkpoint(f) -> dict | None:
     try:
         return read_json(f) if f.exists() else None
@@ -637,9 +650,9 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     ctx = RunContext(svc, row, user=user)
     question = ctx.question
     views = read_json(ctx.run / "inputs" / "views.json")
-    model = model or PydanticAIModel(s)
-    reviewer = reviewer or PydanticAIModel(s, s.sub_model, effort="medium")
-    ctx.models.update(lead=model.name, reviewer=reviewer.name)
+    model = model or role_model(s, "analysis")
+    reviewer = reviewer or role_model(s, "reviewer")
+    ctx.models.update(planned_models(ctx.run), analysis=model.name, reviewer=reviewer.name)
     budget = Budget(s.max_steps, s.max_output_tokens_total)
     saved = checkpoint_of(ctx.run)
     # Notes are delivered once: a resumed step starts from its checkpoint's list (a note given in a turn that never

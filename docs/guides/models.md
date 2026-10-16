@@ -5,8 +5,26 @@ per role with Pydantic AI specs, `provider:model-id`. A bare id means Amazon Bed
 
 | Role | Setting | Default | Does |
 | --- | --- | --- | --- |
-| Lead | `ALC_LEAD_MODEL` | `anthropic.claude-opus-5-5` (Bedrock) | plans and analyses |
-| Sub | `ALC_SUB_MODEL` | `anthropic.claude-sonnet-5-5` (Bedrock) | independent reviewer; drafts catalog cards |
+| Planning | `ALC_PLANNING_MODEL` | `anthropic.claude-opus-5-5` (Bedrock) | searches the catalog and knowledge, writes the plan |
+| Analysis | `ALC_ANALYSIS_MODEL` | `anthropic.claude-sonnet-5-5` (Bedrock) | writes the queries and Python, decides what to check next |
+| Reviewer | `ALC_REVIEWER_MODEL` | `anthropic.claude-opus-5-5` (Bedrock) | independently checks the conclusion before the report |
+| Small jobs | `ALC_SMALL_MODEL` | `anthropic.claude-haiku-5-5` (Bedrock) | drafts catalog cards from metadata files |
+
+The defaults put the strongest model where calls are few and mistakes are costly (the plan, and the review that guards
+against a confident wrong conclusion), a strong and faster model on the many analysis calls, and a small model on
+short jobs. Measure on your own questions before relying on any choice.
+
+Each role's model is, in order:
+
+1. an admin's choice on the admin **Models and limits** page (saved in the app database and audited);
+2. the role's own variable above;
+3. the older shared variable: `ALC_LEAD_MODEL` for planning and analysis, `ALC_SUB_MODEL` for the reviewer and small
+   jobs (deployments that set only these keep working as before);
+4. the default.
+
+An admin's choice applies to steps that start after it is saved; a run already analysing keeps its model. A saved choice
+whose provider is later removed from `ALC_ALLOWED_PROVIDERS` is ignored (the page says so), so the allow-list always wins.
+On Bedrock the deployment's IAM role must also be allowed to call the chosen model or inference profile.
 
 ## Supported providers
 
@@ -41,16 +59,18 @@ ProviderNotAllowed: provider 'openai' is not in ALC_ALLOWED_PROVIDERS (bedrock).
 providers; add it deliberately if your data policy allows it.
 ```
 
-Add a provider deliberately, after your data policy allows it. The allow-list applies to the lead, the reviewer and the
-catalog-card drafter alike.
+Add a provider deliberately, after your data policy allows it. The allow-list applies to every role alike, and to admins'
+choices on the Models and limits page.
 
 ## Choosing models
 
 ```bash
-export ALC_LEAD_MODEL=bedrock:anthropic.claude-opus-5-5
-export ALC_SUB_MODEL=bedrock:anthropic.claude-sonnet-5-5
+export ALC_PLANNING_MODEL=bedrock:anthropic.claude-opus-5-5
+export ALC_ANALYSIS_MODEL=bedrock:anthropic.claude-sonnet-5-5
+export ALC_REVIEWER_MODEL=bedrock:anthropic.claude-opus-5-5
+export ALC_SMALL_MODEL=bedrock:anthropic.claude-haiku-5-5
 
-# per-run override of the lead (the provider must be allowed)
+# override the model of one step (planning with ask, analysis with approve; the provider must be allowed)
 alchemist ask "..." --model google:gemini-3-pro --user eng_p1 --workspace quality --project line2-yield
 
 # review with a different provider than the lead, for an independent second opinion
@@ -59,13 +79,13 @@ alchemist approve <run-id> --user eng_p1 --reviewer-model openai:gpt-5
 
 `--model scripted` replays the demo script instead of calling a model; it is only meaningful with the demo data.
 
-The manifest records the exact `provider:model` used for each role, so older reports stay interpretable after a model
-change.
+The manifest records the exact `provider:model` used for planning, analysis and the reviewer, so older reports and
+their replays stay interpretable after a model change. A replay calls no model.
 
 ## Reasoning effort
 
-`ALC_EFFORT` (default `high`) sets the thinking effort of the lead. The reviewer runs at `medium` and the catalog-card
-drafter at `low`. `off` disables thinking; `max` is sent as `xhigh`.
+`ALC_EFFORT` (default `high`) sets the thinking effort of planning and analysis. The reviewer runs at `medium` and small
+jobs at `low`. `off` disables thinking; `max` is sent as `xhigh`.
 
 ## Bedrock settings worth agreeing with your security team
 

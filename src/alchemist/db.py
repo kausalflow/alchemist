@@ -130,6 +130,17 @@ create table if not exists plant_lines (
   plant text not null, id text not null, name text, description text, primary key (plant, id)
 );
 """),
+    (5, "model choices: the model an admin picked for each role",
+     """
+create table if not exists model_choices (
+  role text primary key, spec text not null, updated_by text, updated_at text
+);
+""",
+     """
+create table if not exists model_choices (
+  role text primary key, spec text not null, updated_by text, updated_at text
+);
+"""),
 ]
 
 LATEST = MIGRATIONS[-1][0]

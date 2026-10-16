@@ -25,7 +25,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from .. import __version__, prompts
+from .. import __version__, model_roles, prompts
 from ..access import AccessDenied
 from ..config import Settings, load_settings
 from ..paths import as_path, read_yaml
@@ -135,14 +135,15 @@ def workspaces(svc: Svc, me: Me) -> list[dict]:
 
 
 @core.get("/meta")
-def meta(request: Request, me: Me) -> dict:
+def meta(request: Request, svc: Svc, me: Me) -> dict:
     """What this deployment offers: models, agent tools, auth mode and loaded plugins. The web app reads this
     rather than hard-coding lists, so an added tool or plugin shows up without a web release."""
     s: Settings = request.app.state.settings
     return {
         "version": __version__,
         "auth": auth_mode(),
-        "models": {"lead": s.lead_model, "sub": s.sub_model, "allowed_providers": s.allowed_providers,
+        "models": {"roles": {r["role"]: r["spec"] for r in model_roles.describe(s, svc.catalog.db)},
+                   "allowed_providers": s.allowed_providers,
                    "scripted": os.environ.get("ALC_API_MODEL") == "scripted"},
         "budgets": {"max_steps": s.max_steps, "max_output_tokens": s.max_output_tokens_total},
         "tools": {"planning": [_tool(n) for n in prompts.PLAN_TOOLS] + _plugin_tools("plan"),

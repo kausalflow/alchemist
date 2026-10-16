@@ -32,7 +32,7 @@ flowchart LR
 1. **Register.** An admin adds the dataset with its prefix, glob, format (`parquet`, `csv` or `json`), plant and
    metadata path.
 2. **Index.** The indexer reads the metadata file as text, samples up to 200 rows with DuckDB, and drafts a card. With
-   `--use-model` the sub model (`ALC_SUB_MODEL`) drafts it and is told to leave unknown fields empty and list them in
+   `--use-model` the small-jobs model (`ALC_SMALL_MODEL`) drafts it and is told to leave unknown fields empty and list them in
    `missing`; without it a heuristic maps common spellings (`desc`, `units`, `eng_unit`, `tz`, `join_on`, `tags`,
    `fields`, and so on) onto the schema. Metadata text is treated as data, never as instructions.
 3. **Check.** The draft is validated against the schema and checked against the sample: does every named column exist,
