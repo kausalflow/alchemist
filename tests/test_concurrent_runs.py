@@ -223,3 +223,24 @@ def test_step_functions_resume_starts_a_new_execution_and_reconcile_pauses_a_dea
     l.reconcile()
     assert svc.catalog.run(rid)["status"] == "paused"  # it has a checkpoint: resumable, not failed
     svc.catalog.transition(rid, "paused", "failed")
+
+
+
+def test_demo_run_that_crashes_does_not_hold_a_run_slot(tmp_path, monkeypatch):
+    import alchemist.run as run_mod
+    from alchemist import cli
+
+    for var in ("ALC_DB", "ALC_DB_HOST", "ALC_WORKSPACE", "ALC_ACCESS", "ALC_KNOWLEDGE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ALC_HOME", str(tmp_path))  # its own home, so the shared test runs are untouched
+    cli.main(["demo", "setup"])
+
+    def approve_then_crash(svc, run_id, **kw):  # the analysis started, then its kernel failed
+        svc.catalog.transition(run_id, "awaiting_approval", "running")
+        raise RuntimeError("kernel died")
+
+    monkeypatch.setattr(run_mod, "approve", approve_then_crash)
+    with pytest.raises(RuntimeError):
+        cli.main(["demo", "run"])
+    (row,) = cli._svc().catalog.runs()
+    assert row["status"] == "failed"

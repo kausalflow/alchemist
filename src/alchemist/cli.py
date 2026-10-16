@@ -237,7 +237,14 @@ def cmd_demo_run(a) -> None:
     out = ask(svc, user="eng_p1", workspace="quality", project="line2-yield", question=script.QUESTION,
               scope=script.SCOPE, model=_model("scripted", "plan"))
     print(f"1. Planned run {out['run_id']}: {out['status']}")
-    res = approve(svc, out["run_id"], user="eng_p1", model=_model("scripted", "analysis"), reviewer=_reviewer("scripted"))
+    try:
+        res = approve(svc, out["run_id"], user="eng_p1", model=_model("scripted", "analysis"),
+                      reviewer=_reviewer("scripted"))
+    except BaseException as e:  # a crash or Ctrl+C must not leave the run counting against the user's run limit
+        from .api.jobs import mark_failed
+
+        mark_failed(svc, out["run_id"], e if isinstance(e, Exception) else "interrupted")
+        raise
     print(f"2. Analysed and sealed: {res['status']}\n\n{res['conclusion']}")
     rep = replay(svc, out["run_id"], user="eng_p1")
     st = rep["result_check"]["status"]
