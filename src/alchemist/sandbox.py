@@ -68,6 +68,15 @@ def kernel_env(run_dir: str, extra_env: dict | None = None, base: dict | None = 
     return {k: v for k, v in env.items() if v is not None}
 
 
+def kernel_transport(platform: str = sys.platform) -> dict[str, str]:
+    """How this process talks to its kernel: Unix sockets in a private folder, so other local users cannot connect.
+
+    ZeroMQ has no IPC transport on Windows, so there it falls back to TCP on localhost (fine for a local demo)."""
+    if platform == "win32":
+        return {"transport": "tcp", "ip": "127.0.0.1"}
+    return {"transport": "ipc", "ip": str(Path(tempfile.mkdtemp(prefix="alc-ipc-")) / "kernel")}
+
+
 class LocalKernel:
     """A Jupyter kernel in a child process of this one."""
 
@@ -79,8 +88,7 @@ class LocalKernel:
 
     def start(self) -> None:
         ksm = KernelSpecManager(kernel_dirs=[_kernel_spec_dir()])
-        self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, transport="ipc",
-                                ip=str(Path(tempfile.mkdtemp(prefix="alc-ipc-")) / "kernel"))
+        self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, **kernel_transport())
         self.km.start_kernel(env=self.env)
         self.kc = self.km.client()
         self.kc.start_channels()

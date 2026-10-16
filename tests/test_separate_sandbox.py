@@ -282,3 +282,21 @@ def test_separate_mode_needs_a_sandbox_address(separate_svc, separate_run):
     ctx = RunContext(separate_svc, separate_svc.catalog.run(separate_run["run_id"]), user="eng_p1")
     with pytest.raises(ValueError, match="sandbox"):
         separate_svc.sandbox(ctx, {}, run_mode="live")
+
+
+def test_local_kernel_uses_tcp_on_windows(monkeypatch):
+    """ZeroMQ has no IPC sockets on Windows; the kernel must still start there, over localhost TCP."""
+    from alchemist import sandbox
+
+    assert sandbox.kernel_transport("win32") == {"transport": "tcp", "ip": "127.0.0.1"}
+    assert sandbox.kernel_transport("linux")["transport"] == "ipc"
+    windows = sandbox.kernel_transport("win32")
+    monkeypatch.setattr(sandbox, "kernel_transport", lambda: windows)
+    k = sandbox.LocalKernel(sandbox.kernel_env("."))
+    k.start()
+    try:
+        out = []
+        k.execute_interactive("print(6 * 7)", output_hook=lambda m: out.append(m["content"].get("text", "")), timeout=30)
+        assert "42" in "".join(out)
+    finally:
+        k.stop()
