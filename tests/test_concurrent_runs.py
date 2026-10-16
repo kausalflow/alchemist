@@ -244,3 +244,17 @@ def test_demo_run_that_crashes_does_not_hold_a_run_slot(tmp_path, monkeypatch):
         cli.main(["demo", "run"])
     (row,) = cli._svc().catalog.runs()
     assert row["status"] == "failed"
+
+
+def test_demo_run_says_why_an_analysis_did_not_finish(tmp_path, monkeypatch):
+    import alchemist.run as run_mod
+    from alchemist import cli
+
+    for var in ("ALC_DB", "ALC_DB_HOST", "ALC_WORKSPACE", "ALC_ACCESS", "ALC_KNOWLEDGE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ALC_HOME", str(tmp_path))
+    cli.main(["demo", "setup"])
+    monkeypatch.setattr(run_mod, "approve", lambda svc, run_id, **kw: {
+        "status": "partial", "analysis_ended": "error: OSError: disk full", "path": "the-run"})
+    with pytest.raises(SystemExit, match="did not finish \\(partial\\): error: OSError: disk full"):
+        cli.main(["demo", "run"])
