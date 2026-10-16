@@ -77,9 +77,13 @@ def cmd_demo_setup(a) -> None:
     for ds_id, spec in datasets.items():
         svc.catalog.register(id=ds_id, actor="data_admin", **spec)
         res = index_dataset(svc.catalog, s, ds_id, use_model=a.use_model)
-        if not a.no_approve:
+        # Rerunning setup on the same home finds the cards unchanged; approve only what is still a draft.
+        status = svc.catalog.latest_card(ds_id, status=None)["status"]
+        if status == "draft" and not a.no_approve:
             svc.catalog.approve(ds_id, res["version"], reviewer="data_admin")
-        print(f"{ds_id}: card v{res['version']} {'approved' if not a.no_approve else 'drafted'}; missing facts: {res.get('missing')}")
+            status = "approved"
+        note = f"missing facts: {res['missing']}" if "missing" in res else "unchanged since the last setup"
+        print(f"{ds_id}: card v{res['version']} {status}; {note}")
     print(f"\nDemo home: {home.resolve()}")
 
 

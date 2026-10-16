@@ -37,6 +37,9 @@ resin_lots: card v1 approved; missing facts: ['grain', 'time_zone', 'join_keys',
 historian_line5: card v1 approved; missing facts: ['grain', 'join_keys', 'unit for barrel_temp_c']
 ```
 
+Running `demo setup` again on the same `ALC_HOME` is safe: cards whose metadata did not change are kept and print
+`unchanged since the last setup`. To start over from scratch, delete the `ALC_HOME` folder first.
+
 `demo run` goes through the whole loop: ask, plan, approve, analyse, review, report, seal, replay and verify.
 
 ```text

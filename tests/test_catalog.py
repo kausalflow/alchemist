@@ -30,3 +30,17 @@ def test_reindex_only_when_metadata_changes(svc):
     from alchemist.catalog import index_dataset
 
     assert index_dataset(svc.catalog, svc.settings, "historian_line2")["status"] == "unchanged"
+
+
+def test_demo_setup_can_be_rerun_on_the_same_home(tmp_path, monkeypatch, capsys):
+    from alchemist import cli
+
+    for var in ("ALC_DB", "ALC_DB_HOST", "ALC_WORKSPACE", "ALC_ACCESS", "ALC_KNOWLEDGE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ALC_HOME", str(tmp_path))
+    cli.main(["demo", "setup", "--no-approve"])
+    cli.main(["demo", "setup"])  # unchanged drafts from the first setup get approved
+    cli.main(["demo", "setup"])  # and a third run leaves the approved cards alone
+    out = capsys.readouterr().out
+    assert "historian_line2: card v1 draft;" in out
+    assert out.count("historian_line2: card v1 approved; unchanged since the last setup") == 2
