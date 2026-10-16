@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, fileUrl, type NotebookCell, type RunDetail, type RunSummary, type Step } from "../api";
-import { useApi } from "../session";
-import { Chip, Code, Collapsible, ErrorNote, StatusChip, day, fmtValue, shortId, statusLabel, when } from "./bits";
+import { useApi, useSession } from "../session";
+import { Chip, Code, Collapsible, ErrorNote, day, fmtValue, shortId, statusLabel, when } from "./bits";
 import Icon from "./icons";
 import StepList from "./StepList";
 
@@ -666,35 +666,54 @@ export function ReproducePanel({ run }: { run: RunDetail }) {
   );
 }
 
-/** Side panel: the original run of this question and its replays and reruns. */
+/** How a replay or rerun came out, in words: matched, did not match, still running, failed. */
+export function replayOutcome(r: RunSummary): [string, string] {
+  if (r.status === "completed") return ["matched", "ok-text"];
+  if (r.status === "mismatch") return ["did not match", "bad-text"];
+  if (r.status === "running" || r.status === "paused") return [statusLabel(r.status).toLowerCase(), "info-text"];
+  return [statusLabel(r.status).toLowerCase(), "muted"];
+}
+
+/** Side panel: the original run of this question and its replays and reruns, with who ran each and whether it matched. */
 export function QuestionRuns({ run }: { run: RunDetail }) {
+  const { me } = useSession();
   const qid = run.run.question_id;
   const { data } = useApi<RunSummary[]>(qid ? `/runs?question_id=${encodeURIComponent(qid)}` : null);
-  const runs = (data ?? (run.children ? [run.run, ...run.children] : [run.run])).slice().sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+  // Oldest first; the original leads when times tie.
+  const runs = (data ?? (run.children ? [run.run, ...run.children] : [run.run]))
+    .slice()
+    .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? "") || Number(a.mode !== "live") - Number(b.mode !== "live") || a.run_id.localeCompare(b.run_id));
+  const reproductions = runs.filter((r) => r.mode !== "live").length;
   return (
     <section aria-labelledby="qruns" className="panel pad stack-sm">
       <h2 id="qruns" className="h-panel">
         Runs of this question
       </h2>
       <div className="small muted">
+        {reproductions > 0 ? `The original and ${reproductions} ${reproductions === 1 ? "replay" : "replays"}, oldest first. ` : ""}
         Project <span className="mono">{run.run.project}</span> · workspace {run.run.workspace} · visible to its members who can read{" "}
         <span className="mono">{run.run.plants?.join(", ") || "its plants"}</span>
       </div>
       <ol className="trail">
-        {runs.map((r) => (
-          <li key={r.run_id}>
-            <span className={`small ${r.mode === "live" ? "accent-text" : "muted"}`}>{r.mode === "live" ? "Original" : r.mode === "replay" ? "Replay" : "Rerun"}</span>
-            <span className="small">
-              {r.run_id === run.run.run_id ? (
-                <>this run · {statusLabel(r.status).toLowerCase()}</>
-              ) : (
-                <Link to={`/runs/${r.run_id}`}>
-                  run {shortId(r.run_id)} · {day(r.created_at)} · {statusLabel(r.status).toLowerCase()}
-                </Link>
-              )}
-            </span>
-          </li>
-        ))}
+        {runs.map((r) => {
+          const [outcome, tone] = r.mode === "live" ? [statusLabel(r.status).toLowerCase(), ""] : replayOutcome(r);
+          const label = `run ${shortId(r.run_id)}`;
+          return (
+            <li key={r.run_id} className={r.run_id === run.run.run_id ? "current" : ""}>
+              <span className={`small ${r.mode === "live" ? "accent-text" : "muted"}`}>{r.mode === "live" ? "Original" : r.mode === "replay" ? "Replay" : "Rerun"}</span>
+              <span className="small stack-xs">
+                <span>
+                  {r.run_id === run.run.run_id ? <strong>{label} (this run)</strong> : <Link to={`/runs/${r.run_id}`}>{label}</Link>}
+                  {" · "}
+                  <span className={tone}>{outcome}</span>
+                </span>
+                <span className="faint">
+                  {when(r.created_at)} · by {me && r.user_id === me.id ? "you" : r.user_id}
+                </span>
+              </span>
+            </li>
+          );
+        })}
       </ol>
     </section>
   );
@@ -741,7 +760,8 @@ export function ProvenanceTab({ run, reload }: { run: RunDetail; reload: () => v
                   <Link to={`/runs/${c.run_id}`}>
                     {c.mode} {shortId(c.run_id)}
                   </Link>{" "}
-                  <StatusChip status={c.status} /> <span className="muted small">by {c.user_id} · {when(c.created_at)}</span>
+                  <span className={`small ${replayOutcome(c)[1]}`}>{replayOutcome(c)[0]}</span>{" "}
+                  <span className="muted small">by {c.user_id} · {when(c.created_at)}</span>
                 </li>
               ))}
             </ul>

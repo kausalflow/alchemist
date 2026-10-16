@@ -122,7 +122,7 @@ A replay re-executes the notebook on the stored snapshots and compares every fin
 
 ### Board
 
-Sealed runs, replays included, stay on the board; closed ones are behind a toggle.
+Sealed runs stay on the board; closed ones are behind a toggle. Replays and reruns stack under the run they reproduce, with a count and whether the latest one matched; one still running keeps its own card under Running until it finishes. The run page lists each of them under **Runs of this question**, with when it ran, who ran it and whether it matched.
 
 ![Board](assets/ui/board-light.png#only-light)
 ![Board](assets/ui/board-dark.png#only-dark)
