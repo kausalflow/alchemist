@@ -9,8 +9,10 @@ register datasets first with the [catalog admin guide](catalog-admin.md).
 
     ```bash
     export AWS_REGION=eu-central-1          # and any AWS credentials the credential chain can find
-    export ALC_LEAD_MODEL=bedrock:anthropic.claude-opus-5-5
-    export ALC_SUB_MODEL=bedrock:anthropic.claude-sonnet-5-5
+    export ALC_PLANNING_MODEL=bedrock:anthropic.claude-opus-5-5
+    export ALC_ANALYSIS_MODEL=bedrock:anthropic.claude-sonnet-5-5
+    export ALC_REVIEWER_MODEL=bedrock:anthropic.claude-opus-5-5
+    export ALC_SMALL_MODEL=bedrock:anthropic.claude-haiku-5-5
     ```
 
 === "Another provider"
@@ -18,8 +20,10 @@ register datasets first with the [catalog admin guide](catalog-admin.md).
     ```bash
     export ANTHROPIC_API_KEY=...
     export ALC_ALLOWED_PROVIDERS=bedrock,anthropic   # only if your data policy allows it
-    export ALC_LEAD_MODEL=anthropic:claude-opus-5-5
-    export ALC_SUB_MODEL=anthropic:claude-sonnet-5-5
+    export ALC_PLANNING_MODEL=anthropic:claude-opus-5-5
+    export ALC_ANALYSIS_MODEL=anthropic:claude-sonnet-5-5
+    export ALC_REVIEWER_MODEL=anthropic:claude-opus-5-5
+    export ALC_SMALL_MODEL=anthropic:claude-haiku-5-5
     ```
 
 See [Model providers](models.md) for the full list and the allow-list.

@@ -54,7 +54,7 @@ def models(settings: Settings, phase: str):
 
         turns = script.PLAN_TURNS if phase == "plan" else script.ANALYSIS_TURNS
         return ScriptedModel(turns), ScriptedReviewer(script.REVIEW)
-    return None, None  # run.py builds PydanticAIModel from settings (ALC_LEAD_MODEL, ALC_SUB_MODEL)
+    return None, None  # run.py uses the role models (model_roles.py)
 
 
 def stop_requested(svc, run_id: str) -> str | None:

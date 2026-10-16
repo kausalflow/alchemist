@@ -52,7 +52,7 @@ In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandb
 | `ALC_EXTRA_PACKAGES` | all | `plugins.packages` installed into the image, for the manifest |
 | (any) | all | `plugins.env` |
 | `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME`, `ALC_DB_USER`, `ALC_DB_PASSWORD` | api, orchestrator, sealer, indexer | Aurora PostgreSQL, the app database (user and password from the cluster's generated secret); the app applies its migrations on first connect |
-| `ALC_LEAD_MODEL`, `ALC_SUB_MODEL`, `ALC_EMBEDDING_MODEL` | api, orchestrator, indexer | from `bedrock:` |
+| `ALC_LEAD_MODEL`, `ALC_SUB_MODEL`, `ALC_EMBEDDING_MODEL` | api, orchestrator, indexer | from `bedrock:`; lead covers planning and analysis, sub the reviewer and small jobs, unless `plugins.env` sets the per-role `ALC_*_MODEL` variables |
 | `ALC_BEDROCK_GUARDRAIL_ID`, `ALC_BEDROCK_GUARDRAIL_VERSION` | api, orchestrator, indexer | when `bedrock.guardrail` is on |
 | `ALC_AUTH` | api | `alb-oidc`: verify the ALB's signed `x-amzn-oidc-data` header |
 | `ALC_ALB_ARN` | api | the ALB that must have signed the header |

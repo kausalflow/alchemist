@@ -24,7 +24,7 @@ The folder is sealed when the run ends.
 | Code | every executed cell in order with its SHA-256, in one notebook | the analysis itself, readable and runnable |
 | Environment | Python, platform, package versions, `uv.lock` hash, image digest (`ALC_IMAGE_DIGEST`); the seed is in the notebook's parameters cell | same library versions |
 | Knowledge | document id, version, section and staleness for every citation | which domain claims the conclusion leans on |
-| Model | `provider:model` for lead and reviewer, prompt and tool definitions hash; full transcripts sit in `logs/` | audit of how the agent reached its plan |
+| Model | `provider:model` for planning, analysis and reviewer, prompt and tool definitions hash; full transcripts sit in `logs/` | audit of how the agent reached its plan |
 | Findings | each claim with its value hash, linked to cells, queries and documents | every number in the conclusion traces to evidence |
 
 See [Run folder](../reference/run-folder.md) for the files.

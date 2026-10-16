@@ -11,7 +11,7 @@ printed as JSON.
 
 | Command | Does |
 | --- | --- |
-| `alchemist demo setup [--use-model] [--no-approve] [--lake URI]` | generate the synthetic plant under `ALC_HOME`, register its datasets and index them. `--use-model` drafts cards with `ALC_SUB_MODEL`; `--no-approve` leaves drafts for review; `--lake s3://...` uploads the lake there and registers it on S3 |
+| `alchemist demo setup [--use-model] [--no-approve] [--lake URI]` | generate the synthetic plant under `ALC_HOME`, register its datasets and index them. `--use-model` drafts cards with `ALC_SMALL_MODEL`; `--no-approve` leaves drafts for review; `--lake s3://...` uploads the lake there and registers it on S3 |
 | `alchemist demo run` | ask, approve, replay and verify the demo question offline, with the scripted model |
 
 ## `serve`
@@ -108,8 +108,8 @@ Checks access, creates the question and run, runs the planning step and stops fo
 | `--claims` | JSON file with the verified claims of an identity-provider token, instead of `--user` |
 | `--plants` | comma-separated plants in scope; each must be readable by the user in this workspace |
 | `--scope` | JSON scope, e.g. `{"line": "L2", "period": ["2026-08-03", "2026-08-09"]}` |
-| `--model` | lead model spec (`provider:model-id`); default `ALC_LEAD_MODEL`; `scripted` for the demo |
-| `--reviewer-model` | reviewer spec; default `ALC_SUB_MODEL` |
+| `--model` | model spec (`provider:model-id`) for this step; default the planning or analysis model; `scripted` for the demo |
+| `--reviewer-model` | reviewer spec; default the reviewer model |
 | `--auto-approve` | approve the plan as proposed and continue straight into the analysis |
 
 ## `approve`

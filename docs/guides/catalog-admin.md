@@ -37,7 +37,7 @@ Registering the same id again replaces its registry row.
 
 ```bash
 alchemist catalog index --id historian_line2             # heuristic draft
-alchemist catalog index --id historian_line2 --use-model # drafted by ALC_SUB_MODEL
+alchemist catalog index --id historian_line2 --use-model # drafted by ALC_SMALL_MODEL
 alchemist catalog index                                  # every registered dataset
 alchemist catalog index --force                          # even if the metadata file is unchanged
 ```

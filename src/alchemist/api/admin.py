@@ -1,5 +1,7 @@
 """The admin area: one catalog per plant (datasets, documents, reference facts, lines), plus "global", the shared
-catalog. Catalog admins and admins only. See plant_catalog.py for where documents and facts are stored."""
+catalog. Catalog admins and admins only. See plant_catalog.py for where documents and facts are stored.
+
+It also holds the model for each role (model_roles.py): catalog admins see them, admins change them."""
 
 from __future__ import annotations
 
@@ -8,8 +10,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .. import model_roles
 from .. import plant_catalog as pc
+from ..catalog import now
 from ..knowledge import Knowledge
+from ..llm import ProviderNotAllowed
 from ..paths import as_path
 from ..plugins import get_registry
 from .deps import Svc, require_catalog_admin
@@ -228,3 +233,36 @@ def save_fact(body: FactBody, request: Request, svc: Svc, me: Admin) -> dict:
     svc.catalog.audit(me.user.id, "fact.save", body.name, {"plant": body.plant})
     _changed(request)
     return _fact(next(f for f in _fresh_knowledge(svc).facts() if f["name"] == body.name))
+
+
+def _models(request: Request, svc) -> dict:
+    base = request.app.state.settings  # the deployment's configuration, before admins' choices
+    return {"roles": [{**r, "default": model_roles.ROLES[r["role"]].default}
+                      for r in model_roles.describe(base, svc.catalog.db)],
+            "allowed_providers": base.allowed_providers}
+
+
+@router.get("/models")
+def get_models(request: Request, svc: Svc, me: Admin) -> dict:
+    """The model each role uses now, and where it comes from: an admin's choice or the configuration."""
+    return _models(request, svc)
+
+
+class ModelsBody(BaseModel):
+    # role -> `provider:model-id`, or null to go back to the deployment's configured model
+    models: dict[str, str | None]
+
+
+@router.put("/models")
+def save_models(body: ModelsBody, request: Request, svc: Svc, me: Admin) -> dict:
+    """Admins only. Runs started (or steps that start) after the change use the new models; each run's manifest
+    records the models it used, so earlier runs and their replays are unaffected."""
+    if not me.user.is_admin:
+        raise HTTPException(403, "only admins can change the models")
+    try:
+        model_roles.save_choices(svc.catalog, request.app.state.settings, body.models, actor=me.user.id, now=now())
+    except ProviderNotAllowed as e:
+        raise HTTPException(422, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return _models(request, svc)
