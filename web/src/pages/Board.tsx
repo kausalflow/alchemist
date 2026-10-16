@@ -60,12 +60,14 @@ export default function BoardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy]);
 
+  // Replays and reruns stack under the run they reproduce instead of standing alone; one still running keeps its own card.
+  const { replaysOf, folded } = useMemo(() => groupReplays(runs ?? []), [runs]);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (runs ?? []).filter(
-      (r) => (who === "all" || r.user_id === me!.id) && (!needle || (r.question ?? "").toLowerCase().includes(needle) || r.run_id.includes(needle)),
-    );
-  }, [runs, who, q, me]);
+    const hit = (r: RunSummary) =>
+      (who === "all" || r.user_id === me!.id) && (!needle || (r.question ?? "").toLowerCase().includes(needle) || r.run_id.includes(needle));
+    return (runs ?? []).filter((r) => !folded.has(r.run_id) && (hit(r) || (replaysOf.get(r.run_id) ?? []).some(hit)));
+  }, [runs, who, q, me, replaysOf, folded]);
   const waiting = runs ? waitingOnMe(runs, me!) : [];
   const cols = COLUMNS.filter((c) => c.id !== "closed" || showClosed);
   const closedCount = shown.filter((r) => COLUMNS[4].statuses.includes(r.status)).length;
@@ -110,6 +112,7 @@ export default function BoardPage() {
         <div className="board-tools">
           <span className="muted small">
             {runs ? `${shown.length} ${shown.length === 1 ? "run" : "runs"}` : "Loading…"}
+            {folded.size > 0 && ` · ${folded.size === 1 ? "1 replay stacked under its original run" : `${folded.size} replays stacked under their original runs`}`}
           </span>
           <button type="button" className="ghost small" aria-pressed={showClosed} onClick={() => setShowClosed(!showClosed)}>
             {showClosed ? "Hide closed" : `Show closed (${closedCount})`}
@@ -127,7 +130,7 @@ export default function BoardPage() {
                 </div>
                 <p className="faint small">{c.hint}</p>
                 {cards.map((r) => (
-                  <RunCard key={r.run_id} run={r} mine={r.user_id === me!.id} />
+                  <RunCard key={r.run_id} run={r} mine={r.user_id === me!.id} replays={replaysOf.get(r.run_id) ?? []} />
                 ))}
                 {runs && cards.length === 0 && <p className="faint small empty">Nothing here.</p>}
               </div>
@@ -144,17 +147,74 @@ export default function BoardPage() {
   );
 }
 
-function RunCard({ run: r, mine }: { run: RunSummary; mine: boolean }) {
+const STILL_GOING = new Set(["running", "paused"]);
+
+/** The original each replay or rerun reproduces (following replays of replays), and which replay cards fold into it. */
+function groupReplays(runs: RunSummary[]) {
+  const byId = new Map(runs.map((r) => [r.run_id, r]));
+  const rootOf = (r: RunSummary) => {
+    let cur = r;
+    for (let i = 0; i < 50 && cur.mode !== "live" && cur.parent_run && byId.has(cur.parent_run); i++) cur = byId.get(cur.parent_run)!;
+    return cur;
+  };
+  const replaysOf = new Map<string, RunSummary[]>();
+  const folded = new Set<string>();
+  for (const r of runs) {
+    if (r.mode === "live" || !r.parent_run) continue;
+    const root = rootOf(r);
+    if (root === r) continue; // its original is not on this board; show it on its own
+    replaysOf.set(root.run_id, [...(replaysOf.get(root.run_id) ?? []), r]);
+    if (!STILL_GOING.has(r.status)) folded.add(r.run_id);
+  }
+  for (const list of replaysOf.values()) list.sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+  return { replaysOf, folded };
+}
+
+function RunCard({ run: r, mine, replays }: { run: RunSummary; mine: boolean; replays: RunSummary[] }) {
   const [foot, tone] = footer(r);
+  const stacked = r.mode === "live" && replays.length > 0;
   return (
-    <Link to={`/runs/${r.run_id}`} className={`run-card ${mine && r.status === "awaiting_approval" ? "hot" : ""} ${r.entitled ? "" : "restricted"}`}>
+    <Link
+      to={`/runs/${r.run_id}`}
+      className={`run-card ${mine && r.status === "awaiting_approval" ? "hot" : ""} ${r.entitled ? "" : "restricted"} ${stacked ? "stacked" : ""}`}
+    >
       <div className="run-card-top mono">
         <span>run {shortId(r.run_id)}</span>
         <span>{mine ? "you" : r.user_id}</span>
       </div>
       <div className="run-card-q">{r.question ?? r.run_id}</div>
       <div className={`small ${tone}`}>{foot}</div>
+      {stacked && <ReplayBadge replays={replays} />}
     </Link>
+  );
+}
+
+/** How many times the run was reproduced and how the latest finished one came out. */
+function ReplayBadge({ replays }: { replays: RunSummary[] }) {
+  const n = replays.length;
+  const going = replays.filter((x) => STILL_GOING.has(x.status)).length;
+  const last = [...replays].reverse().find((x) => !STILL_GOING.has(x.status));
+  const [outcome, tone] = !last
+    ? ["", ""]
+    : last.status === "completed"
+      ? ["last one matched", "ok-text"]
+      : last.status === "mismatch"
+        ? ["last one did not match", "bad-text"]
+        : [`last one ${statusLabel(last.status).toLowerCase()}`, "muted"];
+  return (
+    <div className="replay-badge small">
+      <Icon name="replay" size={13} />
+      <span>
+        {n} {n === 1 ? "replay" : "replays"}
+        {going > 0 && ` · ${going} running`}
+        {outcome && (
+          <>
+            {" · "}
+            <span className={tone}>{outcome}</span>
+          </>
+        )}
+      </span>
+    </div>
   );
 }
 
@@ -169,7 +229,7 @@ function footer(r: RunSummary): [string, string] {
     case "awaiting_approval":
       return [`Plan ready ${since}${plants}`, "warn-text"];
     case "running":
-      return [`${kind ? `${kind} running` : "Analysing"} · started ${relTime(r.created_at)}`, "info-text"];
+      return [`${kind ? `${kind} of run ${shortId(r.parent_run ?? "")}` : "Analysing"} · started ${relTime(r.created_at)}`, "info-text"];
     case "paused":
       return [`Paused ${since}`, "warn-text"];
     case "completed":

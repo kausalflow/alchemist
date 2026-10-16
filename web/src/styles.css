@@ -183,6 +183,7 @@ code { font-family: var(--mono); font-size: 0.88em; }
 
 .stack { display: flex; flex-direction: column; gap: 16px; }
 .stack-sm { display: flex; flex-direction: column; gap: 10px; }
+.stack-xs { display: flex; flex-direction: column; gap: 2px; }
 .stack-lg { display: flex; flex-direction: column; gap: 22px; }
 .spread { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .row-center { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -481,6 +482,9 @@ pre.doc-text { white-space: pre-wrap; font-size: 13px; line-height: 20px; max-he
 .run-card.restricted { background: transparent; border-color: var(--line-soft); }
 .run-card-top { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--faint); }
 .run-card-q { font-weight: 500; line-height: 19px; }
+/* A run with replays reads as a small stack of cards: the replays sit behind the original. */
+.run-card.stacked { position: relative; margin-bottom: 10px; box-shadow: 0 5px 0 -1px var(--panel-2), 0 5px 0 0 var(--line-strong), 0 10px 0 -1px var(--panel-2), 0 10px 0 0 var(--line); }
+.replay-badge { display: flex; align-items: center; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line-soft); color: var(--muted); }
 
 .tile {
   display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg);

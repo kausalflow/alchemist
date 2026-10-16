@@ -108,4 +108,7 @@ A workspace member who may not read every plant a run used sees only its questio
 
 On the Provenance tab, **Replay on snapshots** re-executes the run's notebook in a fresh kernel on the data it stored
 and compares every finding; **Rerun on current data** does the same against the lake as it is now. Both create a new,
-sealed run linked to the original, and its first tab says how many findings matched.
+sealed run linked to the original, and its first tab says how many findings matched. On the board a finished replay
+or rerun does not get a card of its own: it stacks under the original, whose card shows how many there are and whether
+the latest matched. **Runs of this question**, beside the report, lists the original and each replay or rerun with
+when it ran, who ran it and whether it matched.
