@@ -34,7 +34,7 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "pandas" },
-    { name = "penguineer" },
+    { name = "penguineer", extra = ["agent"] },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
     { name = "pyarrow" },
@@ -69,7 +69,7 @@ requires-dist = [
     { name = "nbformat", specifier = ">=5.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "penguineer", specifier = ">=0.3,<0.4" },
+    { name = "penguineer", extras = ["agent"], specifier = ">=0.4,<0.5" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "psycopg-pool", specifier = ">=3.2" },
     { name = "pyarrow", specifier = ">=17" },
@@ -2466,7 +2466,7 @@ wheels = [
 
 [[package]]
 name = "penguineer"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
@@ -2479,9 +2479,14 @@ dependencies = [
     { name = "pyyaml" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/75/d3/7cf87d69f7427935ef6bcc9622c5c9a83b54d31466f8a80f83f9d22a1ea5/penguineer-0.3.0.tar.gz", hash = "sha256:645f7fac9955e6584162611692cd460931b0750b430320cf9fa034ebfe8e374c", size = 1129594, upload-time = "2026-10-18T19:28:56.983Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/89/ee2fd7bd1efb52e4b40a7c3e2c6cb4507e481a82bdbaa8f49f9347ba88a3/penguineer-0.4.0.tar.gz", hash = "sha256:7476f453b32032e88071a294b8a3c63349cfec8a64f908a85f5570e37c878883", size = 1148916, upload-time = "2026-10-18T22:53:44.337Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ee/5c/eb99a159458257d8f7c830291e913e83251fd6c067fca6877bf51083210f/penguineer-0.3.0-py3-none-any.whl", hash = "sha256:c992c561ec5c27a50967ea7176947c60a5a36e9e72f4b2217f86929791888c97", size = 136506, upload-time = "2026-10-18T19:28:55.347Z" },
+    { url = "https://files.pythonhosted.org/packages/af/35/11b6e272db98dc3908f5a5007e2350709a9df62c34b83cbb7f62c5f2589a/penguineer-0.4.0-py3-none-any.whl", hash = "sha256:28e652f1c32114a30d9fa5dfdc52a6121c2d8ff2a3adca83095bf84712ed860a", size = 152501, upload-time = "2026-10-18T22:53:42.64Z" },
+]
+
+[package.optional-dependencies]
+agent = [
+    { name = "pydantic-ai-slim" },
 ]
 
 [[package]]
@@ -2583,14 +2588,14 @@ wheels = [
 
 [[package]]
 name = "plantgraph"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/1a/cab69e3f589a20394e1efc07b7813a7c02e63c6d908bd1b0ca896d96f2f9/plantgraph-0.3.0.tar.gz", hash = "sha256:16d4114db22ce90aa854da470c53a3d62d55eddd539e8e42b25d440ac74e2b34", size = 8711, upload-time = "2026-10-18T19:28:30.108Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/b5/12a37f04b9669c443bce25f2d74cb9e4267b9835805f473eb0d3730d7cff/plantgraph-0.4.0.tar.gz", hash = "sha256:5510237eb88a62251b309f9fa40c103ff7b0650bdee581d937b5f43c9413dbc9", size = 8712, upload-time = "2026-10-18T22:53:11.156Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/18/380b4f6f7d1fc1bc641b6d01f596c1ae52f342f99c34ac3e3c9537a85c1c/plantgraph-0.3.0-py3-none-any.whl", hash = "sha256:d1f4080b14ad53715352142d0114c8870b91ba4479ab7fc0bdc3f003a1e59e64", size = 8907, upload-time = "2026-10-18T19:28:27.564Z" },
+    { url = "https://files.pythonhosted.org/packages/78/7b/a9bbb9413550f22c9535188d20bf3bc2e0fb4a7517e22d19ce38bfcd4e79/plantgraph-0.4.0-py3-none-any.whl", hash = "sha256:99cdaa34eab0fc36e84f35f15eb7fd05afc6af1d739c03bcf0ea9e6d1da91ea9", size = 8909, upload-time = "2026-10-18T22:53:09.766Z" },
 ]
 
 [[package]]
