@@ -69,7 +69,7 @@ requires-dist = [
     { name = "nbformat", specifier = ">=5.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "penguineer", url = "https://github.com/kausalflow/penguineer/archive/f9ff0f04d21389aa6a5eb00116334f99d80e76f5.tar.gz" },
+    { name = "penguineer", specifier = ">=0.3,<0.4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "psycopg-pool", specifier = ">=3.2" },
     { name = "pyarrow", specifier = ">=17" },
@@ -2466,8 +2466,8 @@ wheels = [
 
 [[package]]
 name = "penguineer"
-version = "0.2.0"
-source = { url = "https://github.com/kausalflow/penguineer/archive/f9ff0f04d21389aa6a5eb00116334f99d80e76f5.tar.gz" }
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "matplotlib" },
@@ -2479,24 +2479,10 @@ dependencies = [
     { name = "pyyaml" },
     { name = "typer" },
 ]
-sdist = { hash = "sha256:2e0378dc73627bc60acaa288ccb3721e225e493dbd15a20637075a9faeb1e4a6" }
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", marker = "extra == 'llm-api'", specifier = ">=0.40" },
-    { name = "homeostat", extras = ["fast"], marker = "extra == 'bench'", specifier = "==0.1.0a3" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "matplotlib", specifier = ">=3.8" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.1,<3" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "openai", marker = "extra == 'llm-api'", specifier = ">=1.50" },
-    { name = "plantgraph", specifier = "==0.2.0" },
-    { name = "polars", specifier = ">=1.0" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pyyaml", specifier = ">=6" },
-    { name = "typer", specifier = ">=0.12" },
+sdist = { url = "https://files.pythonhosted.org/packages/75/d3/7cf87d69f7427935ef6bcc9622c5c9a83b54d31466f8a80f83f9d22a1ea5/penguineer-0.3.0.tar.gz", hash = "sha256:645f7fac9955e6584162611692cd460931b0750b430320cf9fa034ebfe8e374c", size = 1129594, upload-time = "2026-10-18T19:28:56.983Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/5c/eb99a159458257d8f7c830291e913e83251fd6c067fca6877bf51083210f/penguineer-0.3.0-py3-none-any.whl", hash = "sha256:c992c561ec5c27a50967ea7176947c60a5a36e9e72f4b2217f86929791888c97", size = 136506, upload-time = "2026-10-18T19:28:55.347Z" },
 ]
-provides-extras = ["bench", "mcp", "llm-api"]
 
 [[package]]
 name = "pexpect"
@@ -2597,14 +2583,14 @@ wheels = [
 
 [[package]]
 name = "plantgraph"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e6/e4/93d1662c43b3ae9e1ac29eb7797f506081ef7f91f396c2ada495d0c73e5c/plantgraph-0.2.0.tar.gz", hash = "sha256:c0862890d807cc5136adfb36665bbbfd84600b7215d4fdba9abaf506ba634e10", size = 8711, upload-time = "2026-10-18T15:26:37.272Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/1a/cab69e3f589a20394e1efc07b7813a7c02e63c6d908bd1b0ca896d96f2f9/plantgraph-0.3.0.tar.gz", hash = "sha256:16d4114db22ce90aa854da470c53a3d62d55eddd539e8e42b25d440ac74e2b34", size = 8711, upload-time = "2026-10-18T19:28:30.108Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/a3/79c836a07f49fa0ec2cac11ce07e9835020dff9ccc3363b09c9894eaa756/plantgraph-0.2.0-py3-none-any.whl", hash = "sha256:fcb82b8af0d8c4dc9fd47128a8234b9ddc0e1d4c0240825b6753cdbb61c590c2", size = 8907, upload-time = "2026-10-18T15:26:35.957Z" },
+    { url = "https://files.pythonhosted.org/packages/21/18/380b4f6f7d1fc1bc641b6d01f596c1ae52f342f99c34ac3e3c9537a85c1c/plantgraph-0.3.0-py3-none-any.whl", hash = "sha256:d1f4080b14ad53715352142d0114c8870b91ba4479ab7fc0bdc3f003a1e59e64", size = 8907, upload-time = "2026-10-18T19:28:27.564Z" },
 ]
 
 [[package]]

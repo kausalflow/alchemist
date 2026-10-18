@@ -20,7 +20,7 @@ dependencies = [
     "nbformat>=5.10",
     "numpy>=1.26",
     "pandas>=2.2",
-    "penguineer>=0.2,<0.4",
+    "penguineer>=0.3,<0.4",
     "psycopg-pool>=3.2",
     "psycopg[binary]>=3.2",
     "pyarrow>=17",
@@ -48,7 +48,3 @@ packages = ["src/alchemist"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-# Until penguineer 0.3.0 (align, compare) is on PyPI; then drop this and require penguineer>=0.3,<0.4.
-[tool.uv.sources]
-penguineer = { url = "https://github.com/kausalflow/penguineer/archive/f9ff0f04d21389aa6a5eb00116334f99d80e76f5.tar.gz" }
