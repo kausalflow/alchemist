@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from . import prompts, steering
+from . import penguineer_tools, prompts, steering
 from .access import AccessDenied, User
 from .agent import Budget, Model, ToolOutput, run_loop
 from .llm import role_model
@@ -141,7 +141,7 @@ class RunContext:
         self.revising: dict | None = None  # the plan a person sent back, while a new one is drafted
         self.steering: steering.Steering | None = None
         self.sandbox: Sandbox | None = None
-        self.query_n = self.finding_n = 0
+        self.query_n = self.finding_n = self.penguineer_n = 0
         self.findings_done = self.review = self.report_out = None
         self.review_requested = False
         self.models: dict = {"prompts": prompts.prompt_version()}
@@ -202,6 +202,21 @@ class RunContext:
         figs = f"\nFigures: {res.figure_paths}" if res.figure_paths else ""
         return ToolOutput(f"Cell {res.cell_id}:\n{res.model_text()}{figs}", images=res.images, is_error=bool(res.error),
                           meta={"cell": res.cell_id, "figures": res.figure_paths} if res.figure_paths else {})
+
+    def run_penguineer(self, tool: str, inp: dict) -> ToolOutput:
+        self.penguineer_n += 1
+        pid = f"p{self.penguineer_n}"
+        command = penguineer_tools.COMMANDS[tool]
+        res = self.sandbox.execute(penguineer_tools.cell(pid, tool, inp), kind="penguineer",
+                                   meta={"call_id": pid, "command": command})
+        if res.error:
+            self.penguineer_n -= 1
+            return ToolOutput(f"penguineer {command} failed: {res.error}", is_error=True)
+        rec = next((r for r in res.results if r.get("penguineer") == pid), {})
+        return ToolOutput(f"Cell {res.cell_id}: penguineer {command} as {pid}, outputs in {rec.get('folder')}; "
+                          f"result dict pg_{pid}.\n{rec.get('summary', '')}\n"
+                          + json.dumps(rec.get("result"), default=str)[:6000],
+                          meta={"cell": res.cell_id, "penguineer": pid})
 
     def record_finding(self, inp: dict) -> ToolOutput:
         self.finding_n += 1
@@ -678,7 +693,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
                     "run_query": ctx.run_query, "run_python": ctx.run_python, "record_finding": ctx.record_finding,
                     "suggest_catalog_fix": ctx.suggest_catalog_fix,
                     "finish_analysis": lambda inp: ctx.finish_analysis(inp, reviewer),
-                    "build_report": ctx.build_report}
+                    "build_report": ctx.build_report,
+                    **{t: (lambda inp, t=t: ctx.run_penguineer(t, inp)) for t in penguineer_tools.COMMANDS}}
         extra_tools, extra_handlers = plugin_tools("analysis", ctx)
         handlers.update(extra_handlers)
         first = (f"Question: {question['text']}\n\nApproved plan:\n{json.dumps(ctx.plan, indent=1)}\n\n"
@@ -715,7 +731,8 @@ def _save_checkpoint(ctx: RunContext, sb: Sandbox, budget: Budget, state: dict) 
     write_json(ctx.run / CHECKPOINT, {
         "schema": "alchemist.checkpoint/v1", "phase": "analysis", "at": now(), **state,
         "budget": budget.as_dict(),
-        "context": {"query_n": ctx.query_n, "finding_n": ctx.finding_n, "review_requested": ctx.review_requested,
+        "context": {"query_n": ctx.query_n, "finding_n": ctx.finding_n, "penguineer_n": ctx.penguineer_n,
+                    "review_requested": ctx.review_requested,
                     "review": ctx.review},
         "notebook": {"cells": len(sb.nb.cells), "counter": sb.counter},
         "steering": ctx.steering.delivered if ctx.steering else []})
@@ -725,7 +742,7 @@ def _restore(ctx: RunContext, sb: Sandbox, budget: Budget, model: Model, saved: 
     """Put a resumed step back where the checkpoint left it: kernel state, counters, budget, model position."""
     errors = sb.restore(cells=saved["notebook"]["cells"], counter=saved["notebook"]["counter"])
     c = saved["context"]
-    ctx.query_n, ctx.finding_n = c["query_n"], c["finding_n"]
+    ctx.query_n, ctx.finding_n, ctx.penguineer_n = c["query_n"], c["finding_n"], c.get("penguineer_n", 0)
     ctx.review_requested, ctx.review = c["review_requested"], c["review"]
     b = saved["budget"]
     budget.steps, budget.model_calls = b["steps"], b["model_calls"]

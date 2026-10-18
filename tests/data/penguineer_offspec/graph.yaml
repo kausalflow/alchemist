@@ -1,0 +1,34 @@
+schema_version: 1
+unit: offspec-demo
+nodes:
+  - {id: S-feed, type: stream, name: Feed, phase: liquid}
+  - {id: E-101, type: equipment, name: Feed preheater, kind: exchanger}
+  - {id: R-101, type: equipment, name: Reactor, kind: vessel, holdup_m3: 12.0}
+  - {id: S-product, type: stream, name: Product, phase: liquid}
+  - {id: PT-100, type: tag, tag: PT-100.PV, unit_of_measure: bar, range_low: 0, range_high: 10}
+  - {id: FI-102, type: tag, tag: FI-102.PV, unit_of_measure: m3/h, range_low: 0, range_high: 30}
+  - {id: FIC-102-SP, type: tag, tag: FIC-102.SP, unit_of_measure: m3/h, role: setpoint}
+  - {id: FIC-102-OP, type: tag, tag: FIC-102.OP, unit_of_measure: '%', range_low: 0, range_high: 100, role: output}
+  - {id: TI-101, type: tag, tag: TI-101.PV, unit_of_measure: degC, range_low: 0, range_high: 300}
+  - {id: TI-104, type: tag, tag: TI-104.PV, unit_of_measure: degC, range_low: 0, range_high: 300}
+  - {id: PI-103, type: tag, tag: PI-103.PV, unit_of_measure: bar, range_low: 0, range_high: 10}
+  - {id: AI-201, type: tag, tag: AI-201.PV, unit_of_measure: wt%, range_low: 90, range_high: 100}
+  - {id: GRADE, type: tag, tag: GRADE, role: mode}
+  - {id: FIC-102, type: loop, pv: FI-102, sp: FIC-102-SP, op: FIC-102-OP}
+  - {id: FV-102, type: actuator, kind: valve}
+  - {id: SP-1, type: sample_point, name: Product sample}
+  - {id: Q-purity, type: quality, property: purity, spec_low: 99.0, unit_of_measure: wt%}
+edges:
+  - {id: f1, type: flows_to, from: S-feed, to: E-101, dead_time_min: 2}
+  - {id: f2, type: flows_to, from: E-101, to: R-101, dead_time_min: 5}
+  - {id: f3, type: flows_to, from: R-101, to: S-product, dead_time_min: 45, dead_time_low_min: 40, dead_time_high_min: 50}
+  - {id: m1, type: measures, from: PT-100, to: S-feed, measured_variable: pressure}
+  - {id: m2, type: measures, from: FI-102, to: S-feed, measured_variable: flow}
+  - {id: m3, type: measures, from: TI-101, to: E-101, measured_variable: temperature}
+  - {id: m4, type: measures, from: TI-104, to: R-101, measured_variable: temperature}
+  - {id: m5, type: measures, from: PI-103, to: R-101, measured_variable: pressure}
+  - {id: m6, type: measures, from: AI-201, to: S-product, measured_variable: composition}
+  - {id: c1, type: controls, from: FIC-102, to: FV-102, acting: direct}
+  - {id: v1, type: manipulates, from: FV-102, to: S-feed}
+  - {id: s1, type: samples, from: SP-1, to: S-product}
+  - {id: r1, type: reported_as, from: SP-1, to: Q-purity}

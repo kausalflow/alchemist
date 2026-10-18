@@ -40,7 +40,8 @@ PLAN_TURNS = [
 ]
 
 Q_LOTS = """
-select lot_id, line, start_ts, end_ts, resin_lot, recipe_version, crew, first_pass_yield_pct
+select lot_id, line, start_ts, end_ts, resin_lot, recipe_version, crew, first_pass_yield_pct,
+       case when start_ts >= timestamp '2026-08-03' then 'scope' else 'baseline' end as period
 from ds.quality_lots
 where line = 'L2' and start_ts >= timestamp '2026-07-13' and start_ts < timestamp '2026-08-10'
 order by start_ts
@@ -67,8 +68,6 @@ by_day = null_temp.groupby(null_temp.index.date).sum()
 print("TT-204 null minutes by day:")
 print(by_day[by_day > 0])
 print(proc[["barrel_temp_c", "line_speed_mpm", "melt_pressure_bar"]].describe().round(2))
-lots = df_q1.copy()
-print("lots:", len(lots), " lots with missing yield:", int(lots.first_pass_yield_pct.isna().sum()))
 
 hourly = proc.set_index("ts")["barrel_temp_c"].resample("h").mean()
 gaps = null_temp.resample("h").sum()
@@ -82,13 +81,8 @@ ax.set_title(f"Data health: TT-204 hourly mean; {int(null_temp.sum())} missing m
 plt.tight_layout()
 plt.show()"""
 
-YIELD = """import matplotlib.pyplot as plt
-
-lots["period"] = np.where(lots.start_ts >= "2026-08-03", "scope", "baseline")
-scope, base = lots[lots.period == "scope"], lots[lots.period == "baseline"]
-fx_period = alc.effect(scope.first_pass_yield_pct, base.first_pass_yield_pct)
-print("scope vs baseline:", {k: round(v, 3) if isinstance(v, float) else v for k, v in fx_period.items()})
-print("baseline lot-to-lot sd:", round(base.first_pass_yield_pct.std(), 2))
+YIELD = """lots = df_q1.copy()
+print("baseline lot-to-lot sd:", round(lots[lots.period == "baseline"].first_pass_yield_pct.std(), 2))
 
 fig, ax = plt.subplots(figsize=(9, 3.6))
 for resin, g in lots.groupby("resin_lot"):
@@ -100,30 +94,17 @@ ax.legend(ncol=5, fontsize=8)
 plt.tight_layout()
 plt.show()"""
 
-RESIN = """in_scope = scope.copy()
-is118 = in_scope.resin_lot == "R-118"
-fx_resin = alc.effect(in_scope[is118].first_pass_yield_pct, in_scope[~is118].first_pass_yield_pct)
-print("R-118 vs other lots, same week:", {k: round(v, 3) if isinstance(v, float) else v for k, v in fx_resin.items()})
+RESIN = """in_scope = lots[lots.period == "scope"]
 print(in_scope.groupby(["crew", "resin_lot"]).first_pass_yield_pct.agg(["mean", "count"]).round(2))
 print(df_q3)"""
 
-ALIGN = """k = alc.knowledge("line2_process")
-aligned = alc.align(lots, proc, start="start_ts", end="end_ts", ts="ts", residence_min=k["residence_time_min"],
-                    values=["barrel_temp_c", "line_speed_mpm"], by=["line"])
-aligned["period"] = np.where(aligned.start_ts >= "2026-08-03", "scope", "baseline")
-sc = aligned[aligned.period == "scope"]
-fx_temp = alc.effect(sc[sc.resin_lot == "R-118"].barrel_temp_c.dropna(), sc[sc.resin_lot != "R-118"].barrel_temp_c.dropna())
-fx_speed = alc.effect(sc.line_speed_mpm, aligned[aligned.period == "baseline"].line_speed_mpm)
-new_recipes = sorted(set(sc.recipe_version) - set(aligned[aligned.period == "baseline"].recipe_version))
-lo, hi = k["melt_temp_window_c"]
-print("melt temp, R-118 vs other lots in scope:", {k_: round(v, 3) if isinstance(v, float) else v for k_, v in fx_temp.items()})
-print("share of R-118 lots below", lo + 1, "degC:", round((sc[sc.resin_lot == "R-118"].barrel_temp_c < lo + 1).mean(), 2))
-print("line speed scope vs baseline:", {k_: round(v, 3) if isinstance(v, float) else v for k_, v in fx_speed.items()})
+ALIGNED = """aligned = pd.DataFrame(pg_p4["rows"])
+new_recipes = sorted(set(df_q1[df_q1.period == "scope"].recipe_version) - set(df_q1[df_q1.period == "baseline"].recipe_version))
 print("recipe versions new in scope:", new_recipes)
 
 fig, ax = plt.subplots(figsize=(6, 3.6))
 ax.scatter(aligned.barrel_temp_c, aligned.first_pass_yield_pct, c=(aligned.resin_lot == "R-118"), cmap="coolwarm", s=14)
-ax.axvline(lo + 1, color="grey", ls="--", lw=1)
+ax.axvline(229, color="grey", ls="--", lw=1)
 ax.set_xlabel("Barrel zone 3 temperature over the lot's process window, degC")
 ax.set_ylabel("First-pass yield, %")
 ax.set_title("Lower melt temperature goes with lower yield (red: R-118)")
@@ -134,31 +115,42 @@ CREW_CHECK = """within = in_scope.groupby("crew").apply(
     lambda g: g[g.resin_lot == "R-118"].first_pass_yield_pct.mean() - g[g.resin_lot != "R-118"].first_pass_yield_pct.mean())
 print("R-118 effect within each crew (points):")
 print(within.round(2))
-print("non-R-118 lots in scope:", int((~is118).sum()))"""
+print("non-R-118 lots in scope:", int((in_scope.resin_lot != "R-118").sum()))"""
+
+FPY = "first_pass_yield_pct"
 
 ANALYSIS_TURNS = [
     [("run_query", {"sql": Q_LOTS, "purpose": "Lot yields with resin lot, recipe and crew for scope and baseline"}),
      ("run_query", {"sql": Q_PROC, "purpose": "One-minute process tags, including one hour before the first lot"}),
      ("run_query", {"sql": Q_RESIN, "purpose": "Resin lot certificates"})],
-    [("run_python", {"code": HEALTH, "purpose": "Data health: gaps in TT-204 and implausible values before any test (H5)"})],
-    [("run_python", {"code": YIELD, "purpose": "Size of the yield drop against the baseline (H0)"})],
+    [("run_python", {"code": HEALTH, "purpose": "Data health: gaps in TT-204 and implausible values before any test (H5)"}),
+     ("penguineer_data_health", {"data": "q2", "tags": ["barrel_temp_c", "line_speed_mpm", "melt_pressure_bar"]})],
+    [("run_python", {"code": YIELD, "purpose": "Plot lot yields over time against the baseline (H0)"}),
+     ("penguineer_compare", {"data": "q1", "value": FPY, "group": "period", "a": "scope", "b": "baseline"})],
     [("record_finding", {"hypothesis": "H0", "statement": "Drop in mean first-pass yield from the baseline to the scope week; far larger than baseline lot-to-lot variation, so not normal variation.",
-                         "value_expression": "round(-fx_period['diff'], 2)", "unit": "percentage points", "verdict": "refuted",
-                         "confidence": "high", "evidence": ["q1", "figures/c7_1.png"]})],
-    [("run_python", {"code": RESIN, "purpose": "Compare R-118 lots with other lots in the same week (H1)"})],
+                         "value_expression": "round(-pg_p2['diff'], 2)", "unit": "percentage points", "verdict": "refuted",
+                         "confidence": "high", "evidence": ["q1", "figures/c8_1.png"]})],
+    [("penguineer_compare", {"data": "q1", "value": FPY, "group": "resin_lot", "a": "R-118", "where": ["period=scope"]}),
+     ("run_python", {"code": RESIN, "purpose": "Yield by crew and resin lot in the scope week, and the resin certificates (H1)"})],
     [("record_finding", {"hypothesis": "H1", "statement": "How much lower first-pass yield was on R-118 lots than on other lots in the same week.",
-                         "value_expression": "round(-fx_resin['diff'], 2)", "unit": "percentage points", "verdict": "supported",
+                         "value_expression": "round(-pg_p3['diff'], 2)", "unit": "percentage points", "verdict": "supported",
                          "confidence": "high", "evidence": ["q1", "q3", "FMEA-L2", "PI-2025-07"]})],
-    [("run_python", {"code": ALIGN, "purpose": "Align process conditions to lots with the residence time; test temperature, speed and recipe (H2, H3, H4)"})],
+    [("penguineer_align", {"data": "q2", "lots": "q1", "tags": ["barrel_temp_c", "line_speed_mpm"], "dead_time_min": 45}),
+     ("penguineer_compare", {"data": "p4", "value": "barrel_temp_c", "group": "resin_lot", "a": "R-118", "where": ["period=scope"]}),
+     ("penguineer_compare", {"data": "p4", "value": "line_speed_mpm", "group": "period", "a": "scope", "b": "baseline"}),
+     ("run_python", {"code": ALIGNED, "purpose": "Plot yield against aligned melt temperature; count new recipe versions (H2, H4)"})],
     [("record_finding", {"hypothesis": "H2", "statement": "How much cooler the melt ran over the process window of R-118 lots than of other lots in the same week, toward the low edge of the SOP-114 window.",
-                         "value_expression": "round(-fx_temp['diff'], 2)", "unit": "degC", "verdict": "supported",
-                         "confidence": "medium", "evidence": ["q2", "figures/c11_1.png", "SOP-114"]}),
+                         "value_expression": "round(-pg_p5['diff'], 2)", "unit": "degC", "verdict": "supported",
+                         "confidence": "medium", "evidence": ["q2", "work/penguineer/p4/runs/aligned.parquet", "figures/c17_1.png", "SOP-114"]}),
      ("record_finding", {"hypothesis": "H3", "statement": "Line speed in the scope week did not differ meaningfully from the baseline.",
-                         "value_expression": "round(fx_speed['diff'], 2)", "unit": "m/min", "verdict": "refuted",
-                         "confidence": "high", "evidence": ["q2"]}),
+                         "value_expression": "round(pg_p6['diff'], 2)", "unit": "m/min", "verdict": "refuted",
+                         "confidence": "high", "evidence": ["q2", "work/penguineer/p4/runs/aligned.parquet"]}),
      ("record_finding", {"hypothesis": "H4", "statement": "No recipe version was used in the scope week that was not already used in the baseline.",
                          "value_expression": "len(new_recipes)", "unit": "new recipe versions", "verdict": "refuted",
-                         "confidence": "high", "evidence": ["q1"]})],
+                         "confidence": "high", "evidence": ["q1"]}),
+     ("record_finding", {"hypothesis": "H5", "statement": "Critical data faults penguineer's data health check found on the process tags: one gap in TT-204 on 5 August, too short to explain a week-long drop.",
+                         "value_expression": "pg_p1['counts']['critical']", "unit": "critical data faults", "verdict": "refuted",
+                         "confidence": "high", "evidence": ["q2", "work/penguineer/p1/runs/health.json"]})],
     [("run_python", {"code": CREW_CHECK, "purpose": "Check the R-118 effect holds within each crew (confounding by crew)"})],
     [("finish_analysis", {"summary": "R-118 lots explain the yield drop; melt temperature ran low on those lots, consistent with low MFI. Speed and recipe unchanged; TT-204 gap on 5 Aug excluded."})],
     [("build_report", {
@@ -169,7 +161,7 @@ ANALYSIS_TURNS = [
                       "Line speed and recipe did not change.",
         "top_causes": [{"cause": "Resin lot R-118 (new supplier, low melt flow index)", "confidence": "high", "finding": "F2"},
                        {"cause": "Lower melt temperature on R-118 lots, the likely mechanism", "confidence": "medium", "finding": "F3"}],
-        "ruled_out": ["line speed (F4)", "recipe change (F5)", "normal variation (F1)"],
+        "ruled_out": ["line speed (F4)", "recipe change (F5)", "sensor fault on TT-204 (F6)", "normal variation (F1)"],
         "next_check": "Check the R-118 supplier certificate and consider raising the zone 3 setpoint while R-118 is in use.",
         "method_notes": "Lots were joined to process conditions with the 45-minute residence time from structured knowledge. "
                         "Comparisons use Welch's t-test with Cohen's d; the resin effect was checked within each crew.",
