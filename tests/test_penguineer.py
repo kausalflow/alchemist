@@ -67,9 +67,23 @@ def test_data_health_and_lag(run_dir):
     assert lag["n"] > 0
 
 
+def test_align_then_compare_on_its_table(run_dir):
+    """A later call reads an earlier call's table by its call id."""
+    aligned = nb.penguineer("p1", "align", {"data": "q1", "lots": "q3", "graph": "knowledge:plant_graph",
+                                            "sample_point": "SP-1", "tags": ["TI-101.PV"]})
+    assert aligned["table"] == "work/penguineer/p1/runs/aligned.parquet" and aligned["n_lots"] == 9
+    assert (run_dir / aligned["table"]).exists()
+    rows = pd.DataFrame(aligned["rows"])
+    cmp = nb.penguineer("p2", "compare", {"data": "p1", "value": "TI-101.PV", "group": "lot", "a": "L0803-B"})
+    assert cmp["data"] == aligned["table"] and cmp["n_a"] == 1
+    assert cmp["mean_a"] == pytest.approx(rows[rows.lot == "L0803-B"]["TI-101.PV"].iloc[0])
+
+
 def test_only_run_inputs_and_no_llm(run_dir):
     with pytest.raises(ValueError, match="not a query of this run"):
         nb.penguineer("p1", "data health", {"data": "/etc/passwd"})
+    with pytest.raises(ValueError, match="earlier call"):
+        nb.penguineer("p1", "data health", {"data": "p9"})
     with pytest.raises(ValueError, match="set by Alchemist"):
         nb.penguineer("p1", "investigate", {**INVESTIGATE, "llm": "api"})
 

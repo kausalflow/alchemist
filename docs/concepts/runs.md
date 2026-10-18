@@ -69,9 +69,9 @@ helpers. The agent then works with these tools:
 
 Every call becomes a notebook cell with its outputs, saved after each cell, so the notebook is the analysis itself.
 
-Shared helpers keep analyses consistent: `alc.align()` joins lots to the process window that produced them, shifted by
-the residence time; `alc.effect()` gives the difference in means with Welch's t-test and Cohen's d; `alc.knowledge()`
-reads structured knowledge.
+The statistics that decide the answer come from [penguineer](../guides/penguineer.md): lining lots up with the process
+window that produced them, comparing two groups, data health, dead times and root-cause ranking. Hand-written code in
+`run_python` is for plots and checks no penguineer command covers; `alc.knowledge()` reads structured knowledge.
 
 ## 4. Review
 

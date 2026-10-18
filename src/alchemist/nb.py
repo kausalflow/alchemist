@@ -268,58 +268,23 @@ def check_results() -> pd.DataFrame:
     return df
 
 
-def align(lots: pd.DataFrame, process: pd.DataFrame, *, start: str, end: str, ts: str,
-          residence_min: float, values: list[str], by: list[str] | None = None) -> pd.DataFrame:
-    """Average process values over the window that produced each lot.
-
-    Material leaving the line at time t was processed residence_min earlier, so each
-    lot's [start, end] window is shifted back by the residence time before joining.
-    """
-    con = duckdb.connect()
-    con.register("lots", lots)
-    con.register("proc", process)
-    on = " and ".join([f"l.{b} = p.{b}" for b in (by or [])] + [
-        f"p.{ts} >= l.{start} - interval '{residence_min} minutes'",
-        f"p.{ts} < l.{end} - interval '{residence_min} minutes'"])
-    aggs = ", ".join(f"avg(p.{v}) as {v}" for v in values)
-    keys = ", ".join(f"l.{c}" for c in lots.columns)
-    return con.sql(f"select {keys}, {aggs}, count(p.{ts}) as process_rows from lots l left join proc p on {on} "
-                   f"group by all order by l.{start}").df()
-
-
-def effect(a, b) -> dict:
-    """Difference in means with Welch's t-test and Cohen's d."""
-    from scipy import stats
-
-    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
-    t = stats.ttest_ind(a, b, equal_var=False)
-    pooled = np.sqrt((a.var(ddof=1) + b.var(ddof=1)) / 2)
-    return {"mean_a": float(a.mean()), "mean_b": float(b.mean()), "diff": float(a.mean() - b.mean()),
-            "p_value": float(t.pvalue), "cohens_d": float((a.mean() - b.mean()) / pooled) if pooled else None,
-            "n_a": int(len(a)), "n_b": int(len(b))}
-
-
 PENGUINEER_HIDDEN = frozenset({"llm", "llm_model", "llm_dry_run", "out", "in_place"})
 
 
 def penguineer(call_id: str, command: str, params: dict | None = None) -> dict:
     """Run a penguineer command on this run's snapshots and return its result as a dict.
 
-    File inputs are a query id (`"q2"`: that query's snapshot) or `"knowledge:<name>"` (structured knowledge, such
-    as a plant graph, written out as YAML); nothing outside the run folder can be read. The call runs in its own
-    folder with no LLM, and its outputs are copied to work/penguineer/<call_id>/ in the run, so they are sealed
-    with it and a replay re-runs the call on the same snapshots.
+    File inputs are a query id (`"q2"`: that query's snapshot), an earlier call id (`"p3"`: the table that call
+    wrote, such as align's), or `"knowledge:<name>"` (structured knowledge, such as a plant graph, written out as
+    YAML); nothing outside the run folder can be read. The call runs in its own folder with no LLM, and its outputs
+    are copied to work/penguineer/<call_id>/ in the run, so they are sealed with it and a replay re-runs the call on
+    the same snapshots.
     """
     import shutil
 
-    import matplotlib
-
-    backend = matplotlib.get_backend()
-    import penguineer as pg  # its report modules select Agg on import; keep the kernel's inline figures
+    import penguineer as pg
     from penguineer.core import default_registry
     from penguineer.core.fields import field_shape, is_path_type
-
-    matplotlib.use(backend)
 
     params = dict(params or {})
     hidden = sorted(PENGUINEER_HIDDEN & set(params))
@@ -336,8 +301,8 @@ def penguineer(call_id: str, command: str, params: dict | None = None) -> dict:
     shown = {str(project): folder}  # local paths -> what the result says instead
     for name, value in params.items():
         if name in fields and value is not None and is_path_type(field_shape(fields[name]).base):
-            params[name] = str(_penguineer_input(value, staged, csv=name == "lots"))
-            shown[params[name]] = _state["queries"][value]["snapshot"] if value in _state["queries"] else value
+            local, label = _penguineer_input(value, staged)
+            params[name], shown[str(local)] = str(local), label
 
     try:
         out = pg.execute(command, params, project=project, seed=_state["seed"], cache_dir=work / "cache")
@@ -359,6 +324,7 @@ def penguineer(call_id: str, command: str, params: dict | None = None) -> dict:
         text, summary = text.replace(local, name), summary.replace(local, name)
     copy_tree(project, run / folder)
     result = json.loads(text)
+    _state.setdefault("calls", {})[call_id] = result
     print(summary)
     print(RESULT_MARKER + json.dumps({"penguineer": call_id, "command": command, "folder": folder,
                                       "exit_code": out.result.exit_code(), "summary": summary,
@@ -366,22 +332,22 @@ def penguineer(call_id: str, command: str, params: dict | None = None) -> dict:
     return result
 
 
-def _penguineer_input(value: str, staged: Path, csv: bool = False) -> Path:
+def _penguineer_input(value: str, staged: Path) -> tuple[Path, str]:
+    """The local file for a penguineer file input, and how the result should name it."""
     if value.startswith("knowledge:"):
         name = value.removeprefix("knowledge:")
         path = staged / f"{name}.yaml"
         path.write_text(yaml.safe_dump(knowledge(name), sort_keys=False))
-        return path
-    rec = _state["queries"].get(value)
-    if rec is None:
-        raise ValueError(f"{value!r} is not a query of this run or knowledge:<name>; penguineer reads only the run's "
-                         f"query snapshots ({sorted(_state['queries'])}) and its structured knowledge")
-    snapshot = _local(_state["run"] / rec["snapshot"])
-    if not csv:
-        return snapshot
-    path = staged / f"{value}.csv"  # penguineer 0.2 reads lot windows from CSV only
-    pd.read_parquet(snapshot).to_csv(path, index=False)
-    return path
+        return path, value
+    if value in _state["queries"]:
+        snapshot = _state["queries"][value]["snapshot"]
+        return _local(_state["run"] / snapshot), snapshot
+    table = _state.get("calls", {}).get(value, {}).get("table")
+    if table:
+        return _local(_state["run"] / table), table
+    raise ValueError(f"{value!r} is not a query of this run, an earlier call with a table, or knowledge:<name>; "
+                     f"penguineer reads only the run's query snapshots ({sorted(_state['queries'])}), tables of "
+                     f"earlier calls ({sorted(_state.get('calls', {}))}) and its structured knowledge")
 
 
 class _Methods:

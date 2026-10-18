@@ -1,7 +1,8 @@
 """penguineer's commands as analysis tools.
 
 Alchemist depends on penguineer (https://github.com/kausalflow/penguineer) for the steps that decide what the answer
-is: data health, dead times, hypothesis ranking. Each command below becomes one analysis tool whose input schema is
+is: data health, dead times, lot alignment, group
+comparisons, hypothesis ranking. Each command below becomes one analysis tool whose input schema is
 built from the command's Params model. A call becomes one notebook cell,
 
     pg_p1 = alc.penguineer("p1", "data health", {"data": "q2"})
@@ -21,13 +22,16 @@ from .nb import PENGUINEER_HIDDEN
 COMMANDS = {
     "penguineer_data_health": "data health",
     "penguineer_lag": "lag",
+    "penguineer_align": "align",
+    "penguineer_compare": "compare",
     "penguineer_investigate": "investigate",
     "penguineer_graph_check": "graph check",
     "penguineer_graph_lags": "graph lags",
 }
 
-FILE_INPUT = ("A query id of this run (e.g. q2), whose snapshot penguineer reads as a CSV/Parquet export, or "
-              "knowledge:<name> for structured knowledge such as the plant graph.")
+FILE_INPUT = ("A query id of this run (e.g. q2), whose snapshot penguineer reads as a CSV/Parquet export, an earlier "
+              "call id (e.g. p3) for the table that call wrote, or knowledge:<name> for structured knowledge such "
+              "as the plant graph.")
 
 
 def _is_path(schema: dict) -> bool:
