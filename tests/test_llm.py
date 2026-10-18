@@ -1,7 +1,6 @@
 import pytest
 
 from alchemist import llm
-from alchemist.agent import Budget, ToolOutput, run_loop
 from alchemist.config import Settings
 
 
@@ -45,54 +44,16 @@ def test_each_provider_builds(spec, kind, monkeypatch):
     assert type(llm.PydanticAIModel(s, spec).model).__name__ == kind
 
 
-def test_loop_through_pydantic_ai(tmp_path):
-    """The tool loop works against a Pydantic AI model (FunctionModel stands in for a provider)."""
-    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-    from pydantic_ai.models.function import FunctionModel
+def test_allowed_spec_becomes_penguineers_adapter(monkeypatch):
+    """The allow-list and provider building stay here; the adapter is penguineer's."""
+    from penguineer.agent.models import PydanticAIModel
 
-    seen = {}
-
-    def fn(messages, info):
-        returns = [p for m in messages for p in getattr(m, "parts", []) if isinstance(p, ToolReturnPart)]
-        seen["tools"] = [t.name for t in info.function_tools]
-        if not returns:
-            return ModelResponse(parts=[ToolCallPart("ping", {"n": 1}, tool_call_id="c1")])
-        seen["return"] = returns[-1].content
-        return ModelResponse(parts=[TextPart("done")])
-
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     s = Settings()
-    m = llm.PydanticAIModel.__new__(llm.PydanticAIModel)
-    m.name, m.spec, m.model, m.thinking, m.max_tokens = "test:fn", "test:fn", FunctionModel(fn), None, 1000
-    hit = []
-
-    def ping(args):
-        hit.append(args)
-        return ToolOutput("pong")
-
-    tools = [{"name": "ping", "description": "p", "input_schema": {"type": "object", "properties": {"n": {"type": "integer"}}}}]
-    end = run_loop(m, system="s", tools=tools, handlers={"ping": ping}, first_message="go", done=lambda: bool(hit),
-                   budget=Budget(5, 1000), transcript=tmp_path / "t.jsonl")
-    assert end == "done" and hit == [{"n": 1}]
-    assert seen["tools"] == ["ping"]
-
-
-def test_message_conversion_keeps_images_and_thinking():
-    import base64
-
-    from alchemist.agent import _result_block
-
-    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-    msgs = [{"role": "user", "content": "q"},
-            {"role": "assistant", "content": [{"type": "thinking", "content": "hm", "signature": "sig"},
-                                              {"type": "tool_use", "id": "t1", "name": "run_python", "input": {"code": "1"}}]},
-            {"role": "user", "content": [_result_block("t1", ToolOutput("ok", images=[png]))]}]
-    out = llm.to_pydantic_messages("sys", msgs)
-    assert [type(m).__name__ for m in out] == ["ModelRequest", "ModelResponse", "ModelRequest"]
-    assert out[1].parts[0].signature == "sig"
-    ret = out[2].parts[0]
-    assert ret.tool_name == "run_python" and len(ret.content) == 2
-    back = llm.from_pydantic_response(out[1])
-    assert back["stop_reason"] == "tool_use" and back["content"][1]["input"] == {"code": "1"}
+    s.allowed_providers = ["anthropic"]
+    m = llm.PydanticAIModel(s, "anthropic:claude-opus-5-5", effort="max")
+    assert isinstance(m, PydanticAIModel) and m.name == "anthropic:claude-opus-5-5" and m.thinking == "xhigh"
+    assert m.retry_seconds == s.model_retry_seconds
 
 
 def test_role_models_fall_back_to_the_shared_settings(monkeypatch):

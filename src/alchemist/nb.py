@@ -25,6 +25,8 @@ import duckdb
 import numpy as np
 import pandas as pd
 import yaml
+from penguineer.agent import findings as agent_findings
+from penguineer.agent.tools import HIDDEN as PENGUINEER_HIDDEN
 
 from .paths import as_path, copy_tree, expand_glob, object_info, put_file, read_json, write_json
 from .plugins import get_registry
@@ -207,32 +209,12 @@ def _local(path) -> Path:
     return Path(path.fspath)  # cloudpathlib downloads to its local cache
 
 
-def _canon(value) -> str:
-    if isinstance(value, (np.floating, float)):
-        return repr(float(f"{float(value):.12g}"))
-    if isinstance(value, (np.integer, int)):
-        return str(int(value))
-    if isinstance(value, dict):
-        return json.dumps({k: _canon(v) for k, v in sorted(value.items())})
-    if isinstance(value, (list, tuple)):
-        return json.dumps([_canon(v) for v in value])
-    return json.dumps(value, default=str)
-
-
 def finding(fid: str, *, statement: str, value=None, unit: str = "", verdict: str = "supported",
             confidence: str = "medium", hypothesis: str = "", evidence: list | None = None) -> dict:
     """Record one claim and the number computed for it in this cell."""
-    if verdict not in ("supported", "refuted", "inconclusive"):
-        raise ValueError("verdict must be supported, refuted or inconclusive")
-    if confidence not in ("high", "medium", "low"):
-        raise ValueError("confidence must be high, medium or low")
-    if isinstance(value, (np.floating, np.integer)):
-        value = value.item()
-    if isinstance(value, float):
-        value = float(f"{value:.12g}") + 0.0  # + 0.0 turns -0.0 into 0.0
-    digest = hashlib.sha256(_canon(value).encode()).hexdigest()
-    rec = {"id": fid, "hypothesis": hypothesis, "statement": statement, "value": value, "unit": unit,
-           "verdict": verdict, "confidence": confidence, "evidence": evidence or [], "value_sha256": digest}
+    rec = agent_findings.finding(fid, statement=statement, value=value, unit=unit, verdict=verdict,
+                                 confidence=confidence, hypothesis=hypothesis, evidence=evidence)
+    digest = rec["value_sha256"]
     exp = _state["expected"].get(fid)
     if exp is not None:
         rec["matches_original"] = exp["value_sha256"] == digest
@@ -266,9 +248,6 @@ def check_results() -> pd.DataFrame:
     write_json(_state["run"] / "work" / "result_check.json", {"status": status, "rows": rows})
     print(RESULT_MARKER + json.dumps({"result_check": {"status": status, "rows": rows}}, default=str))
     return df
-
-
-PENGUINEER_HIDDEN = frozenset({"llm", "llm_model", "llm_dry_run", "out", "in_place"})
 
 
 def penguineer(call_id: str, command: str, params: dict | None = None) -> dict:

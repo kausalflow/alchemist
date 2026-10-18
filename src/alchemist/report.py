@@ -2,46 +2,12 @@
 
 from __future__ import annotations
 
-import re
-
 import markdown
 from jinja2 import Environment, select_autoescape
 
+from penguineer.agent.findings import ReportError, fill, fmt  # noqa: F401  (ReportError is part of this API)
+
 from .paths import write_text
-
-PLACEHOLDER = re.compile(r"\{\{\s*(F\d+)(?:\.(value))?\s*\}\}")
-TYPED_NUMBER = re.compile(
-    r"(?<![\w.-])\d+(?:[.,]\d+)?\s*(?:%|°C|°F|percentage points|points|pts|bar|ppm|kg|mpm|m/min)"
-    r"|(?<![\w.-])\d+\.\d+(?![\w.-])")
-
-
-class ReportError(ValueError):
-    pass
-
-
-def fmt(value, unit: str = "") -> str:
-    if isinstance(value, float):
-        text = f"{value:,.2f}" if abs(value) >= 1 else f"{value:.3g}"
-    else:
-        text = str(value)
-    return f"{text} {unit}".strip() if unit else text
-
-
-def fill(text: str, findings: dict[str, dict]) -> str:
-    stripped = PLACEHOLDER.sub("", text)
-    typed = TYPED_NUMBER.findall(stripped)
-    if typed:
-        raise ReportError(f"measured numbers must come from findings as {{{{Fn}}}} placeholders; found typed: {typed[:5]}")
-
-    def repl(m):
-        fid, part = m.group(1), m.group(2)
-        if fid not in findings:
-            raise ReportError(f"{fid} is not a recorded finding")
-        f = findings[fid]
-        return fmt(f["value"]) if part == "value" else fmt(f["value"], f.get("unit", ""))
-
-    return PLACEHOLDER.sub(repl, text)
-
 
 TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>{{ title }}</title>

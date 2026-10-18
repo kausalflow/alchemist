@@ -124,16 +124,15 @@ src/alchemist/
   sqlguard.py   read-only SQL guard on DuckDB's parser
   nb.py         helpers used inside the kernel as `alc` (query, finding, align, effect, check_results)
   sandbox.py    one Jupyter kernel per run; every call becomes a notebook cell
-  llm.py        model access through Pydantic AI (Bedrock, Anthropic, Gemini, OpenAI), provider allow-list
-  agent.py      tool loop with budgets and a transcript; ScriptedModel for offline runs
-  prompts.py    system prompts and tool definitions (their hash goes into each manifest)
+  llm.py        provider allow-list and model building; the tool loop and method come from penguineer.agent
+  prompts.py    system prompts (penguineer's method plus Alchemist's tools); their hash goes into each manifest
   penguineer_tools.py  penguineer's root-cause engines as analysis tools
   run.py        ask / approve / replay lifecycle and the tool handlers
   access.py     plant groups and workspaces from identity-provider claims or access.yaml
   credentials.py  per-run STS credentials scoped to the run's data and folder
-  report.py     conclusion card and HTML report
+  report.py     conclusion card and HTML report (placeholders filled by penguineer)
   workspace.py  S3 (or local) folder layout, sealing and verification
-  knowledge.py  document passages and structured knowledge
+  knowledge.py  plant documents and who may read them; search is penguineer's
   demo/         synthetic plant and the scripted investigation
 ```
 
