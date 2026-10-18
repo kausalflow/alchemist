@@ -24,8 +24,9 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
+import yaml
 
-from .paths import as_path, expand_glob, object_info, put_file, read_json, write_json
+from .paths import as_path, copy_tree, expand_glob, object_info, put_file, read_json, write_json
 from .plugins import get_registry
 from .sqlguard import check_sql
 
@@ -296,6 +297,91 @@ def effect(a, b) -> dict:
     return {"mean_a": float(a.mean()), "mean_b": float(b.mean()), "diff": float(a.mean() - b.mean()),
             "p_value": float(t.pvalue), "cohens_d": float((a.mean() - b.mean()) / pooled) if pooled else None,
             "n_a": int(len(a)), "n_b": int(len(b))}
+
+
+PENGUINEER_HIDDEN = frozenset({"llm", "llm_model", "llm_dry_run", "out", "in_place"})
+
+
+def penguineer(call_id: str, command: str, params: dict | None = None) -> dict:
+    """Run a penguineer command on this run's snapshots and return its result as a dict.
+
+    File inputs are a query id (`"q2"`: that query's snapshot) or `"knowledge:<name>"` (structured knowledge, such
+    as a plant graph, written out as YAML); nothing outside the run folder can be read. The call runs in its own
+    folder with no LLM, and its outputs are copied to work/penguineer/<call_id>/ in the run, so they are sealed
+    with it and a replay re-runs the call on the same snapshots.
+    """
+    import shutil
+
+    import matplotlib
+
+    backend = matplotlib.get_backend()
+    import penguineer as pg  # its report modules select Agg on import; keep the kernel's inline figures
+    from penguineer.core import default_registry
+    from penguineer.core.fields import field_shape, is_path_type
+
+    matplotlib.use(backend)
+
+    params = dict(params or {})
+    hidden = sorted(PENGUINEER_HIDDEN & set(params))
+    if hidden:
+        raise ValueError(f"penguineer {command}: {hidden} are set by Alchemist, leave them out")
+    run, folder = _state["run"], f"work/penguineer/{call_id}"
+    work = _state["tmp"] / "penguineer" / call_id
+    if work.exists():
+        shutil.rmtree(work)
+    project, staged = work / "project", work / "inputs"
+    staged.mkdir(parents=True)
+
+    fields = default_registry.get(command).params.model_fields
+    shown = {str(project): folder}  # local paths -> what the result says instead
+    for name, value in params.items():
+        if name in fields and value is not None and is_path_type(field_shape(fields[name]).base):
+            params[name] = str(_penguineer_input(value, staged, csv=name == "lots"))
+            shown[params[name]] = _state["queries"][value]["snapshot"] if value in _state["queries"] else value
+
+    try:
+        out = pg.execute(command, params, project=project, seed=_state["seed"], cache_dir=work / "cache")
+    except pg.PenguineerError as e:
+        raise RuntimeError(f"penguineer {command}: {e}") from None
+
+    # Each command writes under <project>/<kind>/<penguineer run id>/; drop the run id level, so the call's
+    # folder and the paths in its result are the same in every replay.
+    run_id = out.record.run_id
+    text = out.result.model_dump_json()
+    summary = out.result.summary()
+    for kind in [d for d in project.iterdir() if (d / run_id).is_dir()]:
+        for f in (kind / run_id).iterdir():
+            f.rename(kind / f.name)
+        (kind / run_id).rmdir()
+        text = text.replace(f"{kind}/{run_id}", str(kind))
+        summary = summary.replace(f"{kind}/{run_id}", str(kind))
+    for local, name in shown.items():
+        text, summary = text.replace(local, name), summary.replace(local, name)
+    copy_tree(project, run / folder)
+    result = json.loads(text)
+    print(summary)
+    print(RESULT_MARKER + json.dumps({"penguineer": call_id, "command": command, "folder": folder,
+                                      "exit_code": out.result.exit_code(), "summary": summary,
+                                      "result": result}, default=str))
+    return result
+
+
+def _penguineer_input(value: str, staged: Path, csv: bool = False) -> Path:
+    if value.startswith("knowledge:"):
+        name = value.removeprefix("knowledge:")
+        path = staged / f"{name}.yaml"
+        path.write_text(yaml.safe_dump(knowledge(name), sort_keys=False))
+        return path
+    rec = _state["queries"].get(value)
+    if rec is None:
+        raise ValueError(f"{value!r} is not a query of this run or knowledge:<name>; penguineer reads only the run's "
+                         f"query snapshots ({sorted(_state['queries'])}) and its structured knowledge")
+    snapshot = _local(_state["run"] / rec["snapshot"])
+    if not csv:
+        return snapshot
+    path = staged / f"{value}.csv"  # penguineer 0.2 reads lot windows from CSV only
+    pd.read_parquet(snapshot).to_csv(path, index=False)
+    return path
 
 
 class _Methods:

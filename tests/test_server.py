@@ -65,7 +65,7 @@ def test_run_page_shows_conclusion_data_and_methods(client, finished):
     run = client.get(f"/api/runs/{finished}", headers=as_user("eng_p1")).json()
     assert run["run"]["status"] == "completed" and run["run"]["sealed"]
     assert "R-118" in run["conclusion_html"]
-    assert {f["id"] for f in run["findings"]} == {"F1", "F2", "F3", "F4", "F5"}
+    assert {f["id"] for f in run["findings"]} == {"F1", "F2", "F3", "F4", "F5", "F6"}
     assert run["queries"][0]["sql"].strip().startswith("select") and run["queries"][0]["purpose"]
     assert {d["dataset"] for d in run["datasets"]} >= {"quality_lots", "historian_line2"}
     assert run["knowledge"]["citations"] and run["review"]["ok"]

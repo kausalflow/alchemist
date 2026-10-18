@@ -31,6 +31,7 @@ def test_run_completes_with_planted_cause(sealed_run):
     assert 4.0 < findings["F2"]["value"] < 5.5      # resin effect, planted at 4.9 points
     assert 1.5 < findings["F3"]["value"] < 2.5      # melt temperature, planted at 2 degC
     assert findings["F5"]["value"] == 0
+    assert findings["F6"]["value"] == 1             # penguineer finds the TT-204 gap
     assert "R-118" in sealed_run["conclusion"]
 
 
@@ -44,7 +45,7 @@ def test_hidden_columns_never_reach_snapshots(sealed_run):
 
 def test_manifest_and_seal(sealed_run):
     m = read_json(os.path.join(sealed_run["path"], "manifest.json"))
-    assert m["schema"] == "alchemist.manifest/v1" and set(m["result_hashes"]) == {"F1", "F2", "F3", "F4", "F5"}
+    assert m["schema"] == "alchemist.manifest/v1" and set(m["result_hashes"]) == {"F1", "F2", "F3", "F4", "F5", "F6"}
     assert {c["dataset"] for c in m["catalog"]} >= {"quality_lots", "historian_line2"}
     # each role's model, the planning one carried over from the planning step
     assert {k: m["model"][k] for k in ("planning", "analysis", "reviewer")} == {
@@ -55,7 +56,7 @@ def test_manifest_and_seal(sealed_run):
 def test_replay_matches(svc, sealed_run):
     rep = replay(svc, sealed_run["run_id"], user="eng_p1")
     assert rep["status"] == "completed", rep
-    assert rep["result_check"]["status"] == {"mode": "replay", "compared": 5, "mismatches": 0}
+    assert rep["result_check"]["status"] == {"mode": "replay", "compared": 6, "mismatches": 0}
 
 
 def test_rerun_on_unchanged_data_reports_no_change(svc, sealed_run):

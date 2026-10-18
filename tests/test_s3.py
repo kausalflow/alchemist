@@ -123,7 +123,7 @@ def test_replay_on_s3_matches(s3_svc, s3_run):
     res, user = s3_run
     rep = replay(s3_svc, res["run_id"], user=user)
     assert rep["status"] == "completed", rep
-    assert rep["result_check"]["status"] == {"mode": "replay", "compared": 5, "mismatches": 0}
+    assert rep["result_check"]["status"] == {"mode": "replay", "compared": 6, "mismatches": 0}
 
 
 def test_other_plant_user_cannot_replay(s3_svc, s3_run):

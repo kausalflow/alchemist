@@ -3,7 +3,8 @@
 Alchemist answers process questions such as "why was quality low on Line 2 from 3 to 9 August?" by querying the plant
 data lake, running Python in a sandbox, and grounding its reasoning in plant documents. Every answer comes with a short
 conclusion, a full report and the executed notebook, and every run can be replayed by a person or another agent with
-identical numbers.
+identical numbers. The root-cause engines (data health, dead times, hypothesis ranking along the plant graph) come
+from [penguineer](https://github.com/kausalflow/penguineer), which Alchemist calls as analysis tools.
 
 This repository is the MVP of the [technical design](https://claude.ai/code/artifact/22c0c2a8-5aa9-407b-9303-544974b79b6b)
 (product design: [here](https://claude.ai/code/artifact/860e0a60-e35c-4351-b5ec-2cfbb2053c95)).
@@ -126,6 +127,7 @@ src/alchemist/
   llm.py        model access through Pydantic AI (Bedrock, Anthropic, Gemini, OpenAI), provider allow-list
   agent.py      tool loop with budgets and a transcript; ScriptedModel for offline runs
   prompts.py    system prompts and tool definitions (their hash goes into each manifest)
+  penguineer_tools.py  penguineer's root-cause engines as analysis tools
   run.py        ask / approve / replay lifecycle and the tool handlers
   access.py     plant groups and workspaces from identity-provider claims or access.yaml
   credentials.py  per-run STS credentials scoped to the run's data and folder

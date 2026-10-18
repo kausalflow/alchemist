@@ -8,12 +8,13 @@ src/alchemist/
   credentials.py  per-run STS credentials and their session policy; broker grants and the broker Lambda client
   catalog.py    registry, catalog cards (drafted by a model or a heuristic), search, suggestions, run index, audit
   sqlguard.py   read-only SQL guard on DuckDB's parser
-  nb.py         helpers used inside the kernel as `alc` (query, finding, align, effect, check_results)
+  nb.py         helpers used inside the kernel as `alc` (query, finding, penguineer, align, effect, check_results)
   sandbox.py    one Jupyter kernel per run (local, or a separate sandbox's); every call becomes a notebook cell
   sandbox_server.py  `alchemist sandbox serve`: the kernel's HTTP API in a separate sandbox task
   llm.py        model access through Pydantic AI (Bedrock, Anthropic, Gemini, OpenAI), provider allow-list
   agent.py      tool loop with budgets and a transcript; ScriptedModel for offline runs
   prompts.py    system prompts and tool definitions (their hash goes into each manifest)
+  penguineer_tools.py  penguineer's commands as analysis tools, schemas from its Params models
   run.py        ask / approve / replay lifecycle and the tool handlers
   report.py     conclusion card and HTML report, filled from findings
   workspace.py  S3 (or local) folder layout, sealing and verification

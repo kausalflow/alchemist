@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+from . import penguineer_tools
+
 PLAN_SYSTEM = """You are Alchemist, a careful process engineer investigating a question about a chemical plant.
 
 This is the planning step. Use search_catalog and search_knowledge to learn which data exists and what the
@@ -31,6 +33,11 @@ How to work:
 2. Check data health before any statistics: gaps, sensor faults, implausible values, time alignment. Quality
    results reflect material processed earlier; use alc.align(...) with the residence time from structured
    knowledge (alc.knowledge(name)) to line lots up with process conditions.
+   The penguineer_* tools run penguineer's engines on your query snapshots (pass query ids such as "q2" for file
+   inputs, and knowledge:<name> for the plant graph): penguineer_data_health for faulty tags, penguineer_lag to fit
+   the delay from a cause to an effect instead of assuming one, penguineer_investigate to rank root causes of one
+   off-spec lot along the plant graph. Prefer them over hand-written code for these steps; each keeps its full
+   result in the kernel as pg_<call_id>, so findings can cite its values.
 3. Test one hypothesis at a time with run_python (a persistent Jupyter kernel; pandas, numpy, scipy, matplotlib,
    and the `alc` helpers: alc.effect(a, b) for a two-group comparison). People follow the run through its figures
    as they appear, so plot whenever a picture shows the point: the data-health check (gaps, faults, outliers over
@@ -156,9 +163,11 @@ TOOLS = {
     },
 }
 
+TOOLS.update(penguineer_tools.tools())
+
 PLAN_TOOLS = ["search_catalog", "search_knowledge", "submit_plan"]
-ANALYSIS_TOOLS = ["search_catalog", "search_knowledge", "run_query", "run_python", "record_finding",
-                  "suggest_catalog_fix", "finish_analysis", "build_report"]
+ANALYSIS_TOOLS = ["search_catalog", "search_knowledge", "run_query", "run_python", *penguineer_tools.COMMANDS,
+                  "record_finding", "suggest_catalog_fix", "finish_analysis", "build_report"]
 
 
 def tool_list(names: list[str], extra: list | None = None) -> list[dict]:

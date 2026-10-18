@@ -247,7 +247,7 @@ def test_analysis_on_the_sandbox_leaves_sealing_to_the_seal_step(separate_svc, s
     assert not (run / "SEALED").exists() and (run / "report" / "report.html").exists()
     m = read_json(run / "manifest.json")
     assert m["access"]["credentials"] == {"mode": "ambient"}  # no broker on a laptop
-    assert set(m["result_hashes"]) == {"F1", "F2", "F3", "F4", "F5"}
+    assert set(m["result_hashes"]) == {"F1", "F2", "F3", "F4", "F5", "F6"}
     assert any(p.name.endswith(".png") for p in (run / "figures").iterdir())
 
     assert report_step(separate_svc, separate_run["run_id"])["ended"] == "already reported"
@@ -261,7 +261,7 @@ def test_replay_on_the_sandbox_matches(separate_svc, separate_run, sandbox_url):
     row = start_replay(separate_svc, separate_run["run_id"], user="eng_p1")
     rep = execute_replay(separate_svc, row["run_id"], sandbox_url=sandbox_url)
     assert rep["status"] == "completed" and rep["seal_sha256"] is None
-    assert rep["result_check"]["status"] == {"mode": "replay", "compared": 5, "mismatches": 0}
+    assert rep["result_check"]["status"] == {"mode": "replay", "compared": 6, "mismatches": 0}
     assert seal_step(separate_svc, row["run_id"])["status"] == "completed"
 
 
