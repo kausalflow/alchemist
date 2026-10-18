@@ -3,14 +3,15 @@
 Alchemist uses [penguineer](https://github.com/kausalflow/penguineer) for the analysis steps that decide what the
 answer is: data health checks, dead times between tags, lining lots up with the process values
 that made them, comparing groups of lots, and ranking root causes of an off-spec lot along the plant
-graph. penguineer is an ordinary dependency (`penguineer>=0.3,<0.4` in `pyproject.toml`); Alchemist imports it and
+graph. penguineer is an ordinary dependency (`penguineer[agent]>=0.4,<0.5` in `pyproject.toml`); Alchemist imports it and
 never the other way round.
 
 | Alchemist owns | penguineer owns |
 | --- | --- |
 | the catalog, SQL guard and query snapshots | reading historian, LIMS and lot exports |
-| the agent loop, plan approval, steering, review | data health, lag fitting, lot alignment, group comparisons, hypothesis ranking |
-| the sandbox kernel, the run folder, sealing and replay | its run record (`run.json`) and report files |
+| which model providers may see plant data | the tool loop, budgets, pauses and steering, and the adapter to any provider |
+| plan approval, the run's tools and who may read which documents | the method in the prompts, the protocol's tools, the review, document search |
+| the sandbox kernel, the run folder, sealing and replay | findings and `{{Fn}}` placeholders, data health, lag fitting, lot alignment, group comparisons, hypothesis ranking |
 
 ## The tools
 

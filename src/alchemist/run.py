@@ -11,19 +11,20 @@ import datetime as dt
 import importlib.metadata
 import json
 import platform
-import re
 from pathlib import Path
 from typing import Callable
 
+from penguineer.agent import protocol
+from penguineer.agent.loop import Budget, Model, ScriptedText, ToolOutput, run_loop
+
 from . import penguineer_tools, prompts, steering
 from .access import AccessDenied, User
-from .agent import Budget, Model, ToolOutput, run_loop
 from .llm import role_model
 from .catalog import Catalog, now
 from .credentials import CredentialBroker, RefreshingCredentials
 from .knowledge import Knowledge
 from .model_roles import with_choices
-from .paths import as_path, copy_tree, read_json, read_yaml, write_json
+from .paths import as_path, copy_tree, read_json, read_yaml, write_json, write_text
 from .plugins import get_registry
 from .report import ReportError, render
 from .sandbox import RemoteKernel, Sandbox, finding_cell, query_cell
@@ -241,7 +242,7 @@ class RunContext:
         findings = self._findings()
         if not findings:
             return ToolOutput("No findings recorded yet; record findings before finishing.", is_error=True)
-        self.review = run_review(reviewer, self.plan, self.sandbox, findings)
+        self.review = protocol.review(reviewer, plan=self.plan, analysis=notebook_digest(self.sandbox), findings=findings)
         self.review_requested = True
         write_json(self.run / "logs" / "review.json", self.review)
         return ToolOutput("Independent review:\n" + json.dumps(self.review, indent=1)
@@ -343,27 +344,9 @@ def notebook_digest(sandbox: Sandbox, limit: int = 60000) -> str:
     return "\n\n".join(parts)[-limit:]
 
 
-def run_review(reviewer: Model, plan: dict, sandbox: Sandbox, findings: list[dict]) -> dict:
-    msg = (f"Plan:\n{json.dumps(plan, indent=1)}\n\nNotebook:\n{notebook_digest(sandbox)}\n\n"
-           f"Findings:\n{json.dumps(findings, indent=1, default=str)}")
-    resp = reviewer.create(system=prompts.REVIEW_SYSTEM, tools=[], messages=[{"role": "user", "content": msg}])
-    text = "".join(b.get("text", "") for b in resp["content"] if b.get("type") == "text")
-    m = re.search(r"\{.*\}", text, re.S)
-    try:
-        review = json.loads(m.group(0)) if m else {}
-    except json.JSONDecodeError:
-        review = {}
-    return {"ok": bool(review.get("ok", False)), "issues": review.get("issues", []),
-            "notes": review.get("notes", text[:2000]), "model": reviewer.name}
-
-
-class ScriptedReviewer:
-    def __init__(self, review: dict, name: str = "scripted-reviewer"):
-        self.review, self.name = review, name
-
-    def create(self, *, system, tools, messages):
-        return {"content": [{"type": "text", "text": json.dumps(self.review)}], "stop_reason": "end_turn",
-                "usage": {"input_tokens": 0, "output_tokens": 0}}
+def ScriptedReviewer(review: dict) -> ScriptedText:
+    """A reviewer that always gives `review`, for the demo and tests."""
+    return ScriptedText(json.dumps(review), name="scripted-reviewer")
 
 
 # ------------------------------------------------------------------ lifecycle
@@ -541,7 +524,7 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     try:
         ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS, extra_tools),
                          handlers=handlers, first_message=first, done=lambda: ctx.plan is not None, budget=budget,
-                         transcript=rdir / "logs" / "plan_transcript.jsonl", should_stop=should_stop, steer=steer,
+                         transcript=as_path(rdir / "logs" / "plan_transcript.jsonl"), write_text=write_text, should_stop=should_stop, steer=steer,
                          checkpoint=lambda state: write_json(rdir / PLAN_CHECKPOINT, {
                              "schema": "alchemist.checkpoint/v1", "phase": "planning", "at": now(), **state,
                              "steering": steer.delivered}),
@@ -656,7 +639,7 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     or an earlier attempt crashed or timed out), the step resumes: a fresh kernel re-runs the notebook's cells on
     their stored snapshots, and the conversation continues where it stopped. A pause request, or a model provider
     that stays unavailable, ends the step with the run `paused` instead of sealing it."""
-    from .llm import is_retryable
+    from penguineer.agent.models import is_retryable
 
     s = svc.settings
     row = svc.catalog.run(run_id)
@@ -706,7 +689,7 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
         try:
             ended = run_loop(model, system=prompts.ANALYSIS_SYSTEM, tools=prompts.tool_list(prompts.ANALYSIS_TOOLS, extra_tools),
                              handlers=handlers, first_message=first, done=lambda: ctx.report_out is not None,
-                             budget=budget, transcript=ctx.run / "logs" / "transcript.jsonl", should_stop=should_stop,
+                             budget=budget, transcript=as_path(ctx.run / "logs" / "transcript.jsonl"), write_text=write_text, should_stop=should_stop,
                              checkpoint=lambda state: _save_checkpoint(ctx, sb, budget, state), resume=saved,
                              steer=ctx.steering)
         except Exception as e:  # a model or network failure still ends in a sealed, partial run

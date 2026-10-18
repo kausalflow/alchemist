@@ -11,14 +11,14 @@ src/alchemist/
   nb.py         helpers used inside the kernel as `alc` (query, finding, penguineer, align, effect, check_results)
   sandbox.py    one Jupyter kernel per run (local, or a separate sandbox's); every call becomes a notebook cell
   sandbox_server.py  `alchemist sandbox serve`: the kernel's HTTP API in a separate sandbox task
-  llm.py        model access through Pydantic AI (Bedrock, Anthropic, Gemini, OpenAI), provider allow-list
-  agent.py      tool loop with budgets and a transcript; ScriptedModel for offline runs
-  prompts.py    system prompts and tool definitions (their hash goes into each manifest)
+  llm.py        which providers may see plant data (allow-list) and the models built for them; calls go through penguineer.agent
+  agent.py      re-exports penguineer's tool loop (`ToolOutput` and friends) for plugins
+  prompts.py    system prompts (penguineer's method plus Alchemist's tools) and tool definitions; their hash goes into each manifest
   penguineer_tools.py  penguineer's commands as analysis tools, schemas from its Params models
   run.py        ask / approve / replay lifecycle and the tool handlers
-  report.py     conclusion card and HTML report, filled from findings
+  report.py     conclusion card and HTML report, placeholders filled by penguineer.agent
   workspace.py  S3 (or local) folder layout, sealing and verification
-  knowledge.py  document passages and structured knowledge
+  knowledge.py  plant documents and structured knowledge; which plants a run may read (search is penguineer's)
   paths.py      cloudpathlib helpers, DuckDB S3 secret, conditional writes, ULIDs, hashing, glob expansion
   plugins.py    plugin registry and extension-point types; the built-in defaults are registered here
   api/
@@ -62,8 +62,8 @@ examples/
 flowchart TB
     CLI[cli.py] --> RUN[run.py: ask / approve / replay]
     RUN --> ACC[access.py]
-    RUN --> AG[agent.py: tool loop]
-    AG --> LLM[llm.py: Pydantic AI]
+    RUN --> AG[penguineer.agent: tool loop, method, review]
+    AG --> LLM[llm.py: provider allow-list]
     RUN --> CAT[catalog.py]
     RUN --> KN[knowledge.py]
     RUN --> SB[sandbox.py: Jupyter kernel]
@@ -78,6 +78,6 @@ flowchart TB
     PLG -.-> NB
 ```
 
-The orchestration (`run.py`, `agent.py`, `llm.py`) talks to the model; everything that touches data runs in the kernel
+The orchestration (`run.py` with penguineer's tool loop, `llm.py`) talks to the model; everything that touches data runs in the kernel
 through `nb.py`. In the target design these become two containers, so raw rows never sit in a process that can call the
 model.

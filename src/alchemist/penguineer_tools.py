@@ -14,7 +14,7 @@ any other computed value.
 
 from __future__ import annotations
 
-import copy
+from penguineer.agent.tools import command_tools
 
 from .nb import PENGUINEER_HIDDEN
 
@@ -34,45 +34,11 @@ FILE_INPUT = ("A query id of this run (e.g. q2), whose snapshot penguineer reads
               "as the plant graph.")
 
 
-def _is_path(schema: dict) -> bool:
-    options = schema.get("anyOf", [schema])
-    return any(o.get("format") in ("file-path", "directory-path", "path") for o in options)
-
-
-def _input_schema(params: dict) -> dict:
-    """penguineer's Params schema, without the fields Alchemist sets, and with file inputs as references."""
-    schema = copy.deepcopy(params)
-    props = schema.get("properties", {})
-    for name in PENGUINEER_HIDDEN & set(props):
-        del props[name]
-    for name, prop in props.items():
-        if _is_path(prop):
-            desc = prop.get("description", "")
-            props[name] = {"type": "string", "description": f"{desc}. {FILE_INPUT}" if desc else FILE_INPUT}
-    schema["required"] = [r for r in schema.get("required", []) if r in props]
-    schema.pop("title", None)
-    if "$defs" in schema and "$ref" not in str(props):
-        del schema["$defs"]
-    return schema
-
-
 def tools() -> dict[str, dict]:
     """Tool definitions, keyed by tool name."""
-    import penguineer
-    from penguineer.core import default_registry
-
-    schemas = penguineer.schemas()
-    out = {}
-    for name, command in COMMANDS.items():
-        help_text = default_registry.get(command).help.split("\n\n")[0].strip()
-        out[name] = {
-            "name": name,
-            "description": f"penguineer {command} (v{penguineer.__version__}): {help_text} Runs in the kernel on "
-                           "this run's query snapshots; the full result is kept as a dict pg_<call_id> for "
-                           "record_finding.",
-            "input_schema": _input_schema(schemas[command]["params"]),
-        }
-    return out
+    return command_tools(COMMANDS, hidden=PENGUINEER_HIDDEN, file_input=FILE_INPUT,
+                         note="Runs in the kernel on this run's query snapshots; the full result is kept as a dict "
+                              "pg_<call_id> for record_finding.")
 
 
 def cell(call_id: str, tool: str, inp: dict) -> str:

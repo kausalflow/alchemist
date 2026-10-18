@@ -99,8 +99,9 @@ These are recommendations from the design, not settings Alchemist makes for you:
   Guardrails sensitive-information filters on model traffic.
 - Use one inference profile per team or workspace, so spend is tagged in Cost Explorer.
 
-## Why Alchemist keeps its own tool loop
+## Why the tool loop is plain code
 
 Only the single step "send messages, get a response" goes through Pydantic AI. The loop itself (budgets, transcript,
-provenance, the order of tool calls) is Alchemist's own code in `agent.py`, so every model call and tool call passes
-through code that records it, whichever provider answers.
+pauses, the order of tool calls) is plain code in `penguineer.agent`, so every model call and tool call passes
+through code that records it, whichever provider answers. Alchemist checks the provider against its allow-list before
+it builds the model, so penguineer only ever calls a model Alchemist approved.

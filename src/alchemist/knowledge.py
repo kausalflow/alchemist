@@ -1,8 +1,10 @@
 """Domain knowledge: searchable documents and structured facts.
 
 Documents are markdown files with YAML front matter (id, title, version, plant,
-review_date). The MVP ranks passages by keyword overlap; the target design uses
-hybrid search (pgvector + full text) over the same passages.
+review_date). Splitting them into passages and ranking passages is penguineer's
+(`penguineer.agent.knowledge`); this module finds the files, applies the plant
+access rule and handles knowledge packs. The target design uses hybrid search
+(pgvector + full text) over the same passages.
 
 Structured knowledge (spec limits, residence times, tag maps) lives in
 `structured/*.yaml` and is copied into each run's inputs, so code uses it
@@ -15,19 +17,11 @@ the same layout, searched and copied alongside ALC_KNOWLEDGE.
 from __future__ import annotations
 
 import datetime as dt
-import math
-import re
-from collections import Counter
 
 import yaml
+from penguineer.agent.knowledge import KeywordIndex, document
 
 from .paths import as_path, write_json
-
-WORD = re.compile(r"[a-z0-9]+")
-
-
-def _words(text: str) -> list[str]:
-    return [w for w in WORD.findall(text.lower()) if len(w) > 1]
 
 
 class Knowledge:
@@ -43,63 +37,24 @@ class Knowledge:
                     if any(part.startswith(".") for part in f.relative_to(r).parts[:-1]):
                         continue
                     self._load(f, pack)
-        df = Counter()
-        for p in self.passages:
-            df.update(set(p["_words"]))
-        n = max(len(self.passages), 1)
-        self.idf = {w: math.log(1 + n / c) for w, c in df.items()}
+        self.index = KeywordIndex(self.passages)
 
     def _load(self, path, pack: str | None = None) -> None:
-        text = path.read_text()
-        meta, body = {}, text
-        if text.startswith("---"):
-            _, front, body = text.split("---", 2)
-            meta = yaml.safe_load(front) or {}
-        doc = {"doc": str(meta.get("id", path.stem)), "title": str(meta.get("title", path.stem)),
-               "version": str(meta.get("version", "1")), "plant": str(meta.get("plant", "global")),
-               "review_date": str(meta.get("review_date", "")), "path": str(path)}
+        meta, sections = document(path.read_text(), path.stem)
+        doc = {k: meta[k] for k in ("doc", "title", "version", "plant", "review_date")} | {"path": str(path)}
         if pack:
             doc["pack"] = pack
         lines = meta.get("lines") or []
         self.documents[doc["doc"]] = {**doc, "type": str(meta.get("type", "Other")),
                                       "lines": [str(x) for x in (lines if isinstance(lines, list) else [lines])],
                                       "updated_at": str(meta.get("updated_at", "")),
-                                      "updated_by": str(meta.get("updated_by", "")), "sections": 0}
-        heading, buf = doc["title"], []
-
-        def flush():
-            content = "\n".join(buf).strip()
-            if content:
-                self.documents[doc["doc"]]["sections"] += 1
-                self.passages.append({**doc, "heading": heading, "text": content,
-                                      "_words": _words(heading + " " + content)})
-
-        for line in body.splitlines():
-            if line.startswith("#"):
-                flush()
-                heading, buf = line.lstrip("#").strip(), []
-            else:
-                buf.append(line)
-        flush()
+                                      "updated_by": str(meta.get("updated_by", "")), "sections": len(sections)}
+        self.passages += [{**doc, "heading": heading, "text": text} for heading, text in sections]
 
     def search(self, query: str, plants, limit: int = 5, today: dt.date | None = None) -> list[dict]:
-        today = today or dt.date.today()
-        q = set(_words(query))
-        scored = []
-        for p in self.passages:
-            if p["plant"] != "global" and p["plant"] not in plants:
-                continue
-            tf = Counter(p["_words"])
-            s = sum(self.idf.get(w, 0) * (1 + math.log(tf[w])) for w in q if tf[w])
-            if s > 0:
-                scored.append((s, p))
-        scored.sort(key=lambda x: -x[0])
-        out = []
-        for s, p in scored[:limit]:
-            stale = bool(p["review_date"]) and p["review_date"] < today.isoformat()
-            out.append({"doc": p["doc"], "version": p["version"], "title": p["title"], "section": p["heading"],
-                        "text": p["text"][:1200], "review_date": p["review_date"], "stale": stale})
-        return out
+        """Passages of global documents and of the plants this run may read."""
+        return self.index.search(query, keep=lambda p: p["plant"] == "global" or p["plant"] in plants,
+                                 limit=limit, today=today)
 
     def facts(self) -> list[dict]:
         """Every structured knowledge table: name, plant, version, description, pack and path (not its values)."""

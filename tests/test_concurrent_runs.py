@@ -8,7 +8,7 @@ import pytest
 from alchemist.agent import ScriptedModel
 from alchemist.api.jobs import LocalLauncher
 from alchemist.demo import script
-from alchemist.llm import is_retryable, with_retries
+from penguineer.agent.models import is_retryable, with_retries
 from alchemist.paths import as_path, read_yaml
 from alchemist.run import RunLimit, cancel, create, plan, start_approval
 from alchemist.sfn_launcher import StepFunctionsLauncher
