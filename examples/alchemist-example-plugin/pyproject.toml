@@ -3,6 +3,7 @@ name = "alchemist-example-plugin"
 version = "0.1.0"
 description = "Example Alchemist plugin: a CUSUM analysis method, a glossary tool, a knowledge pack, TSV data, TOML metadata and a Markdown report"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = ["alchemist"]
 
 # This is the whole integration: Alchemist finds the plugin through this entry point.

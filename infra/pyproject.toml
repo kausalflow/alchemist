@@ -3,6 +3,7 @@ name = "alchemist-infra"
 version = "0.1.0"
 description = "AWS CDK app that deploys Alchemist (ECS Fargate, Step Functions, Aurora, CloudFront)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
 dependencies = [
     "aws-cdk-lib>=2.200,<3",
     "constructs>=10.4,<11",

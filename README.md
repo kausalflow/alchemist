@@ -143,3 +143,7 @@ only its plants' registered prefixes and write only its run folder. See the S3 g
 ## Not in the MVP yet
 
 pgvector search, PDF reports, rerunning on a new scope, and the evaluation benchmark of past investigations.
+
+## License
+
+Alchemist is licensed under the [Apache License 2.0](LICENSE), like [penguineer](https://github.com/kausalflow/penguineer).
