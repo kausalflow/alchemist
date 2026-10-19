@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "AI research system for chemical engineering process questions over an S3 data lake"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = [
     "boto3>=1.35",
     "cloudpathlib[s3]>=0.20",
