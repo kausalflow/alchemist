@@ -142,14 +142,15 @@ def test_sync_to_s3(env, monkeypatch, tmp_path):
             monkeypatch.setenv(k, v)
         monkeypatch.delenv("AWS_PROFILE", raising=False)
         monkeypatch.setattr(S3Client, "_default_client", None)
-        boto3.client("s3").create_bucket(Bucket="lake", CreateBucketConfiguration={"LocationConstraint": "eu-central-1"})
+        # moto keeps buckets per process, so a name test_s3.py does not use.
+        boto3.client("s3").create_bucket(Bucket="sources-lake", CreateBucketConfiguration={"LocationConstraint": "eu-central-1"})
         with FakePIWebAPI(auth="basic") as pi_server:
-            cfg = pi_config(pi_server, "s3://lake/plants")
+            cfg = pi_config(pi_server, "s3://sources-lake/plants")
             sources.sync(cfg, cfg.get("p01-pi"), catalog, s, start=T0, end=T0 + timedelta(hours=4))
-        keys = sorted(o["Key"] for o in boto3.client("s3").list_objects_v2(Bucket="lake")["Contents"])
+        keys = sorted(o["Key"] for o in boto3.client("s3").list_objects_v2(Bucket="sources-lake")["Contents"])
         assert "plants/P01/p01-pi/historian/2026-10-01.parquet" in keys and "plants/P01/p01-pi/_sync.json" in keys
         files, sample = sample_dataset(catalog, catalog.dataset("p01-pi-historian"))
-        assert str(files[0]).startswith("s3://lake/") and len(sample) > 0
+        assert str(files[0]).startswith("s3://sources-lake/") and len(sample) > 0
     finally:
         server.stop()
 
