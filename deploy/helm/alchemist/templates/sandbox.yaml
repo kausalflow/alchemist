@@ -2,6 +2,16 @@
 {{- $name := printf "%s-sandbox" (include "alchemist.fullname" .) }}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
 {{- $keys := default .Values.existingSecret .Values.sandbox.existingSecret }}
+{{- $scoped := not (empty .Values.storage.runRoleArn) }}
+{{- if $scoped }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+{{- end }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -30,7 +40,7 @@ spec:
       labels: {{- include "alchemist.selector" . | nindent 8 }}
         app.kubernetes.io/component: sandbox
     spec:
-      serviceAccountName: {{ default (include "alchemist.serviceAccount" .) .Values.sandbox.serviceAccountName }}
+      serviceAccountName: {{ default (ternary $name (include "alchemist.serviceAccount" .) $scoped) .Values.sandbox.serviceAccountName }}
       automountServiceAccountToken: false
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
@@ -53,6 +63,8 @@ spec:
             - {name: AWS_ENDPOINT_URL, value: {{ . | quote }}}
             {{- end }}
             - {name: ALC_SANDBOX_MAX_KERNELS, value: {{ .Values.sandbox.maxKernels | quote }}}
+            - {name: ALC_KERNEL_JAIL, value: {{ .Values.sandbox.kernelJail | quote }}}
+            - {name: ALC_SANDBOX_REQUIRE_SCOPED, value: {{ ternary "1" "0" $scoped | quote }}}
             - {name: JUPYTER_RUNTIME_DIR, value: /tmp/jupyter}
             - {name: IPYTHONDIR, value: /tmp/ipython}
             - {name: MPLCONFIGDIR, value: /tmp/matplotlib}
@@ -60,9 +72,11 @@ spec:
               valueFrom: {secretKeyRef: {name: {{ $name }}, key: ALC_SANDBOX_TOKEN}}
             - name: ALC_PSEUDONYM_KEY
               valueFrom: {secretKeyRef: {name: {{ required "existingSecret is required" .Values.existingSecret }}, key: ALC_PSEUDONYM_KEY}}
+            {{- if not $scoped }}
             {{- range list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" }}
             - name: {{ . }}
               valueFrom: {secretKeyRef: {name: {{ $keys }}, key: {{ . }}, optional: true}}
+            {{- end }}
             {{- end }}
             {{- range $k, $v := .Values.sandbox.env }}
             - {name: {{ $k }}, value: {{ $v | quote }}}

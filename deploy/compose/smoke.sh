@@ -20,6 +20,8 @@ docker compose exec -T -e ALC_ACCESS=/data/access.yaml -e ALC_KNOWLEDGE=/data/kn
 grep -q "Verify original: True" /tmp/alc-demo.txt
 # The kernels ran in the sandbox, which answers only with the token and reaches neither the database nor the internet.
 docker compose logs sandbox | grep -q '"POST /start HTTP/1.1" 200'
+# Each kernel confined itself to its run (Landlock), and the run's manifest says so.
+docker compose exec -T api sh -c "grep -rl '\"filesystem\": \"landlock' /data/workspace --include manifest.json" | grep -q .
 test "$(docker compose exec -T api python -c "import urllib.request,urllib.error
 try: urllib.request.urlopen(urllib.request.Request('http://sandbox:8888/stop', data=b'{}'))
 except urllib.error.HTTPError as e: print(e.code)")" = 401

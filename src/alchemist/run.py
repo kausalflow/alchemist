@@ -97,8 +97,19 @@ class Services:
         sandbox service ALC_SANDBOX_URL names)."""
         sandbox_url = sandbox_url or self.settings.sandbox_url
         if sandbox_url:
-            kernel = RemoteKernel(sandbox_url, run_dir=str(ctx.run), run_mode=run_mode, seed=self.settings.seed)
-            return Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)
+            kernel = RemoteKernel(sandbox_url, run_dir=str(ctx.run), run_mode=run_mode, seed=self.settings.seed,
+                                  read_paths=local_read_paths(views))
+            refresher = None
+            if self.settings.sandbox_mode != "separate" and getattr(self.broker, "enabled", False):
+                # The sandbox service holds no storage keys: this worker issues the run's scoped session, sends it
+                # with /start, and sends each new one before the last expires.
+                _, refresher = self.sandbox_env(ctx, views)
+                kernel.push_first(refresher.current.process_json(), refresher.record())
+                refresher.on_issue.append(lambda creds: kernel.push_credentials(creds.process_json()))
+            sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)
+            if refresher:
+                sb.on_stop.append(refresher.start().stop)
+            return sb
         if self.settings.sandbox_mode == "separate":
             raise ValueError("ALC_SANDBOX_MODE=separate: give the sandbox's address (--sandbox-task-arn or --sandbox-url)")
         env, refresher = self.sandbox_env(ctx, views)
@@ -111,6 +122,13 @@ class Services:
     def seals_in_worker(self) -> bool:
         """In-process the worker seals the run; with a separate sandbox the workflow's Seal step does."""
         return self.settings.sandbox_mode != "separate"
+
+
+def local_read_paths(views: dict) -> list[str]:
+    """The local folders a run's datasets live in, which its kernel may read (object store globs need none)."""
+    from .credentials import _glob_prefix
+
+    return sorted({_glob_prefix(v["glob"]) or v["glob"] for v in views.values() if "://" not in v["glob"]})
 
 
 def plugin_tools(phase: str, ctx: "RunContext") -> tuple[list, dict]:

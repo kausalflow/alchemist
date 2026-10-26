@@ -34,11 +34,11 @@ MAX_TEXT = 4000
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _kernel_spec_dir() -> str:
+def _kernel_spec_dir(module: str = "ipykernel_launcher") -> str:
     d = Path(tempfile.mkdtemp(prefix="alc-kernels-")) / "alchemist"
     d.mkdir(parents=True)
     (d / "kernel.json").write_text(json.dumps({
-        "argv": [sys.executable, "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+        "argv": [sys.executable, "-m", module, "-f", "{connection_file}"],
         "display_name": "Alchemist (Python)", "language": "python"}))
     return str(d.parent)
 
@@ -79,17 +79,36 @@ def kernel_transport(platform: str = sys.platform) -> dict[str, str]:
 
 
 class LocalKernel:
-    """A Jupyter kernel in a child process of this one."""
+    """A Jupyter kernel in a child process of this one.
 
-    def __init__(self, env: dict[str, str]):
+    With `jail` ({"read": [...], "write": [...]}) the kernel restricts itself to those paths with Landlock
+    (fsjail.py) before it runs anything, and keeps its connection file, sockets and temporary files in a private
+    folder, so no other kernel can read its key or connect to it.
+    """
+
+    def __init__(self, env: dict[str, str], *, jail: dict | None = None):
         self.env = env
+        self.jail = jail
+        self.private: Path | None = None
         self.km: KernelManager | None = None
         self.kc = None
         self.credentials: dict | None = None
 
+    def _jailed_env(self) -> tuple[dict, dict]:
+        self.private = Path(tempfile.mkdtemp(prefix="alc-kernel-"))
+        priv = str(self.private)
+        env = {**self.env, "TMPDIR": priv, "MPLCONFIGDIR": priv, "IPYTHONDIR": priv, "JUPYTER_RUNTIME_DIR": priv,
+               "ALC_JAIL_READ": os.pathsep.join(self.jail.get("read", [])),
+               "ALC_JAIL_WRITE": os.pathsep.join([priv, *self.jail.get("write", [])])}
+        return env, {"transport": "ipc", "ip": str(self.private / "kernel"),
+                     "connection_file": str(self.private / "connection.json")}
+
     def start(self) -> None:
-        ksm = KernelSpecManager(kernel_dirs=[_kernel_spec_dir()])
-        transport = kernel_transport()
+        env, transport = self.env, kernel_transport()
+        if self.jail is not None:
+            env, transport = self._jailed_env()
+        ksm = KernelSpecManager(kernel_dirs=[_kernel_spec_dir("alchemist.fsjail" if self.jail is not None
+                                                              else "ipykernel_launcher")])
         self.km = KernelManager(kernel_name="alchemist", kernel_spec_manager=ksm, **transport)
         extra = []
         if transport["transport"] == "tcp":
@@ -98,7 +117,7 @@ class LocalKernel:
             extra = ["--IPKernelApp.log_level=ERROR"]
             warnings.filterwarnings("ignore", message="Proactor event loop does not implement add_reader",
                                     category=RuntimeWarning)
-        self.km.start_kernel(env=self.env, extra_arguments=extra)
+        self.km.start_kernel(env=env, extra_arguments=extra, **({"cwd": str(self.private)} if self.private else {}))
         self.kc = self.km.client()
         self.kc.start_channels()
         self.kc.wait_for_ready(timeout=60)
@@ -108,6 +127,10 @@ class LocalKernel:
             self.kc.stop_channels()
         if self.km:
             self.km.shutdown_kernel(now=True)
+        if self.private:
+            import shutil
+
+            shutil.rmtree(self.private, ignore_errors=True)
 
     def execute_interactive(self, code: str, *, output_hook, timeout: float) -> dict:
         return self.kc.execute_interactive(code, output_hook=output_hook, timeout=timeout, allow_stdin=False)
@@ -125,10 +148,13 @@ class RemoteKernel:
     """
 
     def __init__(self, url: str, *, run_dir: str, run_mode: str, seed: int, ready_timeout: float = 600,
-                 token: str | None = None):
+                 token: str | None = None, read_paths: list[str] | None = None):
         self.url = url.rstrip("/")
         self.run_dir = str(run_dir)
         self.start_body = {"run_dir": self.run_dir, "run_mode": run_mode, "seed": seed}
+        if read_paths is not None:
+            self.start_body["read_paths"] = list(read_paths)
+        self.pushed_record: dict | None = None
         self.ready_timeout = ready_timeout
         # A sandbox service shared by several runs wants the token it was started with (ALC_SANDBOX_TOKEN).
         self.token = token if token is not None else os.environ.get("ALC_SANDBOX_TOKEN")
@@ -158,9 +184,20 @@ class RemoteKernel:
             time.sleep(2)
         raise SandboxUnavailable(f"sandbox at {self.url} did not become ready: {last}")
 
+    def push_first(self, credentials: dict, record: dict) -> None:
+        """Start the kernel with these credentials (credential_process JSON); the manifest keeps `record`."""
+        self.start_body["credentials"] = credentials
+        self.pushed_record = record
+
+    def push_credentials(self, credentials: dict) -> None:
+        self._call("POST", "/credentials", {"run_dir": self.run_dir, "credentials": credentials}, timeout=30)
+
     def start(self) -> None:
         self.wait_ready()
-        self.credentials = self._call("POST", "/start", self.start_body, timeout=120).get("credentials")
+        record = self._call("POST", "/start", self.start_body, timeout=120).get("credentials") or {}
+        if self.pushed_record is not None:
+            record = {**self.pushed_record, **{k: v for k, v in record.items() if k == "filesystem"}}
+        self.credentials = record
 
     def stop(self) -> None:
         try:

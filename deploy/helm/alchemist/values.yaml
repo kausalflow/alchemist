@@ -37,6 +37,10 @@ storage:
   lake: s3://alchemist-lake             # where `alchemist sources sync` writes PI and lake data
   endpoint: ""                          # for S3-compatible stores, e.g. https://minio.plant.internal
   region: us-east-1
+  # Per-run credentials (recommended): the API assumes this role once per run (AWS STS, or the store's own STS:
+  # MinIO, Ceph) with a session policy limited to the run's datasets and folder, and hands the session to the
+  # sandbox, which then gets no storage identity of its own. The API's identity must be allowed to assume it.
+  runRoleArn: ""
 
 # Models per role, as provider:model-id. `local:` is a model server in your network (vLLM, Ollama, llama.cpp ...).
 models:
@@ -93,9 +97,13 @@ api:
 sandbox:
   enabled: true
   maxKernels: 4                         # runs analysed at once; more wait for a free kernel
-  # A Secret with the sandbox's own object store keys (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY), if it should have
-  # narrower rights than the API: read the lake, read and write the workspace. Default: existingSecret's keys, or the
-  # service account's workload identity.
+  # Each kernel confines itself with Linux Landlock to its run's datasets and folder. auto: where the nodes support
+  # it (Linux 5.13+); required: refuse runs on nodes that do not; off.
+  kernelJail: auto
+  # Without storage.runRoleArn: a Secret with the sandbox's own object store keys (AWS_ACCESS_KEY_ID,
+  # AWS_SECRET_ACCESS_KEY), narrower than the API's if you can: read the lake, read and write the workspace. Default:
+  # existingSecret's keys, or the service account's workload identity. With runRoleArn the sandbox gets no keys and
+  # its own service account without annotations.
   existingSecret: ""
   serviceAccountName: ""                # default: the chart's service account (its workload identity reaches S3)
   networkPolicy:
