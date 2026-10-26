@@ -93,7 +93,9 @@ class Services:
         return env, refresher
 
     def sandbox(self, ctx: "RunContext", views: dict, *, run_mode: str, sandbox_url: str | None = None) -> Sandbox:
-        """The run's kernel: a local child process, or the separate sandbox task at sandbox_url."""
+        """The run's kernel: a local child process, or the sandbox at sandbox_url (a separate sandbox task, or the
+        sandbox service ALC_SANDBOX_URL names)."""
+        sandbox_url = sandbox_url or self.settings.sandbox_url
         if sandbox_url:
             kernel = RemoteKernel(sandbox_url, run_dir=str(ctx.run), run_mode=run_mode, seed=self.settings.seed)
             return Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)

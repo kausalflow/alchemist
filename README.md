@@ -85,7 +85,8 @@ uv run alchemist verify <run-id>
 For a pilot, run Alchemist where the plant's data is: one server with docker compose ([`deploy/compose`](deploy/compose)),
 or the customer's Kubernetes cluster with the Helm chart ([`deploy/helm/alchemist`](deploy/helm/alchemist)). Both use
 the image `ghcr.io/kausalflow/alchemist`, sign users in with any OIDC provider (`ALC_AUTH=oidc`), can keep every model
-call inside the network (`local:` models), and keep AVEVA PI and lake tables synced into the lake
+call inside the network (`local:` models), run the analysis kernels in a sandbox that reaches nothing but storage, and
+keep AVEVA PI and lake tables synced into the lake
 (`alchemist sources sync`). See [Deploy on-prem or in your cloud](docs/guides/deploy-on-prem.md) and
 [Data sources](docs/guides/data-sources.md).
 
@@ -126,7 +127,7 @@ npx aws-cdk@2 synth -c env=dev --quiet   # no AWS credentials needed
 | Plant groups decide data, workspaces decide projects | identity-provider groups (or local users in `access.yaml`); tool layer, plus per-run STS credentials enforced by S3 when `ALC_RUN_ROLE_ARN` is set | same, always with per-run credentials |
 | Only approved, registered datasets are queryable | views built from approved cards; SQL guard | same, plus the run role can only read registered prefixes |
 | Hidden and pseudonymised columns | dropped or keyed-hashed in the views | same |
-| The kernel cannot reach the model or the internet | not enforced (local process) | separate Fargate task, no route to Bedrock, no NAT |
+| The kernel cannot reach the model or the internet | docker compose and Helm: a sandbox service with no credentials but storage, on an internal network or behind a NetworkPolicy; a plain `alchemist serve`: not enforced (local process) | separate Fargate task, no route to Bedrock, no NAT |
 | Sealed runs cannot change | SEALED written once (S3 conditional put), run credentials may not write it, SHA-256 tamper evidence | same |
 | Catalog and run index | SQLite, or PostgreSQL with `ALC_DB=postgresql://...` | Aurora PostgreSQL (pgvector for knowledge passages is planned) |
 | Document search | keyword ranking | hybrid (embeddings + full text) |

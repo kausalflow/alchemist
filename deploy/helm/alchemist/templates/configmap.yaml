@@ -36,6 +36,9 @@ data:
   {{- with include "alchemist.localUrl" . }}
   ALC_LOCAL_LLM_URL: {{ . | quote }}
   {{- end }}
+  {{- if .Values.sandbox.enabled }}
+  ALC_SANDBOX_URL: "http://{{ include "alchemist.fullname" . }}-sandbox:8888"
+  {{- end }}
   ALC_AUTH: {{ .Values.auth.mode | quote }}
   ALC_ACCESS_PROVIDER: {{ .Values.auth.accessProvider | quote }}
   {{- if eq .Values.auth.mode "oidc" }}

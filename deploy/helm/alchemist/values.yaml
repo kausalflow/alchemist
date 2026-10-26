@@ -76,8 +76,35 @@ knowledge:
 env: {}
 
 api:
-  # One replica: runs execute in the API process (each analysis in its own kernel), and the API reconciles them.
+  # One replica: runs execute in the API process (each analysis in its own kernel in the sandbox), and the API
+  # reconciles them.
   # Scale up with resources, or on AWS with the CDK stack, which runs each step as its own task.
+  resources:
+    requests: {cpu: "1", memory: 4Gi}
+    limits: {memory: 16Gi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The analysis kernels, in their own Deployment: the Python the model writes runs there, not in the API. The sandbox
+# gets no database, model, PI or sign-in credentials (only the pseudonym key and storage), no Kubernetes API token,
+# and a NetworkPolicy that admits only the API and lets it reach only DNS and `networkPolicy.egress`. Off: kernels run
+# inside the API container.
+sandbox:
+  enabled: true
+  maxKernels: 4                         # runs analysed at once; more wait for a free kernel
+  # A Secret with the sandbox's own object store keys (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY), if it should have
+  # narrower rights than the API: read the lake, read and write the workspace. Default: existingSecret's keys, or the
+  # service account's workload identity.
+  existingSecret: ""
+  serviceAccountName: ""                # default: the chart's service account (its workload identity reaches S3)
+  networkPolicy:
+    enabled: true
+    # Where kernels may connect besides DNS: the object store. The default allows HTTPS anywhere; narrow it to the
+    # store, e.g. [{to: [{ipBlock: {cidr: 10.20.0.0/24}}], ports: [{port: 443, protocol: TCP}]}].
+    egress:
+      - ports: [{port: 443, protocol: TCP}]
+  env: {}                               # extra variables, e.g. plugin settings the kernel's methods read
   resources:
     requests: {cpu: "1", memory: 4Gi}
     limits: {memory: 16Gi}

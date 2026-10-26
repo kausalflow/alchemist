@@ -52,13 +52,17 @@ steps:
 alchemist sandbox serve [--host 0.0.0.0] [--port 8888]
 ```
 
-The analysis kernel as its own service, for `ALC_SANDBOX_MODE=separate`. It serves one run's kernel over a small
-HTTP API (`GET /healthz`, `POST /start`, `POST /execute`, `POST /stop`) that `worker analyse --sandbox-url` uses, and
-builds the kernel's environment itself. With `ALC_BROKER_FUNCTION` set, the kernel has no AWS keys: its AWS profile's
+The analysis kernels as their own service: one sandbox task per run on AWS (`ALC_SANDBOX_MODE=separate`), or one
+sandbox service for every run in docker compose and the Helm chart (`ALC_SANDBOX_URL` on the API). It serves one
+kernel per run folder over a small HTTP API (`GET /healthz`, `POST /start`, `POST /execute`, `POST /stop`) that
+`worker analyse --sandbox-url` and the API use, and builds the kernels' environment itself, without the database
+settings or its own token. With `ALC_BROKER_FUNCTION` set, the kernel has no AWS keys: its AWS profile's
 `credential_process` is `alchemist broker credentials`, so boto3, cloudpathlib and DuckDB get the run's credentials
 from the broker and fetch new ones when they expire. With `ALC_RUN_ID` set it serves only that run's folder. Without
-`ALC_BROKER_FUNCTION` (a laptop) the kernel uses the ambient credentials. The API has no authentication of its own;
-in AWS only the orchestrator's security group can reach the port.
+`ALC_BROKER_FUNCTION` the kernel uses the ambient credentials. With `ALC_WORKSPACE` set it only starts kernels for
+folders in that workspace, and with `ALC_SANDBOX_TOKEN` set it answers only requests that carry the token
+(`Authorization: Bearer ...`). In AWS only the orchestrator's security group can reach the port; in docker compose
+and Kubernetes only the API can (an internal network, a NetworkPolicy).
 
 ## `broker credentials`
 

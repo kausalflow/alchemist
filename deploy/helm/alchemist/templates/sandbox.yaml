@@ -1,0 +1,134 @@
+{{- if .Values.sandbox.enabled }}
+{{- $name := printf "%s-sandbox" (include "alchemist.fullname" .) }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
+{{- $keys := default .Values.existingSecret .Values.sandbox.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+type: Opaque
+data:
+  # The API drives the sandbox with this token; generated once and kept across upgrades.
+  ALC_SANDBOX_TOKEN: {{ if $existing }}{{ index $existing.data "ALC_SANDBOX_TOKEN" }}{{ else }}{{ randAlphaNum 48 | b64enc }}{{ end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox
+spec:
+  replicas: 1  # the API drives one sandbox; it holds the running kernels in memory
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "alchemist.selector" . | nindent 6 }}
+      app.kubernetes.io/component: sandbox
+  template:
+    metadata:
+      labels: {{- include "alchemist.selector" . | nindent 8 }}
+        app.kubernetes.io/component: sandbox
+    spec:
+      serviceAccountName: {{ default (include "alchemist.serviceAccount" .) .Values.sandbox.serviceAccountName }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: sandbox
+          image: {{ include "alchemist.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["sandbox", "serve", "--host", "0.0.0.0", "--port", "8888"]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+            readOnlyRootFilesystem: true
+          # Only what a kernel needs: never envFrom the chart's Secret, which holds the database and model keys.
+          env:
+            - {name: ALC_WORKSPACE, value: {{ .Values.storage.workspace | quote }}}
+            - {name: ALC_LAKE, value: {{ .Values.storage.lake | quote }}}
+            - {name: AWS_REGION, value: {{ .Values.storage.region | quote }}}
+            {{- with .Values.storage.endpoint }}
+            - {name: AWS_ENDPOINT_URL, value: {{ . | quote }}}
+            {{- end }}
+            - {name: ALC_SANDBOX_MAX_KERNELS, value: {{ .Values.sandbox.maxKernels | quote }}}
+            - {name: JUPYTER_RUNTIME_DIR, value: /tmp/jupyter}
+            - {name: IPYTHONDIR, value: /tmp/ipython}
+            - {name: MPLCONFIGDIR, value: /tmp/matplotlib}
+            - name: ALC_SANDBOX_TOKEN
+              valueFrom: {secretKeyRef: {name: {{ $name }}, key: ALC_SANDBOX_TOKEN}}
+            - name: ALC_PSEUDONYM_KEY
+              valueFrom: {secretKeyRef: {name: {{ required "existingSecret is required" .Values.existingSecret }}, key: ALC_PSEUDONYM_KEY}}
+            {{- range list "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" }}
+            - name: {{ . }}
+              valueFrom: {secretKeyRef: {name: {{ $keys }}, key: {{ . }}, optional: true}}
+            {{- end }}
+            {{- range $k, $v := .Values.sandbox.env }}
+            - {name: {{ $k }}, value: {{ $v | quote }}}
+            {{- end }}
+          ports:
+            - {name: kernel-api, containerPort: 8888}
+          readinessProbe:
+            httpGet: {path: /healthz, port: kernel-api}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: kernel-api}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources: {{- toYaml .Values.sandbox.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: data, mountPath: /data}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: data, emptyDir: {}}
+      {{- with .Values.sandbox.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sandbox.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.sandbox.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector: {{- include "alchemist.selector" . | nindent 4 }}
+    app.kubernetes.io/component: sandbox
+  ports:
+    - {name: kernel-api, port: 8888, targetPort: kernel-api}
+{{- if .Values.sandbox.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "alchemist.selector" . | nindent 6 }}
+      app.kubernetes.io/component: sandbox
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- include "alchemist.selector" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - {port: 8888, protocol: TCP}
+  egress:
+    - ports:
+        - {port: 53, protocol: UDP}
+        - {port: 53, protocol: TCP}
+    {{- with .Values.sandbox.networkPolicy.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}

@@ -11,16 +11,19 @@ Functions workflow per run and separate sandbox tasks, is in [Deploy to AWS](dep
 | Database | bundled PostgreSQL 17 | theirs (RDS, Azure Database, Cloud SQL, CloudNativePG ...) |
 | Run folders and lake | a local volume, or their S3-compatible store | their S3 or S3-compatible store |
 | Models | bundled Ollama (`--profile local-llm`), any server in the network, or an approved cloud API | a model server in the cluster or network, optional bundled Ollama, or an approved cloud API |
+| Analysis kernels | `sandbox` service on an internal network | `sandbox` Deployment behind a NetworkPolicy |
 | Sign-in | pick a user (`dev`, trial only) or the plant's identity provider (`oidc`) | the plant's identity provider (`oidc`) |
 | Data sources | `sync` service every 15 minutes | CronJob every 15 minutes |
 
 ```mermaid
 flowchart LR
   U[engineer's browser] --> P[sign-in proxy<br/>oauth2-proxy / ingress auth]
-  P -->|ID token| A[alchemist serve<br/>API + web app + run kernels]
+  P -->|ID token| A[alchemist serve<br/>API + web app + runs]
   A --> DB[(PostgreSQL)]
   A --> W[(workspace + lake<br/>volume or S3)]
   A --> M[model server<br/>vLLM / Ollama, or an approved API]
+  A -->|cells, with a token| K[alchemist sandbox serve<br/>one kernel per run]
+  K --> W
   S[alchemist sources sync] --> PI[(AVEVA PI<br/>PI Web API)]
   S --> LT[(lake tables)]
   S --> W
@@ -33,7 +36,7 @@ Everything is in [`deploy/compose`](https://github.com/kausalflow/alchemist/tree
 
 ```bash
 git clone https://github.com/kausalflow/alchemist && cd alchemist/deploy/compose
-cp .env.example .env        # set POSTGRES_PASSWORD, ALC_PSEUDONYM_KEY, the models and sign-in
+cp .env.example .env        # set POSTGRES_PASSWORD, ALC_PSEUDONYM_KEY, ALC_SANDBOX_TOKEN, the models and sign-in
 $EDITOR config/access.yaml  # plants, workspaces and users (or group mapping)
 $EDITOR config/sources.yaml # PI servers and lake tables to sync
 docker compose --profile local-llm up -d    # or without the profile, with a model server you already have
@@ -58,7 +61,8 @@ The stack keeps run folders and the lake on the `alchemist-home` volume. To use 
 MinIO, Ceph, NetApp StorageGRID ...), set `ALC_WORKSPACE`, `ALC_LAKE` and the `AWS_*` variables in `.env`.
 
 `deploy/compose/smoke.sh` is the end-to-end check CI runs on every change: the stack comes up on PostgreSQL, the demo
-investigation runs, replays and verifies, and a PI source syncs from a fake PI Web API into the lake and the catalog.
+investigation runs, replays and verifies with its kernels in the sandbox (which must reach neither PostgreSQL nor the
+internet), and a PI source syncs from a fake PI Web API into the lake and the catalog.
 
 ## Helm
 
@@ -117,8 +121,9 @@ ingress:
 
 The chart runs:
 
-- the **API** (one replica, `Recreate`): the web app, the REST API and the runs, each analysis in its own kernel
-  process; a `db migrate` init container applies schema migrations first;
+- the **API** (one replica, `Recreate`): the web app, the REST API and the runs; a `db migrate` init container applies
+  schema migrations first;
+- the **sandbox** (`sandbox.enabled`), where each run's analysis kernel runs, see [below](#the-analysis-sandbox);
 - the **sync** CronJob (`sync.schedule`), `concurrencyPolicy: Forbid`;
 - optionally **Ollama** as a StatefulSet with a GPU (`ollama.enabled`), when the cluster has no model server yet.
 
@@ -142,15 +147,43 @@ image also ships DuckDB's S3 extensions, so nothing is downloaded at run time. W
 | From | To | Why |
 | --- | --- | --- |
 | API | the model server | planning, analysis, review |
+| API | the sandbox | running each analysis cell |
+| sandbox | the object store (not with the compose volume) | the run's queries and files |
 | API | the identity provider's keys (`jwks_uri`) | verifying ID tokens; or serve them locally with `ALC_OIDC_JWKS_URL` |
 | API, sync | PostgreSQL, the object store | catalog, runs, lake |
 | sync | PI Web API, lake sources | reading plant data (read-only) |
 | the host | `ghcr.io` | pulling the image; or mirror it into the plant's registry |
 
+## The analysis sandbox
+
+The analysis model writes Python, and that code runs in a kernel. In both deployments the kernels run in their own
+container, `alchemist sandbox serve`, not in the API:
+
+- **No credentials but storage.** The sandbox gets the pseudonym key and the object store keys (or, in Kubernetes,
+  the service account's workload identity), nothing else: no database password, no model or PI keys, no
+  sign-in settings, no Kubernetes API token. Kernels do not even see the token the API drives the sandbox with.
+- **No network but storage.** In docker compose the sandbox's only network is `internal`, with no route out; it
+  reaches the API's requests and nothing else (with the workspace on the local volume it needs no network at all).
+  In Kubernetes a NetworkPolicy admits only the API's pods and lets kernels reach DNS and
+  `sandbox.networkPolicy.egress`, which by default is HTTPS anywhere: narrow it to the object store's address.
+- **Only the API drives it.** It answers only requests with its token (`ALC_SANDBOX_TOKEN`; the chart generates
+  one), and only starts kernels for run folders in the workspace.
+- **Hardened container.** Read-only root file system, all capabilities dropped, no privilege escalation, uid 10001.
+
+Each run has its own kernel process; `ALC_SANDBOX_MAX_KERNELS` (Helm: `sandbox.maxKernels`) caps how many run at
+once. To run kernels inside the API container instead, set `ALC_SANDBOX_URL=` (empty) in `.env`, or
+`sandbox.enabled: false`.
+
+With the workspace on an object store, give the sandbox its own keys if you can (`SANDBOX_AWS_ACCESS_KEY_ID` and
+`SANDBOX_AWS_SECRET_ACCESS_KEY` in `.env`; `sandbox.existingSecret` or `sandbox.serviceAccountName` in Helm), limited
+to reading the lake and reading and writing the workspace, and attach the compose sandbox to a network that reaches
+the store (see the comment in `docker-compose.yml`).
+
 ## What this deployment does not enforce yet
 
-Compared with the [AWS architecture](deploy-aws.md), the compose and Helm deployments run each analysis kernel inside
-the API container (`ALC_SANDBOX_MODE=in_process`). The kernel's SQL is still read-only and limited to approved datasets,
-and every result is sealed, but the kernel runs with the API's network access and storage credentials. Restrict the
-pod's or host's egress (a Kubernetes NetworkPolicy, or the plant firewall) to the destinations above. Per-run storage
-credentials (`ALC_RUN_ROLE_ARN`) need AWS STS and are off here.
+Compared with the [AWS architecture](deploy-aws.md), all runs share one sandbox and its storage rights: a kernel's
+SQL is read-only and limited to the run's approved datasets, and every result is sealed, but Python in one run's
+kernel could read another plant's lake files or another run's folder. On AWS each run gets its own sandbox task and
+credentials scoped to its datasets and folder (`ALC_RUN_ROLE_ARN`, the credential broker), which need AWS STS. Until
+that comes to these deployments, keep one Alchemist installation per group of plants whose users may see each
+other's data.

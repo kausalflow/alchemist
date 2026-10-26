@@ -26,7 +26,18 @@ Alchemist reads its settings from environment variables, with local-friendly def
 | `ALC_RUN_CREDENTIAL_SECONDS` | `3600` | lifetime of each of a run's credential sessions (one hour at most with role chaining); the worker issues a new one before it expires |
 | `AWS_ENDPOINT_URL_S3` | unset | custom S3 endpoint (MinIO, moto, LocalStack), used by boto3, cloudpathlib and DuckDB |
 
-## Separate sandbox
+## Sandbox service (docker compose, Helm)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_SANDBOX_URL` | unset | on the API: run every analysis kernel in the sandbox service at this address (`alchemist sandbox serve`); the worker still reports and seals. Unset: the kernel is a child of the worker |
+| `ALC_SANDBOX_TOKEN` | unset | on both: the bearer token the API sends and the sandbox requires. Never passed to kernels |
+| `ALC_SANDBOX_MAX_KERNELS` | `4` | on the sandbox: kernels running at once; a run that finds none free fails to start its analysis |
+| `ALC_SANDBOX_IDLE_SECONDS` | `14400` | on the sandbox: a kernel unused this long is stopped when another run needs room |
+
+See [Deploy on-prem or in your cloud](../guides/deploy-on-prem.md#the-analysis-sandbox).
+
+## Separate sandbox (AWS)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
