@@ -216,7 +216,8 @@ def test_meta_lists_tools_from_the_registry(client):
 def test_workspaces_and_similar_questions(client, finished):
     ws = client.get("/api/workspaces", headers=as_user("eng_p1")).json()
     assert ws[0]["name"] == "quality" and any(p["name"] == "line2-api" for p in ws[0]["projects"])
-    sim = client.get("/api/questions/similar", params={"q": "quality low on Line 2"}, headers=as_user("eng_p1")).json()
+    # Other tests ask the demo question in the same database too, so look past the first five.
+    sim = client.get("/api/questions/similar", params={"q": "quality low on Line 2", "limit": 50}, headers=as_user("eng_p1")).json()
     assert any(s["run_id"] == finished for s in sim)
 
 

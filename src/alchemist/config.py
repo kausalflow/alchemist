@@ -37,6 +37,10 @@ class Settings:
     # Lambda; workers drive it (--sandbox-task-arn / --sandbox-url) and separate `worker report` / `worker seal`
     # steps finish the run. The API's launcher also writes each run's broker grant in this mode.
     sandbox_mode: str = field(default_factory=lambda: os.environ.get("ALC_SANDBOX_MODE", "in_process"))
+    # in_process with a sandbox service: each run's kernel runs in `alchemist sandbox serve` at this address (docker
+    # compose and the Helm chart), which holds no database, model or PI credentials and has no network but storage;
+    # the worker still reports and seals. Unset: the kernel is a child of the worker.
+    sandbox_url: str | None = field(default_factory=lambda: os.environ.get("ALC_SANDBOX_URL") or None)
     # How long a run's broker grant stays valid after approval (separate mode): the analysis timeout plus slack.
     grant_hours: int = field(default_factory=lambda: int(os.environ.get("ALC_GRANT_HOURS", "8")))
     # Which registered access provider supplies users, plant groups and workspaces ("yaml" reads access_file).

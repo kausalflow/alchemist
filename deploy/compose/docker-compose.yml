@@ -12,17 +12,19 @@
 
 name: alchemist
 
+x-env: &env
+  ALC_DB: postgresql://alchemist:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/alchemist
+  ALC_WORKSPACE: ${ALC_WORKSPACE:-/data/workspace}
+  ALC_LAKE: ${ALC_LAKE:-/data/lake}
+  ALC_ACCESS: /config/access.yaml
+  ALC_SOURCES: /config/sources.yaml
+  ALC_KNOWLEDGE: /config/knowledge
+
 x-alchemist: &alchemist
   image: ${ALC_IMAGE:-ghcr.io/kausalflow/alchemist:latest}
   restart: unless-stopped
   env_file: .env
-  environment:
-    ALC_DB: postgresql://alchemist:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/alchemist
-    ALC_WORKSPACE: ${ALC_WORKSPACE:-/data/workspace}
-    ALC_LAKE: ${ALC_LAKE:-/data/lake}
-    ALC_ACCESS: /config/access.yaml
-    ALC_SOURCES: /config/sources.yaml
-    ALC_KNOWLEDGE: /config/knowledge
+  environment: *env
   volumes:
     - ./config:/config:ro
     - alchemist-home:/data
@@ -34,6 +36,17 @@ services:
   api:
     <<: *alchemist
     command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *env
+      # Each run's analysis kernel runs in the sandbox service. Set ALC_SANDBOX_URL= (empty) in .env to run kernels
+      # inside the API container instead.
+      ALC_SANDBOX_URL: ${ALC_SANDBOX_URL-http://sandbox:8888}
+    networks: [default, sandbox]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sandbox:
+        condition: service_started
     ports:
       - "${ALC_PORT:-8000}:8000"
     healthcheck:
@@ -41,6 +54,39 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  # The analysis kernels: the Python the model writes runs here, not in the API. The sandbox gets no .env: no
+  # database, model, PI or sign-in credentials, only the pseudonym key and the storage. Its only network is
+  # `sandbox`, which has no route out, so code in a kernel reaches nothing but the API that drives it.
+  sandbox:
+    image: ${ALC_IMAGE:-ghcr.io/kausalflow/alchemist:latest}
+    restart: unless-stopped
+    command: ["sandbox", "serve", "--host", "0.0.0.0", "--port", "8888"]
+    environment:
+      ALC_SANDBOX_TOKEN: ${ALC_SANDBOX_TOKEN:?set ALC_SANDBOX_TOKEN in .env}
+      ALC_PSEUDONYM_KEY: ${ALC_PSEUDONYM_KEY:?set ALC_PSEUDONYM_KEY in .env}
+      ALC_WORKSPACE: ${ALC_WORKSPACE:-/data/workspace}
+      ALC_LAKE: ${ALC_LAKE:-/data/lake}
+      ALC_SANDBOX_MAX_KERNELS: ${ALC_SANDBOX_MAX_KERNELS:-4}
+      # The image's root file system is read-only here: kernels keep their runtime files in /tmp.
+      JUPYTER_RUNTIME_DIR: /tmp/jupyter
+      IPYTHONDIR: /tmp/ipython
+      MPLCONFIGDIR: /tmp/matplotlib
+      # With s3:// buckets: the sandbox's own keys (read the lake, read and write the workspace), and a network that
+      # reaches the object store (see below).
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${SANDBOX_AWS_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}
+      AWS_SECRET_ACCESS_KEY: ${SANDBOX_AWS_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}
+    volumes:
+      - alchemist-home:/data
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # With the workspace and lake on an object store, add a network that reaches only the store, e.g. an external
+    # network for the storage VLAN, or `default` and limit the host's egress to the store with the firewall.
+    networks: [sandbox]
 
   # Pulls each source in config/sources.yaml every ALC_SYNC_EVERY, registers its datasets and drafts their cards.
   # A data admin approves each card once in the web app before anyone can query it.
@@ -84,6 +130,10 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
     entrypoint: ["sh", "-c", "sleep 3 && ollama pull ${ALC_LOCAL_MODEL:-qwen3:32b}"]
+
+networks:
+  sandbox:
+    internal: true
 
 volumes:
   alchemist-home:

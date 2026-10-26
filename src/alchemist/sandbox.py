@@ -124,16 +124,22 @@ class RemoteKernel:
     says which run folder, mode and seed to use.
     """
 
-    def __init__(self, url: str, *, run_dir: str, run_mode: str, seed: int, ready_timeout: float = 600):
+    def __init__(self, url: str, *, run_dir: str, run_mode: str, seed: int, ready_timeout: float = 600,
+                 token: str | None = None):
         self.url = url.rstrip("/")
-        self.start_body = {"run_dir": str(run_dir), "run_mode": run_mode, "seed": seed}
+        self.run_dir = str(run_dir)
+        self.start_body = {"run_dir": self.run_dir, "run_mode": run_mode, "seed": seed}
         self.ready_timeout = ready_timeout
+        # A sandbox service shared by several runs wants the token it was started with (ALC_SANDBOX_TOKEN).
+        self.token = token if token is not None else os.environ.get("ALC_SANDBOX_TOKEN")
         self.credentials: dict | None = None
 
     def _call(self, method: str, path: str, body: dict | None = None, timeout: float = 60) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
         req = urllib.request.Request(self.url + path, method=method,
-                                     data=None if body is None else json.dumps(body).encode(),
-                                     headers={"Content-Type": "application/json"})
+                                     data=None if body is None else json.dumps(body).encode(), headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read() or b"{}")
@@ -158,12 +164,13 @@ class RemoteKernel:
 
     def stop(self) -> None:
         try:
-            self._call("POST", "/stop", {}, timeout=30)
+            self._call("POST", "/stop", {"run_dir": self.run_dir}, timeout=30)
         except (OSError, SandboxUnavailable):
             pass  # the workflow stops the task anyway
 
     def execute_interactive(self, code: str, *, output_hook, timeout: float) -> dict:
-        out = self._call("POST", "/execute", {"code": code, "timeout": timeout}, timeout=timeout + 60)
+        out = self._call("POST", "/execute", {"run_dir": self.run_dir, "code": code, "timeout": timeout},
+                         timeout=timeout + 60)
         for msg in out["messages"]:
             output_hook(msg)
         return {"content": out["reply"]}

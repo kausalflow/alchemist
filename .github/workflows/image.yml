@@ -71,6 +71,9 @@ jobs:
           helm template t deploy/helm/alchemist $args > /dev/null
           helm template t deploy/helm/alchemist $args --set ollama.enabled=true --set ingress.enabled=true \
             --set persistence.enabled=true --set knowledge.existingConfigMap=docs > /dev/null
+          helm template t deploy/helm/alchemist $args --set sandbox.enabled=false > /dev/null
+          helm template t deploy/helm/alchemist $args --set sandbox.networkPolicy.enabled=false \
+            --set sandbox.existingSecret=sandbox-keys > /dev/null
           # Required values are enforced.
           if helm template t deploy/helm/alchemist --set auth.oidc.issuer=x --set auth.oidc.audience=y 2>/dev/null; then
             echo "::error::helm template accepted a release without database.host"; exit 1

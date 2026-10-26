@@ -300,3 +300,72 @@ def test_local_kernel_uses_tcp_on_windows(monkeypatch):
         assert "42" in "".join(out)
     finally:
         k.stop()
+
+
+# ------------------------------------------------------------------ the sandbox service (docker compose, Helm)
+
+def test_sandbox_service_keeps_one_kernel_per_run_and_a_limit(tmp_path):
+    ws = tmp_path / "ws"
+    host = KernelHost({**os.environ, "ALC_WORKSPACE": str(ws), "ALC_SANDBOX_TOKEN": "t0k", "ALC_DB_PASSWORD": "pw"},
+                      max_kernels=2)
+    try:
+        for name in ("R1", "R2"):
+            (ws / name).mkdir(parents=True)
+            host.start(str(ws / name))
+        with pytest.raises(PermissionError):
+            host.start(str(tmp_path / "elsewhere" / "R3"))
+        with pytest.raises(PermissionError):
+            host.start(str(ws / ".." / "elsewhere"))
+        from alchemist.sandbox_server import Busy
+
+        with pytest.raises(Busy):
+            host.start(str(ws / "R3"))
+        host.execute("x = 'one'", run_dir=str(ws / "R1"))
+        host.execute("x = 'two'", run_dir=str(ws / "R2"))
+        code = "import os; print(x, os.environ['ALC_RUN_DIR'], 'ALC_SANDBOX_TOKEN' in os.environ, 'ALC_DB_PASSWORD' in os.environ)"
+        out = host.execute(code, run_dir=str(ws / "R1"))
+        text = "".join(m["content"].get("text", "") for m in out["messages"] if m["msg_type"] == "stream")
+        assert text.split() == ["one", str(ws / "R1"), "False", "False"]
+        with pytest.raises(RuntimeError, match="which run_dir"):
+            host.execute("1")
+        host.stop(str(ws / "R2"))
+        assert list(host.kernels) == [str(ws / "R1")]
+    finally:
+        host.stop()
+
+
+def test_sandbox_service_wants_its_token(tmp_path):
+    from alchemist.sandbox import RemoteKernel, SandboxUnavailable
+
+    server = make_server("127.0.0.1", 0, KernelHost({**os.environ, "ALC_SANDBOX_TOKEN": "t0k"}))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with pytest.raises(SandboxUnavailable, match="401"):
+            RemoteKernel(url, run_dir=str(tmp_path), run_mode="live", seed=1, token="").start()
+        k = RemoteKernel(url, run_dir=str(tmp_path), run_mode="live", seed=1, token="t0k")
+        k.start()
+        out = []
+        k.execute_interactive("print(6 * 7)", output_hook=lambda m: out.append(m["content"].get("text", "")), timeout=30)
+        assert "42" in "".join(out)
+        k.stop()
+        assert server.kernel_host.kernels == {}
+    finally:
+        server.shutdown()
+        server.kernel_host.stop()
+
+
+def test_in_process_run_on_the_sandbox_service_is_sealed_by_the_worker(svc, sandbox_url):
+    """ALC_SANDBOX_URL: the kernel runs in the sandbox service, the worker still reports and seals."""
+    s = copy.copy(svc)
+    s.settings = dataclasses.replace(svc.settings, sandbox_url=sandbox_url)
+    d = svc.catalog.latest_card("resin_lots", status=None)
+    if d["status"] == "draft":
+        svc.catalog.approve("resin_lots", d["version"], reviewer="data_admin")
+    out = ask(s, user="eng_p1", workspace="quality", project="line2-service", question=script.QUESTION,
+              scope=script.SCOPE, model=ScriptedModel(script.PLAN_TURNS))
+    start_approval(s, out["run_id"], user="eng_p1")
+    res = analyse(s, out["run_id"], user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
+                  reviewer=ScriptedReviewer(script.REVIEW))
+    assert res["status"] == "completed" and res["seal_sha256"]
+    assert verify(Path(res["path"]), res["seal_sha256"])["ok"]

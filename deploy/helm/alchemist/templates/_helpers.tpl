@@ -42,6 +42,10 @@ envFrom:
   - secretRef:
       name: {{ .Values.existingSecret }}
   {{- end }}
+  {{- if .Values.sandbox.enabled }}
+  - secretRef:
+      name: {{ include "alchemist.fullname" . }}-sandbox
+  {{- end }}
 {{- with .Values.env }}
 env:
   {{- range $k, $v := . }}
