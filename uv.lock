@@ -69,7 +69,7 @@ requires-dist = [
     { name = "nbformat", specifier = ">=5.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "penguineer", extras = ["agent"], git = "https://github.com/kausalflow/penguineer?rev=54227f2d405e196d909e8f80d0d9cdf64fbc4152" },
+    { name = "penguineer", extras = ["agent"], specifier = ">=0.5,<0.6" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "psycopg-pool", specifier = ">=3.2" },
     { name = "pyarrow", specifier = ">=17" },
@@ -2467,7 +2467,7 @@ wheels = [
 [[package]]
 name = "penguineer"
 version = "0.5.0"
-source = { git = "https://github.com/kausalflow/penguineer?rev=54227f2d405e196d909e8f80d0d9cdf64fbc4152#54227f2d405e196d909e8f80d0d9cdf64fbc4152" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "matplotlib" },
@@ -2478,6 +2478,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "typer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0a/f7/77fe7cb1fd7ac5d074151a3347e5a90edc938b9c6dc7c4bb6fb1a570ecc6/penguineer-0.5.0.tar.gz", hash = "sha256:0c356cf575c432ddc8168d037c2f638f42b3131fedabd22d7a0a5cb58feab878", size = 1244996, upload-time = "2026-10-26T04:48:33.488Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/13/3856fe10734744db9583a35026fb7e46ba0c53568298f92515b6b82e7d0a/penguineer-0.5.0-py3-none-any.whl", hash = "sha256:5519c14a2ebed6b4684b750b92e917e29b45370ed8e0774e39d37b9a7d9fe9cf", size = 170926, upload-time = "2026-10-26T04:48:31.602Z" },
 ]
 
 [package.optional-dependencies]
@@ -2585,9 +2589,13 @@ wheels = [
 [[package]]
 name = "plantgraph"
 version = "0.5.0"
-source = { git = "https://github.com/kausalflow/penguineer?subdirectory=packages%2Fplantgraph&rev=54227f2d405e196d909e8f80d0d9cdf64fbc4152#54227f2d405e196d909e8f80d0d9cdf64fbc4152" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ba/2d/b8b7ab5b029d25cadad2e1623518329bf6b9c82d56f617564f81d7e8da73/plantgraph-0.5.0.tar.gz", hash = "sha256:21c4d990636f30c0a45ad01f072be61324d722bcb34b775eee9dc1b955058393", size = 8712, upload-time = "2026-10-26T04:48:05.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/40/ba46f71a92ae4782e7aa3a210da575a812d268a85257aedc5aa2b4f3dec5/plantgraph-0.5.0-py3-none-any.whl", hash = "sha256:bcb5c4b88db0ee3eaf9da0c9012a6ada8e9be5eb03e64e7f993465e56ee5868d", size = 8908, upload-time = "2026-10-26T04:48:04.496Z" },
 ]
 
 [[package]]

@@ -51,6 +51,3 @@ packages = ["src/alchemist"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-# Until penguineer 0.5.0 (the PI and lake connectors) is on PyPI: its release commit. Remove once it is published.
-[tool.uv.sources]
-penguineer = { git = "https://github.com/kausalflow/penguineer", rev = "54227f2d405e196d909e8f80d0d9cdf64fbc4152" }
