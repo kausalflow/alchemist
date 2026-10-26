@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "alchemist.fullname" . }}-config
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+data:
+  access.yaml: {{ .Values.access | quote }}
+  sources.yaml: {{ .Values.sources | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "alchemist.fullname" . }}-env
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+data:
+  ALC_HOME: /data
+  ALC_ACCESS: /config/access.yaml
+  ALC_SOURCES: /config/sources.yaml
+  ALC_KNOWLEDGE: {{ ternary "/knowledge" "/data/knowledge" (not (empty .Values.knowledge.existingConfigMap)) }}
+  ALC_WORKSPACE: {{ required "storage.workspace is required" .Values.storage.workspace | quote }}
+  ALC_LAKE: {{ .Values.storage.lake | quote }}
+  AWS_REGION: {{ .Values.storage.region | quote }}
+  {{- with .Values.storage.endpoint }}
+  AWS_ENDPOINT_URL: {{ . | quote }}
+  {{- end }}
+  ALC_DB_HOST: {{ required "database.host is required" .Values.database.host | quote }}
+  ALC_DB_PORT: {{ .Values.database.port | quote }}
+  ALC_DB_NAME: {{ .Values.database.name | quote }}
+  ALC_DB_USER: {{ .Values.database.user | quote }}
+  ALC_DB_SSLMODE: {{ .Values.database.sslmode | quote }}
+  ALC_PLANNING_MODEL: {{ .Values.models.planning | quote }}
+  ALC_ANALYSIS_MODEL: {{ .Values.models.analysis | quote }}
+  ALC_REVIEWER_MODEL: {{ .Values.models.reviewer | quote }}
+  ALC_SMALL_MODEL: {{ .Values.models.small | quote }}
+  ALC_ALLOWED_PROVIDERS: {{ .Values.models.allowedProviders | quote }}
+  {{- with include "alchemist.localUrl" . }}
+  ALC_LOCAL_LLM_URL: {{ . | quote }}
+  {{- end }}
+  ALC_AUTH: {{ .Values.auth.mode | quote }}
+  ALC_ACCESS_PROVIDER: {{ .Values.auth.accessProvider | quote }}
+  {{- if eq .Values.auth.mode "oidc" }}
+  ALC_OIDC_ISSUER: {{ required "auth.oidc.issuer is required with auth.mode oidc" .Values.auth.oidc.issuer | quote }}
+  ALC_OIDC_AUDIENCE: {{ required "auth.oidc.audience is required with auth.mode oidc" .Values.auth.oidc.audience | quote }}
+  ALC_OIDC_TOKEN_HEADER: {{ .Values.auth.oidc.tokenHeader | quote }}
+  {{- with .Values.auth.oidc.jwksUrl }}
+  ALC_OIDC_JWKS_URL: {{ . | quote }}
+  {{- end }}
+  {{- end }}

@@ -69,7 +69,7 @@ requires-dist = [
     { name = "nbformat", specifier = ">=5.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
-    { name = "penguineer", extras = ["agent"], specifier = ">=0.4,<0.5" },
+    { name = "penguineer", extras = ["agent"], specifier = ">=0.5,<0.6" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "psycopg-pool", specifier = ">=3.2" },
     { name = "pyarrow", specifier = ">=17" },
@@ -2466,7 +2466,7 @@ wheels = [
 
 [[package]]
 name = "penguineer"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
@@ -2479,9 +2479,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/89/ee2fd7bd1efb52e4b40a7c3e2c6cb4507e481a82bdbaa8f49f9347ba88a3/penguineer-0.4.0.tar.gz", hash = "sha256:7476f453b32032e88071a294b8a3c63349cfec8a64f908a85f5570e37c878883", size = 1148916, upload-time = "2026-10-18T22:53:44.337Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0a/f7/77fe7cb1fd7ac5d074151a3347e5a90edc938b9c6dc7c4bb6fb1a570ecc6/penguineer-0.5.0.tar.gz", hash = "sha256:0c356cf575c432ddc8168d037c2f638f42b3131fedabd22d7a0a5cb58feab878", size = 1244996, upload-time = "2026-10-26T04:48:33.488Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/af/35/11b6e272db98dc3908f5a5007e2350709a9df62c34b83cbb7f62c5f2589a/penguineer-0.4.0-py3-none-any.whl", hash = "sha256:28e652f1c32114a30d9fa5dfdc52a6121c2d8ff2a3adca83095bf84712ed860a", size = 152501, upload-time = "2026-10-18T22:53:42.64Z" },
+    { url = "https://files.pythonhosted.org/packages/78/13/3856fe10734744db9583a35026fb7e46ba0c53568298f92515b6b82e7d0a/penguineer-0.5.0-py3-none-any.whl", hash = "sha256:5519c14a2ebed6b4684b750b92e917e29b45370ed8e0774e39d37b9a7d9fe9cf", size = 170926, upload-time = "2026-10-26T04:48:31.602Z" },
 ]
 
 [package.optional-dependencies]
@@ -2588,14 +2588,14 @@ wheels = [
 
 [[package]]
 name = "plantgraph"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/b5/12a37f04b9669c443bce25f2d74cb9e4267b9835805f473eb0d3730d7cff/plantgraph-0.4.0.tar.gz", hash = "sha256:5510237eb88a62251b309f9fa40c103ff7b0650bdee581d937b5f43c9413dbc9", size = 8712, upload-time = "2026-10-18T22:53:11.156Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/2d/b8b7ab5b029d25cadad2e1623518329bf6b9c82d56f617564f81d7e8da73/plantgraph-0.5.0.tar.gz", hash = "sha256:21c4d990636f30c0a45ad01f072be61324d722bcb34b775eee9dc1b955058393", size = 8712, upload-time = "2026-10-26T04:48:05.624Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/7b/a9bbb9413550f22c9535188d20bf3bc2e0fb4a7517e22d19ce38bfcd4e79/plantgraph-0.4.0-py3-none-any.whl", hash = "sha256:99cdaa34eab0fc36e84f35f15eb7fd05afc6af1d739c03bcf0ea9e6d1da91ea9", size = 8909, upload-time = "2026-10-18T22:53:09.766Z" },
+    { url = "https://files.pythonhosted.org/packages/84/40/ba46f71a92ae4782e7aa3a210da575a812d268a85257aedc5aa2b4f3dec5/plantgraph-0.5.0-py3-none-any.whl", hash = "sha256:bcb5c4b88db0ee3eaf9da0c9012a6ada8e9be5eb03e64e7f993465e56ee5868d", size = 8908, upload-time = "2026-10-26T04:48:04.496Z" },
 ]
 
 [[package]]

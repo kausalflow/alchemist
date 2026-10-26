@@ -31,6 +31,8 @@ nav = [
     "guides/s3.md",
     "guides/penguineer.md",
     "guides/plugins.md",
+    "guides/data-sources.md",
+    "guides/deploy-on-prem.md",
     "guides/deploy-aws.md",
     "guides/single-sign-on.md",
   ] },

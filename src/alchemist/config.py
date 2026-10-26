@@ -41,6 +41,9 @@ class Settings:
     grant_hours: int = field(default_factory=lambda: int(os.environ.get("ALC_GRANT_HOURS", "8")))
     # Which registered access provider supplies users, plant groups and workspaces ("yaml" reads access_file).
     access_provider: str = field(default_factory=lambda: os.environ.get("ALC_ACCESS_PROVIDER", "yaml"))
+    # Data sources synced into the lake (sources.py): which PI servers and lake tables, and where they land.
+    sources_file: str = field(default_factory=lambda: os.environ.get("ALC_SOURCES") or _home("sources.yaml"))
+    lake_root: str = field(default_factory=lambda: os.environ.get("ALC_LAKE") or _home("lake"))
     # Searchable domain documents (markdown with front matter).
     knowledge_root: str = field(default_factory=lambda: os.environ.get("ALC_KNOWLEDGE") or _home("knowledge"))
     # Models are Pydantic AI specs `provider:model-id`; a bare id means Bedrock (and may be an inference profile ARN).
@@ -51,6 +54,9 @@ class Settings:
     analysis_model: str = field(default_factory=lambda: _model("analysis"))
     reviewer_model: str = field(default_factory=lambda: _model("reviewer"))
     small_model: str = field(default_factory=lambda: _model("small"))
+    # The OpenAI-compatible address of a model server in your own network, for `local:<model>` specs (vLLM, Ollama,
+    # llama.cpp, LM Studio, TGI), e.g. http://ollama:11434/v1. A key, if the server wants one: ALC_LOCAL_LLM_API_KEY.
+    local_llm_url: str | None = field(default_factory=lambda: os.environ.get("ALC_LOCAL_LLM_URL") or None)
     # Providers plant data may be sent to. Anything else is refused unless listed (or '*').
     allowed_providers: list[str] = field(default_factory=lambda: [p.strip() for p in os.environ.get("ALC_ALLOWED_PROVIDERS", "bedrock").split(",") if p.strip()])
     effort: str = field(default_factory=lambda: os.environ.get("ALC_EFFORT", "high"))

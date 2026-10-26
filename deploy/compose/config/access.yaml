@@ -1,0 +1,9 @@
+# Plants, workspaces and who may see what. See https://kausalflow.com/alchemist/concepts/access/
+# With ALC_AUTH=oidc, users come from the identity provider's groups (alc-plant-<plant>, alc-ws-<workspace>,
+# alc-catalog-admin, alc-admin; renamable under `identity:`) and the `users:` list is not used.
+plants: [P01]
+workspaces:
+  quality: {plants: [P01]}
+users:
+  engineer: {plants: [P01], workspaces: [quality]}
+  data_admin: {admin: true, global: true, workspaces: [quality]}

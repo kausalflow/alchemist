@@ -93,6 +93,21 @@ alchemist catalog {list,register,index,show,approve,reject,suggestions,health} [
 
 All actions accept `--user` (default `data_admin`), recorded in the audit log.
 
+## `sources`
+
+```text
+alchemist sources {init,list,check,sync} [--id ID] [--file sources.yaml] [--start T] [--end T] [--every 15m] [--no-register]
+```
+
+| Action | Does |
+| --- | --- |
+| `init` | write an example `sources.yaml` (to `ALC_SOURCES`) |
+| `list` | every source, its datasets, where it lands in the lake, and how far it is synced |
+| `check` | reach each source without reading data: the PI Web API and each listed tag, or the lake table's columns; exits 1 if any fails |
+| `sync` | read each source from where its last sync ended (or `backfill` back) up to now, write whole UTC days into the lake, register its datasets and draft their cards. `--start`/`--end` (ISO 8601, UTC unless zoned) choose the window; `--every 15m` keeps syncing (the docker compose `sync` service); `--no-register` only writes files |
+
+See [Data sources](../guides/data-sources.md).
+
 ## `ask`
 
 ```text

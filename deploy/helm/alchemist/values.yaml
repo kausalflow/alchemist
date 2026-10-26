@@ -1,0 +1,138 @@
+# Alchemist in the customer's own cluster (EKS, AKS, GKE, OpenShift, on-prem). See
+# https://kausalflow.com/alchemist/guides/deploy-on-prem/ for a walk-through.
+
+image:
+  repository: ghcr.io/kausalflow/alchemist
+  tag: latest      # pin a release or digest for a pilot, e.g. "0.1.0" or "main@sha256:..."
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# The service account the API and the sync run as. Annotate it for workload identity, so S3 (or the S3-compatible
+# store) is reached without keys: eks.amazonaws.com/role-arn, iam.gke.io/gcp-service-account, ...
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# A Secret with every credential, as environment variables, created by the customer (or an external-secrets
+# operator). Keys the chart expects, all optional except ALC_PSEUDONYM_KEY and the database password:
+#   ALC_PSEUDONYM_KEY     keyed hash for pseudonymised columns
+#   ALC_DB_PASSWORD       PostgreSQL password
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   object store keys, when not using workload identity
+#   PI_WEBAPI_PASSWORD / PI_WEBAPI_TOKEN        PI Web API basic or bearer sign-in
+#   ALC_LOCAL_LLM_API_KEY, ANTHROPIC_API_KEY, ...   model keys
+existingSecret: alchemist
+
+# PostgreSQL for the catalog, run index and audit log. Bring your own (RDS, Azure Database, Cloud SQL, CloudNativePG).
+database:
+  host: ""         # required
+  port: 5432
+  name: alchemist
+  user: alchemist
+  sslmode: require
+
+# Object storage with the S3 API (AWS S3, MinIO, Ceph, StorageGRID, GCS's XML API with HMAC keys).
+storage:
+  workspace: s3://alchemist-workspace   # run folders: plans, notebooks, snapshots, sealed reports
+  lake: s3://alchemist-lake             # where `alchemist sources sync` writes PI and lake data
+  endpoint: ""                          # for S3-compatible stores, e.g. https://minio.plant.internal
+  region: us-east-1
+
+# Models per role, as provider:model-id. `local:` is a model server in your network (vLLM, Ollama, llama.cpp ...).
+models:
+  planning: local:qwen3:32b
+  analysis: local:qwen3:32b
+  reviewer: local:qwen3:32b
+  small: local:qwen3:32b
+  allowedProviders: local               # plant data only goes to providers listed here
+  localUrl: ""                          # OpenAI-compatible address; default: the bundled Ollama when enabled
+
+# Sign-in. dev lets anyone pick any user from access.yaml: never expose it. oidc verifies ID tokens a sign-in proxy
+# (oauth2-proxy, or the ingress's auth) forwards from the plant's identity provider.
+auth:
+  mode: oidc
+  oidc:
+    issuer: ""                          # e.g. https://login.microsoftonline.com/<tenant>/v2.0
+    audience: ""                        # the client id
+    tokenHeader: authorization          # where the proxy puts the token (Authorization: Bearer <jwt>)
+    jwksUrl: ""                         # only if the issuer's discovery document is not reachable
+  accessProvider: oidc                  # users only from verified claims; yaml also accepts access.yaml users
+
+# Plants, workspaces and how identity-provider groups map to them (config/access.yaml in docker compose).
+access: |
+  plants: [P01]
+  workspaces:
+    quality: {plants: [P01]}
+
+# Plant data to keep in the lake (see the data sources guide). No credentials here: they come from existingSecret.
+sources: |
+  sources: []
+
+# Plant documents (markdown with front matter) from a ConfigMap you create, mounted as the knowledge folder.
+knowledge:
+  existingConfigMap: ""
+
+# Extra environment variables for every Alchemist container.
+env: {}
+
+api:
+  # One replica: runs execute in the API process (each analysis in its own kernel), and the API reconciles them.
+  # Scale up with resources, or on AWS with the CDK stack, which runs each step as its own task.
+  resources:
+    requests: {cpu: "1", memory: 4Gi}
+    limits: {memory: 16Gi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+sync:
+  enabled: true
+  schedule: "*/15 * * * *"
+  resources:
+    requests: {cpu: 250m, memory: 1Gi}
+    limits: {memory: 4Gi}
+
+# Local scratch for kernels and caches. Run results go to storage.workspace, so this need not survive restarts.
+persistence:
+  enabled: false
+  size: 20Gi
+  storageClass: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  # With ingress-nginx and oauth2-proxy (passing the ID token):
+  #   nginx.ingress.kubernetes.io/auth-url: https://$host/oauth2/auth
+  #   nginx.ingress.kubernetes.io/auth-signin: https://$host/oauth2/start?rd=$escaped_request_uri
+  #   nginx.ingress.kubernetes.io/auth-response-headers: Authorization
+  annotations: {}
+  hosts:
+    - host: alchemist.plant.example.internal
+      paths: ["/"]
+  tls: []
+
+# A model server inside the cluster, so no plant data leaves it. Off by default: most plants run vLLM or similar on
+# GPU nodes already; point models.localUrl at it instead.
+ollama:
+  enabled: false
+  image: ollama/ollama:0.12.3
+  model: qwen3:32b
+  resources:
+    limits: {nvidia.com/gpu: 1}
+  persistence:
+    size: 100Gi
+    storageClass: ""
+  nodeSelector: {}
+  tolerations: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities: {drop: [ALL]}

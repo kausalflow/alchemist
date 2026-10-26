@@ -1,0 +1,10 @@
+apiVersion: v2
+name: alchemist
+description: Alchemist answers process questions over a plant's data lake, in the customer's own Kubernetes cluster.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://kausalflow.com/alchemist/
+sources:
+  - https://github.com/kausalflow/alchemist
+license: Apache-2.0
