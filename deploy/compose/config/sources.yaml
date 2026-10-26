@@ -1,0 +1,22 @@
+# Plant data the sync service keeps in the lake. See https://kausalflow.com/alchemist/guides/data-sources/
+# Credentials never go here: they come from .env (PI_WEBAPI_PASSWORD, PI_WEBAPI_TOKEN, cloud SDK variables).
+sources: []
+# sources:
+#   - id: p01-pi                     # datasets become p01-pi-historian and p01-pi-lots
+#     plant: P01
+#     kind: pi
+#     url: https://pi.plant.example.internal/piwebapi
+#     auth: basic                    # kerberos, basic or bearer
+#     username: svc-alchemist        # password from PI_WEBAPI_PASSWORD
+#     data_server: PISRV01
+#     tag_filter: "L2.*"             # and/or tags: [L2.TI101.PV, L2.FI102.PV]
+#     mode: recorded                 # or interpolated, with interval: 1m
+#     backfill: 90d                  # how far back the first sync reads
+#     event_frames: {database: '\\AFSRV01\Plant', template: Batch}
+#   - id: p01-lims
+#     plant: P01
+#     kind: lake
+#     table: lims                    # historian, lims or lots
+#     source: s3://lims-export/results/*.parquet
+#     columns: {sampled_at: SAMPLE_TS, property: TEST_CODE, value: RESULT, lot: BATCH_NO}
+#     timezone: Europe/Berlin        # for timestamps without a zone

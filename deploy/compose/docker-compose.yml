@@ -1,0 +1,91 @@
+# Alchemist on one machine, for an on-prem pilot: the API and web app, PostgreSQL, and the source sync that keeps PI
+# and lake data current. Run folders and the lake live on a local volume, or on the plant's S3-compatible object store
+# when ALC_WORKSPACE and ALC_LAKE in .env name s3:// buckets.
+#
+#   cp .env.example .env            # then set the passwords and the models
+#   docker compose up -d            # http://localhost:8000
+#   docker compose --profile local-llm up -d   # also a local model server (Ollama), see ALC_LOCAL_MODEL
+#
+# Everything the plant decides lives in ./config: access.yaml (plants, workspaces, users or group mapping),
+# sources.yaml (PI servers and lake tables to sync) and knowledge/ (plant documents). See
+# https://kausalflow.com/alchemist/guides/deploy-on-prem/
+
+name: alchemist
+
+x-alchemist: &alchemist
+  image: ${ALC_IMAGE:-ghcr.io/kausalflow/alchemist:latest}
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    ALC_DB: postgresql://alchemist:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/alchemist
+    ALC_WORKSPACE: ${ALC_WORKSPACE:-/data/workspace}
+    ALC_LAKE: ${ALC_LAKE:-/data/lake}
+    ALC_ACCESS: /config/access.yaml
+    ALC_SOURCES: /config/sources.yaml
+    ALC_KNOWLEDGE: /config/knowledge
+  volumes:
+    - ./config:/config:ro
+    - alchemist-home:/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  api:
+    <<: *alchemist
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${ALC_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Pulls each source in config/sources.yaml every ALC_SYNC_EVERY, registers its datasets and drafts their cards.
+  # A data admin approves each card once in the web app before anyone can query it.
+  sync:
+    <<: *alchemist
+    command: ["sources", "sync", "--every", "${ALC_SYNC_EVERY:-15m}"]
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alchemist
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: alchemist
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U alchemist"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # A model server in the plant network, so no plant data leaves it. Any OpenAI-compatible server works the same way
+  # (vLLM, llama.cpp, LM Studio, TGI): point ALC_LOCAL_LLM_URL at it and drop this service.
+  ollama:
+    profiles: ["local-llm"]
+    image: ollama/ollama:0.12.3
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    # With an NVIDIA GPU and the container toolkit installed:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+
+  ollama-pull:
+    profiles: ["local-llm"]
+    image: ollama/ollama:0.12.3
+    depends_on: [ollama]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["sh", "-c", "sleep 3 && ollama pull ${ALC_LOCAL_MODEL:-qwen3:32b}"]
+
+volumes:
+  alchemist-home:
+  postgres:
+  ollama:

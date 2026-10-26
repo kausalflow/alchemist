@@ -1,0 +1,63 @@
+{{- if .Values.ollama.enabled }}
+{{- $name := printf "%s-ollama" (include "alchemist.fullname" .) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector:
+    matchLabels: {{- include "alchemist.selector" . | nindent 6 }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels: {{- include "alchemist.selector" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: {{ .Values.ollama.image }}
+          ports:
+            - {name: http, containerPort: 11434}
+          # Pull the model once the server is up; a restart finds it on the volume.
+          lifecycle:
+            postStart:
+              exec:
+                command: ["sh", "-c", "for i in $(seq 60); do ollama list >/dev/null 2>&1 && break; sleep 2; done; ollama pull {{ .Values.ollama.model }} >/tmp/pull.log 2>&1 &"]
+          readinessProbe:
+            httpGet: {path: /, port: http}
+          resources: {{- toYaml .Values.ollama.resources | nindent 12 }}
+          volumeMounts:
+            - {name: models, mountPath: /root/.ollama}
+      {{- with .Values.ollama.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollama.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: models
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.ollama.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.ollama.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "alchemist.selector" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+  ports:
+    - {name: http, port: 11434, targetPort: http}
+{{- end }}

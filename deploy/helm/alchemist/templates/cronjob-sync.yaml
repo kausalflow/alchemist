@@ -1,0 +1,34 @@
+{{- if .Values.sync.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "alchemist.fullname" . }}-sync
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync
+spec:
+  schedule: {{ .Values.sync.schedule | quote }}
+  concurrencyPolicy: Forbid  # a long backfill must not overlap the next round
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: {{- include "alchemist.selector" . | nindent 12 }}
+            app.kubernetes.io/component: sync
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "alchemist.serviceAccount" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext: {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: sync
+              {{- include "alchemist.container" . | nindent 14 }}
+              args: ["sources", "sync"]
+              resources: {{- toYaml .Values.sync.resources | nindent 16 }}
+          volumes:
+            {{- include "alchemist.volumes" (dict "root" $ "persistent" false) | nindent 12 }}
+{{- end }}

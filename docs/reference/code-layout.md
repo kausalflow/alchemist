@@ -18,6 +18,7 @@ src/alchemist/
   run.py        ask / approve / replay lifecycle and the tool handlers
   report.py     conclusion card and HTML report, placeholders filled by penguineer.agent
   workspace.py  S3 (or local) folder layout, sealing and verification
+  sources.py    data sources (AVEVA PI, lake tables) synced into the lake with penguineer's connectors, registered and drafted
   knowledge.py  plant documents and structured knowledge; which plants a run may read (search is penguineer's)
   paths.py      cloudpathlib helpers, DuckDB S3 secret, conditional writes, ULIDs, hashing, glob expansion
   plugins.py    plugin registry and extension-point types; the built-in defaults are registered here
@@ -25,7 +26,7 @@ src/alchemist/
     app.py      FastAPI app: session routes, plugin routers, serving the built web app
     runs.py     questions and runs: ask, approve, events, stop, contents, replay, verdicts
     catalog.py  catalog browsing, suggestions and admin
-    identity.py who is calling (dev header or the load balancer's OIDC token) and their groups
+    identity.py who is calling (dev header, the load balancer's OIDC token, or any provider's ID token) and their groups
     jobs.py     launchers that run plan, analysis and replay steps outside the request
     deps.py     per-request services, the signed-in user, entitlement checks
   demo/

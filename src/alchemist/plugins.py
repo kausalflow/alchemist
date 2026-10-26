@@ -413,6 +413,21 @@ def _register_builtins(r: Registry) -> None:
 
     r.model_providers.add(ModelProvider("bedrock", bedrock, "Amazon Bedrock Converse in AWS_REGION"))
 
+    def local(model_id: str, settings):
+        import os
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+        if not settings.local_llm_url:
+            raise ValueError("local: models need ALC_LOCAL_LLM_URL, the OpenAI-compatible address of your model "
+                             "server, for example http://ollama:11434/v1 or http://vllm:8000/v1")
+        key = os.environ.get("ALC_LOCAL_LLM_API_KEY") or "not-needed"
+        return OpenAIChatModel(model_id, provider=OpenAIProvider(base_url=settings.local_llm_url, api_key=key))
+
+    r.model_providers.add(ModelProvider(
+        "local", local, "a model server in your own network that speaks the OpenAI chat API (vLLM, Ollama, "
+                        "llama.cpp, LM Studio, TGI) at ALC_LOCAL_LLM_URL"))
+
     def yaml_access(settings):
         from .access import AccessModel
         return AccessModel.load(settings.access_file)

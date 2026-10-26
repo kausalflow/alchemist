@@ -15,6 +15,8 @@ Alchemist reads its settings from environment variables, with local-friendly def
 | `ALC_DB_POOL_SIZE` | `10` | PostgreSQL connections per process |
 | `ALC_ACCESS` | `$ALC_HOME/access.yaml` | plants, workspaces, identity-provider group mapping, optional local users ([Access model](../concepts/access.md)) |
 | `ALC_KNOWLEDGE` | `$ALC_HOME/knowledge` | documents (`*.md`) and structured knowledge (`structured/*.yaml`) |
+| `ALC_SOURCES` | `$ALC_HOME/sources.yaml` | data sources `alchemist sources sync` keeps in the lake: PI servers and lake tables ([Data sources](../guides/data-sources.md)) |
+| `ALC_LAKE` | `$ALC_HOME/lake` | where synced sources are written (a folder or `s3://` prefix); `lake:` in `sources.yaml` wins |
 
 ## S3 and per-run credentials
 
@@ -53,6 +55,26 @@ An admin's choice on the admin "Models and limits" page overrides these for new 
 database). Provider credentials are read the usual way: the AWS credential chain for Bedrock, `ANTHROPIC_API_KEY`,
 `GOOGLE_API_KEY`, `OPENAI_API_KEY`. See [Model providers](../guides/models.md).
 
+## Local models
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_LOCAL_LLM_URL` | unset | OpenAI-compatible address of a model server in your network, for `local:<model>` specs (vLLM, Ollama, llama.cpp, LM Studio, TGI), e.g. `http://ollama:11434/v1` |
+| `ALC_LOCAL_LLM_API_KEY` | unset | key for that server, if it wants one |
+
+See [Local models](../guides/models.md#local-models).
+
+## Data source credentials
+
+Never in `sources.yaml`; read from the environment when a source is synced.
+
+| Variable | Meaning |
+| --- | --- |
+| `PI_WEBAPI_PASSWORD` | PI Web API password for `auth: basic` (or the variable a source names with `password_env`) |
+| `PI_WEBAPI_TOKEN` | PI Web API token for `auth: bearer` (or the variable a source names with `token_env`) |
+| `PI_WEBAPI_USER` | PI Web API user when a source sets no `username` |
+| cloud SDK variables | lake sources on S3, GCS or Azure: `AWS_*`, `GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_STORAGE_*`, or the workload's role |
+
 ## Plugins
 
 | Variable | Default | Meaning |
@@ -78,7 +100,11 @@ See [Plugins](../guides/plugins.md).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALC_AUTH` | `dev` | `dev`: the user comes from the `X-Alchemist-User` header or `alc_user` cookie (local only); `alb-oidc`: the load balancer's signed OIDC header |
+| `ALC_AUTH` | `dev` | `dev`: the user comes from the `X-Alchemist-User` header or `alc_user` cookie (local only); `alb-oidc`: the load balancer's signed OIDC header; `oidc`: an ID token from any OIDC provider, forwarded by a sign-in proxy ([Single sign-on](../guides/single-sign-on.md#any-oidc-provider-outside-aws)) |
+| `ALC_OIDC_ISSUER` | unset | in `oidc` mode, the provider's issuer URL; its discovery document names the signing keys, and tokens from any other issuer are refused |
+| `ALC_OIDC_AUDIENCE` | unset | in `oidc` mode (required), the client id the tokens must be issued to |
+| `ALC_OIDC_TOKEN_HEADER` | `authorization` | in `oidc` mode, the header the proxy puts the token in (`Bearer ` is optional) |
+| `ALC_OIDC_JWKS_URL` | unset | in `oidc` mode, the signing keys' address, when the discovery document is not reachable from the API |
 | `ALC_ALB_ARN` | unset | in `alb-oidc` mode, the only load balancer whose tokens are accepted |
 | `ALC_OIDC_USER_CLAIM` | `email` | claim used as the user id (falls back to `sub`) |
 | `ALC_OIDC_GROUPS_CLAIM` | `groups` | claim holding the `alc-*` group names (`ALC_GROUP_CLAIM` is accepted too); when the access model has `user_from_claims`, its `identity:` settings in `access.yaml` decide instead |

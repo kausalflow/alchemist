@@ -1,0 +1,17 @@
+Alchemist is starting in {{ .Release.Namespace }}.
+
+{{- if .Values.ingress.enabled }}
+Open https://{{ (index .Values.ingress.hosts 0).host }}/
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "alchemist.fullname" . }} 8000:{{ .Values.service.port }}
+and open http://localhost:8000/ (with auth.mode oidc, through your sign-in proxy).
+{{- end }}
+
+Next:
+  1. Check the sources:  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "alchemist.fullname" . }} -- alchemist sources check
+  2. First sync now:     kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "alchemist.fullname" . }}-sync first-sync
+  3. Approve the drafted catalog cards in the web app (Catalog), then ask a question.
+{{- if eq .Values.auth.mode "dev" }}
+
+WARNING: auth.mode is dev. Anyone who reaches the API can act as any user in access.yaml.
+{{- end }}

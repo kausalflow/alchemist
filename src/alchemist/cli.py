@@ -154,6 +154,59 @@ def cmd_catalog(a) -> None:
         _print(rows)
 
 
+def cmd_sources(a) -> None:
+    import logging
+    import time
+
+    from . import sources
+
+    s = load_settings()
+    if a.action == "init":
+        target = a.file or s.sources_file
+        if as_path(target).exists():
+            sys.exit(f"{target} exists; edit it instead")
+        sources.write_example(target)
+        print(f"wrote an example to {target}")
+        return
+    cfg = sources.load(a.file or s.sources_file, s.lake_root)
+    chosen = [cfg.get(a.id)] if a.id else list(cfg.sources.values())
+    if a.action == "list":
+        _print(sources.describe(cfg))
+        return
+    if a.action == "check":
+        results = []
+        for src in chosen:
+            try:
+                results.append(sources.check(src))
+            except Exception as e:  # report every source
+                results.append({"source": src.id, "ok": False, "problems": [f"{type(e).__name__}: {e}"]})
+        _print(results)
+        if not all(r["ok"] for r in results):
+            sys.exit(1)
+        return
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    svc = _svc()
+    start = sources.parse_time(a.start) if a.start else None
+    end = sources.parse_time(a.end) if a.end else None
+    every = sources.parse_duration(a.every).total_seconds() if a.every else None
+    while True:
+        failed = 0
+        for src in chosen:
+            try:
+                res = sources.sync(cfg, src, None if a.no_register else svc.catalog, s, start=start, end=end,
+                                   register=not a.no_register)
+                _print(res.__dict__)
+            except Exception as e:  # one unreachable source must not stop the others
+                failed += 1
+                print(f"source {src.id}: {type(e).__name__}: {e}", file=sys.stderr)
+        if every is None:
+            if failed:
+                sys.exit(1)
+            return
+        start = end = None  # later rounds continue from each source's last sync
+        time.sleep(every)
+
+
 def cmd_ask(a) -> None:
     from .run import approve, ask
 
@@ -472,6 +525,17 @@ def main(argv=None) -> None:
     c.add_argument("--drafter", help="registered card drafter for `index` (default: heuristic, or model with --use-model)")
     c.add_argument("--force", action="store_true")
     c.set_defaults(fn=cmd_catalog)
+
+    so = sub.add_parser("sources", help="sync plant data (AVEVA PI, lake tables) into the lake and the catalog")
+    so.add_argument("action", choices=["init", "list", "check", "sync"])
+    so.add_argument("--id", help="only this source (default: every source in sources.yaml)")
+    so.add_argument("--file", help="sources file (default ALC_SOURCES, or sources.yaml in ALC_HOME)")
+    so.add_argument("--start", help="sync from this time (ISO 8601, UTC unless it has a zone); default: where the "
+                                    "last sync ended, or `backfill` back")
+    so.add_argument("--end", help="sync up to this time; default now")
+    so.add_argument("--every", help="keep syncing at this interval, e.g. 15m (for a long-running sync service)")
+    so.add_argument("--no-register", action="store_true", help="write the lake files only; do not register datasets")
+    so.set_defaults(fn=cmd_sources)
 
     k = sub.add_parser("ask", help="ask a question; plans and waits for approval")
     k.add_argument("question")

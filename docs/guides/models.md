@@ -34,12 +34,48 @@ On Bedrock the deployment's IAM role must also be allowed to call the chosen mod
 | Anthropic API | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | Google Gemini | `google:gemini-3-pro` (Vertex AI: `google-cloud:gemini-3-pro`) | `GOOGLE_API_KEY`; Vertex uses Google Cloud credentials |
 | OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
+| A model server in your network | `local:qwen3:32b`, `local:gpt-oss:120b` | `ALC_LOCAL_LLM_URL`, optionally `ALC_LOCAL_LLM_API_KEY` |
 
 Bedrock ids and ARNs contain `:` themselves, so anything that does not start with a known provider prefix is read as a
 Bedrock id.
 
 The older Pydantic AI prefixes `google-gla:` and `google-vertex:` still work and are read as `google:` and
 `google-cloud:`. In `ALC_ALLOWED_PROVIDERS`, `google` (Gemini API) and `google-cloud` (Vertex AI) are separate entries.
+
+## Local models
+
+For a plant whose data may not leave its network, run the model there too. `local:<model>` sends requests to any server
+that speaks the OpenAI chat completions API: [vLLM](https://docs.vllm.ai), [Ollama](https://ollama.com),
+llama.cpp's `llama-server`, LM Studio or Hugging Face TGI. Everything after `local:` is the server's own model name,
+colons included (Ollama tags such as `qwen3:32b`).
+
+```bash
+export ALC_LOCAL_LLM_URL=http://gpu-node.plant.internal:8000/v1   # the server's OpenAI-compatible address
+export ALC_LOCAL_LLM_API_KEY=...                                  # only if the server wants one
+export ALC_PLANNING_MODEL=local:qwen3:32b
+export ALC_ANALYSIS_MODEL=local:qwen3:32b
+export ALC_REVIEWER_MODEL=local:qwen3:32b
+export ALC_SMALL_MODEL=local:qwen3:32b
+export ALC_ALLOWED_PROVIDERS=local                                # nothing else receives plant data
+```
+
+The [docker compose stack](deploy-on-prem.md) starts Ollama with `--profile local-llm`, and the Helm chart has an
+optional Ollama StatefulSet (`ollama.enabled`) for clusters without a model server yet.
+
+What to expect:
+
+- **The model must call tools.** Planning and analysis are tool loops (search the catalog, run a query, record a
+  finding). Pick a model the server runs with tool calling: with vLLM start it with `--enable-auto-tool-choice` and the
+  model's `--tool-call-parser`; Ollama enables tools per model.
+- **Quality follows the model.** The method, the reviewer and the sealed evidence are the same, so a weaker model is
+  slower to a conclusion and more often says "inconclusive", but cannot type a number into a report: every number
+  still comes from a computed finding. Use the reviewer role for the strongest model you have, and compare on a few
+  past investigations before a pilot relies on it.
+- **Thinking effort** (`ALC_EFFORT`) is usually not sent to `local:` servers: Pydantic AI drops it for models it does
+  not know to reason. Set the model's reasoning on the server instead where it has a setting.
+
+Pydantic AI's own `ollama:` and `vllm:` prefixes also work (with `OLLAMA_BASE_URL` / `VLLM_BASE_URL`); `local:` is the
+one to prefer, because one allow-list entry and one address cover whichever server the plant runs.
 
 ## The provider allow-list
 

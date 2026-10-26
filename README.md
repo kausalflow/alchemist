@@ -51,6 +51,7 @@ Models are set per role with [Pydantic AI](https://ai.pydantic.dev) specs, `prov
 | Anthropic API | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | Google Gemini | `google:gemini-3-pro` | `GOOGLE_API_KEY` |
 | OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
+| A model server in your network (vLLM, Ollama, llama.cpp) | `local:qwen3:32b` | `ALC_LOCAL_LLM_URL` |
 
 ```bash
 export ALC_PLANNING_MODEL=bedrock:anthropic.claude-opus-5-5    # writes the plan
@@ -77,6 +78,20 @@ uv run alchemist approve <run-id> --user eng_p1      # optionally --plan-file ed
 uv run alchemist replay <run-id> --user eng_p1       # exact replay from the stored snapshots
 uv run alchemist replay <run-id> --user eng_p1 --mode rerun   # same code on current data
 uv run alchemist verify <run-id>
+```
+
+## Deploy on-prem or in your cloud
+
+For a pilot, run Alchemist where the plant's data is: one server with docker compose ([`deploy/compose`](deploy/compose)),
+or the customer's Kubernetes cluster with the Helm chart ([`deploy/helm/alchemist`](deploy/helm/alchemist)). Both use
+the image `ghcr.io/kausalflow/alchemist`, sign users in with any OIDC provider (`ALC_AUTH=oidc`), can keep every model
+call inside the network (`local:` models), and keep AVEVA PI and lake tables synced into the lake
+(`alchemist sources sync`). See [Deploy on-prem or in your cloud](docs/guides/deploy-on-prem.md) and
+[Data sources](docs/guides/data-sources.md).
+
+```bash
+cd deploy/compose && cp .env.example .env    # set the passwords, models and sign-in
+docker compose --profile local-llm up -d     # http://localhost:8000, with a local model server
 ```
 
 ## Deploy to AWS
@@ -133,6 +148,7 @@ src/alchemist/
   report.py     conclusion card and HTML report (placeholders filled by penguineer)
   workspace.py  S3 (or local) folder layout, sealing and verification
   knowledge.py  plant documents and who may read them; search is penguineer's
+  sources.py    AVEVA PI and lake tables synced into the lake with penguineer's connectors
   demo/         synthetic plant and the scripted investigation
 ```
 

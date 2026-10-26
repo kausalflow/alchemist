@@ -3,7 +3,8 @@
 Alchemist has no login screen or passwords of its own. In AWS the load balancer (ALB) signs users in with the company
 identity provider over OIDC and passes their claims to the API in a signed header (`ALC_AUTH=alb-oidc`). Access comes
 from the user's groups ([Access](../concepts/access.md)). This page sets it up with OneLogin; any OIDC provider works
-the same way, as long as its user-info endpoint returns the groups.
+the same way, as long as its user-info endpoint returns the groups. Outside AWS (on-prem, or another cloud), see
+[Any OIDC provider, outside AWS](#any-oidc-provider-outside-aws).
 
 ## 1. Create the app in OneLogin
 
@@ -72,3 +73,27 @@ signs in but cannot see any project.
 - The ALB rejects sign-ins whose claims exceed 11 KB. Send only the groups Alchemist needs rather than every
   directory group.
 - Group changes take effect at the next sign-in; the ALB session lasts `oidc.session_timeout_hours` (default 8).
+
+## Any OIDC provider, outside AWS
+
+Without an ALB, a sign-in proxy in front of the API does the sign-in: [oauth2-proxy](https://oauth2-proxy.github.io/oauth2-proxy/)
+as a sidecar or behind ingress-nginx, Traefik's forward auth, or your platform's gateway. It forwards the user's **ID
+token** to Alchemist, which checks it itself (`ALC_AUTH=oidc`): the signature against the provider's published keys,
+the issuer, the audience and the expiry. A request without a valid token is refused, so the proxy is not trusted
+blindly, and the dev user picker is off.
+
+```bash
+ALC_AUTH=oidc
+ALC_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0   # Entra ID; Okta, Keycloak, Google work the same
+ALC_OIDC_AUDIENCE=<client-id>                                         # the app registration's client id
+ALC_ACCESS_PROVIDER=oidc                                              # users only from tokens, never from access.yaml
+```
+
+With oauth2-proxy, pass the ID token on: `--pass-authorization-header` (sidecar) or `--set-authorization-header` with
+ingress-nginx's `auth-response-headers: Authorization` (see the Helm chart's `ingress.annotations`). If the proxy uses
+another header, name it in `ALC_OIDC_TOKEN_HEADER`. The groups claim must be in the ID token: in Entra ID add the
+`groups` optional claim (it sends group ids, so map them with `group_aliases` in `access.yaml`); in Keycloak add a
+group-membership mapper to the client.
+
+Groups map to plants, workspaces and roles exactly as above. Check a user's token with `alchemist whoami --claims`.
+

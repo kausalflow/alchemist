@@ -9,6 +9,12 @@ Two modes, chosen by ALC_AUTH:
               group claims are mapped to plants and workspaces by the naming convention in the technical design:
               alc-plant-<code>, alc-global, alc-ws-<area>, alc-catalog-admin, alc-admin.
 
+    oidc      any OIDC identity provider (Entra ID, Okta, Keycloak, Google, ...) outside AWS. A sign-in proxy in front
+              of the API (oauth2-proxy, or the ingress's auth) signs users in and forwards their ID token as
+              `Authorization: Bearer <jwt>` (or in ALC_OIDC_TOKEN_HEADER). The token's signature is checked against
+              the provider's published keys (ALC_OIDC_ISSUER's discovery document, or ALC_OIDC_JWKS_URL), as are its
+              issuer, audience (ALC_OIDC_AUDIENCE, the client id) and expiry. Groups map as in alb-oidc.
+
 Either way the result is an `alchemist.access.User`, so every rule in access.py applies unchanged.
 """
 
@@ -44,6 +50,12 @@ def resolve(svc, headers, cookies) -> Principal:
     if auth_mode() == "alb-oidc":
         claims = verify_alb_jwt(headers.get("x-amzn-oidc-data", ""))
         return principal_from_claims(svc, claims)
+    if auth_mode() == "oidc":
+        header = os.environ.get("ALC_OIDC_TOKEN_HEADER", "authorization").lower()
+        token = (headers.get(header) or "").strip()
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        return principal_from_claims(svc, verify_oidc_jwt(token))
     user_id = headers.get("x-alchemist-user") or cookies.get("alc_user")
     if not user_id:
         raise NotSignedIn("pick a user (dev mode): set the X-Alchemist-User header or the alc_user cookie")
@@ -99,6 +111,106 @@ def verify_alb_jwt(token: str, *, key_loader=_alb_public_key) -> dict:
         raise NotSignedIn("bad token signature") from e
     if claims.get("exp") and claims["exp"] < time.time():
         raise NotSignedIn("token expired")
+    return claims
+
+
+# ------------------------------------------------------------------ any OIDC provider
+
+_JWKS_TTL = 3600.0
+_jwks_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _http_json(url: str) -> dict:
+    import httpx
+
+    r = httpx.get(url, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def _jwks_url() -> str:
+    if os.environ.get("ALC_OIDC_JWKS_URL"):
+        return os.environ["ALC_OIDC_JWKS_URL"]
+    issuer = os.environ.get("ALC_OIDC_ISSUER", "").rstrip("/")
+    if not issuer:
+        raise NotSignedIn("ALC_AUTH=oidc needs ALC_OIDC_ISSUER (or ALC_OIDC_JWKS_URL)")
+    return _http_json(f"{issuer}/.well-known/openid-configuration")["jwks_uri"]
+
+
+def _signing_key(kid: str | None, *, loader=_http_json) -> dict:
+    """The provider's published key with this id; the key set is cached and re-read once for an unknown id."""
+    url = _jwks_url()
+    at, keys = _jwks_cache.get(url, (0.0, {}))
+    if time.time() - at > _JWKS_TTL or kid not in keys:
+        keys = {k.get("kid"): k for k in loader(url).get("keys", [])}
+        _jwks_cache[url] = (time.time(), keys)
+    if kid not in keys:
+        if len(keys) == 1 and kid is None:
+            return next(iter(keys.values()))
+        raise NotSignedIn("token signed with an unknown key")
+    return keys[kid]
+
+
+def _public_key(jwk: dict):
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa
+
+    if jwk.get("kty") == "RSA":
+        return rsa.RSAPublicNumbers(int.from_bytes(_b64(jwk["e"]), "big"),
+                                    int.from_bytes(_b64(jwk["n"]), "big")).public_key()
+    if jwk.get("kty") == "EC":
+        curve = {"P-256": ec.SECP256R1(), "P-384": ec.SECP384R1()}[jwk["crv"]]
+        return ec.EllipticCurvePublicNumbers(int.from_bytes(_b64(jwk["x"]), "big"),
+                                             int.from_bytes(_b64(jwk["y"]), "big"), curve).public_key()
+    raise NotSignedIn(f"unsupported key type {jwk.get('kty')}")
+
+
+_ALGS = {"RS256": ("RSA", "SHA256"), "RS384": ("RSA", "SHA384"), "RS512": ("RSA", "SHA512"),
+         "ES256": ("EC", "SHA256"), "ES384": ("EC", "SHA384")}
+
+
+def verify_oidc_jwt(token: str, *, key_loader=None, leeway: float = 60) -> dict:
+    """Check an OIDC ID token (or JWT access token) against the provider's keys, issuer, audience and expiry."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, padding
+    from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+    try:
+        h64, p64, s64 = token.split(".")
+        header, claims, sig = json.loads(_b64(h64)), json.loads(_b64(p64)), _b64(s64)
+    except ValueError as e:
+        raise NotSignedIn("missing or malformed bearer token (is the sign-in proxy passing the ID token?)") from e
+    alg = header.get("alg")
+    if alg not in _ALGS:
+        raise NotSignedIn(f"unexpected token algorithm {alg!r}")
+    kty, hash_name = _ALGS[alg]
+    jwk = _signing_key(header.get("kid"), loader=key_loader or _http_json)
+    if jwk.get("kty") != kty:
+        raise NotSignedIn("token algorithm does not match its key")
+    key, signed, h = _public_key(jwk), f"{h64}.{p64}".encode(), getattr(hashes, hash_name)()
+    try:
+        if kty == "RSA":
+            key.verify(sig, signed, padding.PKCS1v15(), h)
+        else:
+            half = len(sig) // 2
+            der = encode_dss_signature(int.from_bytes(sig[:half], "big"), int.from_bytes(sig[half:], "big"))
+            key.verify(der, signed, ec.ECDSA(h))
+    except InvalidSignature as e:
+        raise NotSignedIn("bad token signature") from e
+    issuer = os.environ.get("ALC_OIDC_ISSUER", "").rstrip("/")
+    if issuer and str(claims.get("iss", "")).rstrip("/") != issuer:
+        raise NotSignedIn("token is from another issuer (check ALC_OIDC_ISSUER)")
+    audience = os.environ.get("ALC_OIDC_AUDIENCE")
+    if not audience:
+        raise NotSignedIn("ALC_AUTH=oidc needs ALC_OIDC_AUDIENCE (the client id the tokens are issued to)")
+    aud = claims.get("aud")
+    if audience not in (aud if isinstance(aud, list) else [aud]):
+        raise NotSignedIn("token is for another application (check ALC_OIDC_AUDIENCE)")
+    now = time.time()
+    if not claims.get("exp") or claims["exp"] + leeway < now:
+        raise NotSignedIn("token expired")
+    if claims.get("nbf") and claims["nbf"] - leeway > now:
+        raise NotSignedIn("token not valid yet")
     return claims
 
 
