@@ -179,6 +179,36 @@ they share:
   PostgreSQL, shared by every API and worker task; SQLite (the local default) locks the whole file on each write, so
   keep it to one machine.
 
+## Running many runs in the background
+
+Asking a question, approving a plan or resuming a run returns at once: the step runs in the background, and the web
+app follows it through the run's event stream. Where it runs is the launcher (`ALC_LAUNCHER`):
+
+| Launcher | Where steps run | Fits |
+| --- | --- | --- |
+| `local` (default) | threads in the API process, `ALC_LOCAL_WORKERS` at a time | one person trying it on a laptop |
+| `queue` | `alchemist worker` processes that take steps from the run queue in the database | docker compose, Kubernetes, and AWS with `workflow.launcher: queue` |
+| `step-functions` | one Step Functions execution per run, one Fargate task per step | AWS (the default there) |
+
+With the queue, the API only records each step in the `run_jobs` table. Each worker takes the oldest waiting step
+(`--concurrency` at a time), so more workers means more runs going at once: `docker compose up --scale worker=4`, more
+replicas in Kubernetes (or KEDA on the queue's length), or an ECS service that scales on the backlog. A run has one
+step running at a time, and a step stays queued until a worker is free; the run page shows how many steps are ahead.
+
+Everything you do to a run goes through the database, so it reaches the step whichever worker runs it: stop, pause
+and resume, notes, sending a plan back. Nothing has to be routed to the right machine.
+
+A worker records a heartbeat for each step it runs. If a worker dies (killed, out of memory, the machine restarted),
+its steps stop sending heartbeats; after `ALC_JOB_LEASE_SECONDS` (default 120) the API or another worker queues the
+step again, up to `ALC_JOB_RETRIES` times (default 2). An analysis then continues from its last checkpoint and a
+planning step from its saved conversation, so little work is lost. After the retries the run is paused if it can
+resume, and failed otherwise. A worker that is stopped normally (`docker compose stop`, a rolling update) finishes
+the steps in hand first, within its grace period.
+
+On one computer the same setup works with SQLite: `ALC_LAUNCHER=queue alchemist serve` in one terminal and
+`alchemist worker` in another (or `ALC_QUEUE_EMBEDDED_WORKERS=2` to run workers inside the API). The queue then also
+survives a restart of the API.
+
 ## Replay and rerun
 
 `alchemist replay <run-id>` verifies the parent's seal, copies its `inputs/` into a new run, and re-executes the

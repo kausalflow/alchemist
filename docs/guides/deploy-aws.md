@@ -30,6 +30,13 @@ flowchart TB
     API & PLAN & AN --> DB[(Aurora PostgreSQL)]
 ```
 
+With `workflow.launcher: queue`, the API puts each step in the run queue in Aurora instead of starting an execution,
+and an ECS service of workers (`alchemist worker`, the analyse task's role, image and size) takes them. Warm workers
+start a step in seconds. The API sends the queue's backlog to CloudWatch every 30 seconds and the service runs one
+worker per `workflow.workers.concurrency` waiting or running steps, between `workflow.workers.min_count` (0 is allowed:
+the first step then waits about a minute for a task) and `max_count`. It needs `sandbox_mode: in_process`. See
+[Running many runs](../concepts/runs.md#running-many-runs-in-the-background).
+
 With `workflow.sandbox_mode: separate`, the analyse task drives a sandbox task in the sandbox subnets instead, and only
 the sandbox gets data credentials, from the broker Lambda (refreshed as they expire). See
 [Deployment contract](../reference/deployment.md#two-sandbox-modes).
@@ -40,7 +47,7 @@ the sandbox gets data credentials, from the broker Lambda (refreshed as they exp
 | Buckets and key | `storage.py` | workspace, knowledge, Bedrock invocation logs (all SSE-KMS with one customer key), web (SPA), logs |
 | Database | `database.py`, `services.py` | Aurora PostgreSQL 17 Serverless v2, encrypted, in the data subnets: the catalog, run index and audit log, shared by every API and worker task; only their security groups reach port 5432 |
 | Bedrock | `bedrock.py` | guardrail with a sensitive-information filter, invocation logging to the Alchemist bucket, model allow-list on roles and on the VPC endpoint |
-| Services | `services.py` | ECS cluster, image, roles, task definitions (api, orchestrator, sandbox, sealer, indexer), API service behind the ALB, broker Lambda, nightly indexers |
+| Services | `services.py` | ECS cluster, image, roles, task definitions (api, orchestrator, sandbox, sealer, indexer), API service behind the ALB, broker Lambda, nightly indexers; with `workflow.launcher: queue`, the worker service and its scaling on the queue's backlog |
 | Run workflow | `workflow.py` | run: Plan, WaitForApproval, Analyse (or the separate-sandbox steps); replay: Replay; plus the approval function |
 | Edge | `edge.py` | CloudFront with the SPA and `/api/*`, `/oauth2/*` routed to the ALB; optional Route 53 records |
 | Operations | `observability.py` | alarms to an SNS topic, CloudTrail with S3 data events on the workspace bucket, optional break-glass role whose every use alarms |

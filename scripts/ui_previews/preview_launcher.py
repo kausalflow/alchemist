@@ -45,4 +45,9 @@ class PreviewLauncher(LocalLauncher):
                         should_stop=lambda: stop_requested(svc, run_id))
             finally:
                 svc.catalog.db.close()
-        self._submit(run_id, go)
+        svc = self.services()
+        try:
+            svc.catalog.audit("system", "run.launch", run_id, {"launcher": "local", "instance": self.instance})
+        finally:
+            svc.catalog.db.close()
+        self.pool.submit(go)

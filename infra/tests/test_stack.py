@@ -292,3 +292,40 @@ def test_separate_resume_starts_a_new_sandbox(separate_resources):
     assert _mode_choices(separate_resources)["resume"] == "StartSandbox"
     assert _states(separate_resources)["Analyse"]["Retry"][0]["MaxAttempts"] == 2
     assert "Retry" not in _states(separate_resources)["Replay"]
+
+
+def test_queue_workers_scale_on_the_backlog_the_api_publishes(queue_resources, resources):
+    assert not any("WorkerService" in k for k in resources)  # step_functions by default
+    worker = next(v for k, v in queue_resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and "WorkerTask" in k)
+    (c,) = worker["Properties"]["ContainerDefinitions"]
+    assert c["Command"] == ["worker", "--concurrency", "2"]
+    # A worker is the in-process analysis task: the run role, the pseudonym key, the orchestrator's role.
+    assert {"ALC_RUN_ROLE_ARN", "ALC_DB_HOST"} <= {e["Name"] for e in c["Environment"]}
+    assert "ALC_PSEUDONYM_KEY" in {s["Name"] for s in c["Secrets"]}
+    assert "OrchestratorRole" in dumps(worker["Properties"]["TaskRoleArn"])
+    svc = next(v for k, v in queue_resources.items() if v["Type"] == "AWS::ECS::Service" and "WorkerService" in k)
+    assert svc["Properties"]["DesiredCount"] == 1
+    assert "OrchestratorSg" in dumps(svc["Properties"]["NetworkConfiguration"])
+
+    target = next(v for v in queue_resources.values() if v["Type"] == "AWS::ApplicationAutoScaling::ScalableTarget")
+    assert (target["Properties"]["MinCapacity"], target["Properties"]["MaxCapacity"]) == (1, 3)
+    policies = [v for v in queue_resources.values() if v["Type"] == "AWS::ApplicationAutoScaling::ScalingPolicy"]
+    adjustments = sorted(a["ScalingAdjustment"] for p in policies
+                         for a in p["Properties"]["StepScalingPolicyConfiguration"]["StepAdjustments"])
+    assert adjustments == [1, 1, 2, 3]  # empty: the minimum; backlog 1-2: one worker, 3-4: two, 5+: three
+    assert {p["Properties"]["StepScalingPolicyConfiguration"]["AdjustmentType"] for p in policies} == {"ExactCapacity"}
+    alarms = dumps([v for v in queue_resources.values() if v["Type"] == "AWS::CloudWatch::Alarm"])
+    assert '"Backlog"' in alarms and '"Alchemist"' in alarms
+
+    api = next(v for k, v in queue_resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and "ApiTask" in k)
+    env = {e["Name"]: e["Value"] for e in api["Properties"]["ContainerDefinitions"][0]["Environment"]}
+    assert env["ALC_LAUNCHER"] == "queue" and env["ALC_QUEUE_METRICS_NAMESPACE"] == "Alchemist"
+    _, policies = _policies_of(queue_resources, "ApiRole")
+    assert '"cloudwatch:PutMetricData"' in policies and '"cloudwatch:namespace": "Alchemist"' in policies
+
+
+def test_queue_needs_the_in_process_kernel(dev_cfg):
+    data = dev_cfg.model_dump()
+    data["workflow"] |= {"launcher": "queue", "sandbox_mode": "separate"}
+    with pytest.raises(ValueError, match="in_process"):
+        EnvConfig.model_validate(data)

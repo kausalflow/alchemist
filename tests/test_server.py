@@ -13,12 +13,10 @@ from alchemist.demo import script
 class InlineLauncher(LocalLauncher):
     """Runs each step before the request returns, so tests need no polling."""
 
-    def _submit(self, run_id, fn):
-        try:
-            fn()
-        except Exception as e:  # same handling as the thread pool
-            from alchemist.api.jobs import mark_failed
-            mark_failed(self.services(), run_id, e)
+    def _submit(self, run_id, step, user=None):
+        from alchemist.api.jobs import run_step
+
+        run_step(self.services, run_id, step, user)  # same handling as the thread pool
 
 
 @pytest.fixture(scope="module")

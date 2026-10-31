@@ -421,7 +421,12 @@ def _sandbox_url(a) -> str | None:
 
 
 def cmd_worker(a) -> None:
-    """One step of a run in its own process (an ECS task started by the run's Step Functions execution)."""
+    """Without a step: take steps from the run queue until stopped. With one: run that step of --run-id in this
+    process (an ECS task started by the run's Step Functions execution)."""
+    if a.step is None:
+        return _worker_loop(a)
+    if not a.run_id:
+        raise SystemExit("worker <step> needs --run-id")
     from .api.jobs import mark_failed
 
     svc = _svc()
@@ -435,6 +440,30 @@ def cmd_worker(a) -> None:
         if not (a.step == "analyse" and checkpoint_of(svc.catalog.run(a.run_id)["path"])):
             mark_failed(svc, a.run_id, e)
         raise
+
+
+def _worker_loop(a) -> None:
+    import logging
+    import os
+    import signal
+    import threading
+
+    from .api.app import services_factory_for
+    from .runqueue import Worker
+
+    if a.scripted:
+        os.environ["ALC_API_MODEL"] = "scripted"
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    worker = Worker(services_factory_for(load_settings()), concurrency=a.concurrency)
+    stop = threading.Event()
+
+    def on_signal(signum, frame):  # finish the steps in hand, take no more
+        logging.getLogger("alchemist.worker").info("stopping after the steps in hand")
+        stop.set()
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+    print(f"worker {worker.name}: {worker.concurrency} at a time from the run queue", file=sys.stderr, flush=True)
+    worker.run(stop, drain=a.drain)
 
 
 def _worker_step(a, svc) -> None:
@@ -606,9 +635,14 @@ def main(argv=None) -> None:
                     help="plan and analyse with the offline demo script instead of a model (demo question only)")
     sv.set_defaults(fn=cmd_serve)
 
-    w = sub.add_parser("worker", help="run one step of a run (planning, analysis, report, seal or replay) in this process")
-    w.add_argument("step", choices=["plan", "analyse", "report", "seal", "replay"])
-    w.add_argument("--run-id", required=True)
+    w = sub.add_parser("worker", help="take run steps from the queue (ALC_LAUNCHER=queue); or run one step of one run")
+    w.add_argument("step", nargs="?", choices=["plan", "analyse", "report", "seal", "replay"],
+                   help="run only this step of --run-id, then exit")
+    w.add_argument("--run-id")
+    w.add_argument("--concurrency", type=int, default=int(os.environ.get("ALC_WORKER_CONCURRENCY", "2")),
+                   help="steps this worker runs at once (default ALC_WORKER_CONCURRENCY or 2)")
+    w.add_argument("--drain", action="store_true", help="exit when the queue is empty instead of waiting for more")
+    w.add_argument("--scripted", action="store_true", help="plan and analyse with the offline demo script")
     w.add_argument("--sandbox-task-arn", help="analyse/replay on this separate sandbox task (ECS); default ALC_SANDBOX_TASK_ARN")
     w.add_argument("--sandbox-url", help="analyse/replay on the sandbox kernel API at this address")
     w.set_defaults(fn=cmd_worker)

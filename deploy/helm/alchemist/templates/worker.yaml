@@ -1,0 +1,88 @@
+{{- if .Values.workers.enabled }}
+# Runs the steps the API queues (planning, analysis, replays). Any number of replicas: they share the database and the
+# workspace, and each takes the oldest waiting step. Stop, pause and notes reach a step through the database.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "alchemist.fullname" . }}-worker
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.workers.autoscaling.enabled }}
+  replicas: {{ .Values.workers.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "alchemist.selector" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels: {{- include "alchemist.selector" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "alchemist.serviceAccount" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # A stopped worker finishes the steps in hand for this long; a step still running after it is queued again
+      # once its lease runs out, and an analysis continues from its last checkpoint.
+      terminationGracePeriodSeconds: {{ .Values.workers.terminationGracePeriodSeconds }}
+      containers:
+        - name: worker
+          {{- include "alchemist.container" . | nindent 10 }}
+          args: ["worker", "--concurrency", {{ .Values.workers.concurrency | quote }}]
+          resources: {{- toYaml .Values.workers.resources | nindent 12 }}
+      volumes:
+        {{- include "alchemist.volumes" (dict "root" $ "persistent" false) | nindent 8 }}
+      {{- with .Values.workers.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workers.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workers.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.workers.autoscaling.enabled }}
+---
+# KEDA scales the workers on the steps waiting or running: one replica per `concurrency` steps.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "alchemist.fullname" . }}-worker
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "alchemist.fullname" . }}-worker
+  minReplicaCount: {{ .Values.workers.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.workers.autoscaling.maxReplicas }}
+  pollingInterval: 15
+  cooldownPeriod: {{ .Values.workers.autoscaling.cooldownSeconds }}
+  triggers:
+    - type: postgresql
+      authenticationRef:
+        name: {{ include "alchemist.fullname" . }}-worker
+      metadata:
+        host: {{ .Values.database.host | quote }}
+        port: {{ .Values.database.port | quote }}
+        userName: {{ .Values.database.user | quote }}
+        dbName: {{ .Values.database.name | quote }}
+        sslmode: {{ .Values.database.sslmode | quote }}
+        query: "select count(*) from run_jobs where status in ('queued', 'claimed')"
+        targetQueryValue: {{ .Values.workers.concurrency | quote }}
+        activationTargetQueryValue: "0"
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "alchemist.fullname" . }}-worker
+  labels: {{- include "alchemist.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ required "existingSecret (with ALC_DB_PASSWORD) is required for workers.autoscaling" .Values.existingSecret }}
+      key: ALC_DB_PASSWORD
+{{- end }}
+{{- end }}

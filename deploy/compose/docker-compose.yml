@@ -5,6 +5,7 @@
 #   cp .env.example .env            # then set the passwords and the models
 #   docker compose up -d            # http://localhost:8000
 #   docker compose --profile local-llm up -d   # also a local model server (Ollama), see ALC_LOCAL_MODEL
+#   docker compose up -d --scale worker=3      # more runs at once: each worker runs ALC_WORKER_CONCURRENCY steps
 #
 # Everything the plant decides lives in ./config: access.yaml (plants, workspaces, users or group mapping),
 # sources.yaml (PI servers and lake tables to sync) and knowledge/ (plant documents). See
@@ -19,6 +20,12 @@ x-env: &env
   ALC_ACCESS: /config/access.yaml
   ALC_SOURCES: /config/sources.yaml
   ALC_KNOWLEDGE: /config/knowledge
+  # The API queues each step of a run; the worker service runs them (see below). `local` runs them on threads in the
+  # API instead, which then needs no worker.
+  ALC_LAUNCHER: ${ALC_LAUNCHER:-queue}
+  # Each run's analysis kernel runs in the sandbox service. Set ALC_SANDBOX_URL= (empty) in .env to run kernels
+  # inside the worker (or API) container instead.
+  ALC_SANDBOX_URL: ${ALC_SANDBOX_URL-http://sandbox:8888}
 
 x-alchemist: &alchemist
   image: ${ALC_IMAGE:-ghcr.io/kausalflow/alchemist:latest}
@@ -36,11 +43,6 @@ services:
   api:
     <<: *alchemist
     command: ["serve", "--host", "0.0.0.0", "--port", "8000"]
-    environment:
-      <<: *env
-      # Each run's analysis kernel runs in the sandbox service. Set ALC_SANDBOX_URL= (empty) in .env to run kernels
-      # inside the API container instead.
-      ALC_SANDBOX_URL: ${ALC_SANDBOX_URL-http://sandbox:8888}
     networks: [default, sandbox]
     depends_on:
       postgres:
@@ -55,9 +57,24 @@ services:
       timeout: 5s
       retries: 12
 
+  # Runs the steps the API queues: planning, analysis, replays. Stop, pause and notes from the web app reach a step
+  # through the database, whichever worker runs it. Add workers with `--scale worker=N`; a worker that dies (or is
+  # stopped mid-step) has its step queued again after ALC_JOB_LEASE_SECONDS, and an analysis continues from its last
+  # checkpoint.
+  worker:
+    <<: *alchemist
+    command: ["worker"]
+    networks: [default, sandbox]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sandbox:
+        condition: service_started
+    stop_grace_period: 60s
+
   # The analysis kernels: the Python the model writes runs here, not in the API. The sandbox gets no .env: no
   # database, model, PI or sign-in credentials, only the pseudonym key and the storage. Its only network is
-  # `sandbox`, which has no route out, so code in a kernel reaches nothing but the API that drives it. Each kernel
+  # `sandbox`, which has no route out, so code in a kernel reaches nothing but the worker that drives it. Each kernel
   # confines itself with Linux Landlock to its run's datasets and folder (ALC_KERNEL_JAIL).
   sandbox:
     image: ${ALC_IMAGE:-ghcr.io/kausalflow/alchemist:latest}

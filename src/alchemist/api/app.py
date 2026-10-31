@@ -5,7 +5,8 @@
 
 Extending it: the launcher and identity are swappable without touching this file, and other packages can add routes.
 
-    ALC_LAUNCHER=package.module:factory   factory(services_factory) -> a Launcher (see jobs.py); default LocalLauncher
+    ALC_LAUNCHER=local|queue|step-functions, or package.module:factory (factory(services_factory) -> a Launcher,
+                                          see jobs.py); default local
     entry point group "alchemist.api"     each entry point is an APIRouter (or a callable returning one), mounted
                                           under /api/ext/<entry point name>
 
@@ -198,13 +199,23 @@ def dev_users(svc: Svc) -> list[dict]:
             for k, v in getattr(svc.access, "data", {}).get("users", {}).items()]
 
 
+LAUNCHERS = {"local": "alchemist.api.jobs:LocalLauncher", "queue": "alchemist.runqueue:QueueLauncher",
+             "step-functions": "alchemist.sfn_launcher:StepFunctionsLauncher"}
+
+
+def launcher_for(spec: str | None, services_factory):
+    """ALC_LAUNCHER: "local" (default: steps on threads in the API), "queue" (steps for `alchemist worker`
+    processes), "step-functions" (AWS), or module:attribute of another launcher."""
+    spec = LAUNCHERS.get(spec or "local", spec)
+    return LocalLauncher(services_factory) if spec == LAUNCHERS["local"] else load_object(spec)(services_factory)
+
+
 def create_app(settings: Settings | None = None, *, launcher=None, services_factory=None,
                web_dist: str | os.PathLike | None = None) -> FastAPI:
     settings = settings or load_settings()
     services_factory = services_factory or services_factory_for(settings)
     if launcher is None:
-        spec = os.environ.get("ALC_LAUNCHER")
-        launcher = load_object(spec)(services_factory) if spec else LocalLauncher(services_factory)
+        launcher = launcher_for(os.environ.get("ALC_LAUNCHER"), services_factory)
 
     every = float(os.environ.get("ALC_RECONCILE_SECONDS", "60"))
 

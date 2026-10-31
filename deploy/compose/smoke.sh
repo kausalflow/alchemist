@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # End-to-end check of the compose stack with a built image: the API comes up healthy on PostgreSQL, the offline demo
-# runs, replays and verifies inside it with its kernels in the sandbox service, which reaches nothing else, and a PI
-# source syncs from a fake PI Web API into the lake and the catalog.
+# runs, replays and verifies inside it with its kernels in the sandbox service, which reaches nothing else, a question
+# asked through the API is planned and analysed by the worker service, and a PI source
+# syncs from a fake PI Web API into the lake and the catalog.
 #   deploy/compose/smoke.sh alchemist:ci
 set -euo pipefail
 cd "$(dirname "$0")"
 image="${1:?usage: smoke.sh <image>}"
-cleanup() { docker compose logs api sandbox | tail -80 || true; docker compose down -v >/dev/null 2>&1 || true; rm -f .env; }
+cleanup() { docker compose logs api worker sandbox | tail -120 || true; docker compose down -v >/dev/null 2>&1 || true; rm -f .env; }
 trap cleanup EXIT
 
 cp .env.example .env
@@ -33,6 +34,24 @@ for host, port in [('postgres', 5432), ('pypi.org', 443)]:
     except OSError:
         continue
     raise SystemExit(f'the sandbox reached {host}:{port}')"
+
+# A question through the API: the API queues its steps and the workers run them.
+docker compose up -d --wait --scale worker=2 worker
+api="http://127.0.0.1:${ALC_PORT:-8000}/api"
+run_status() { curl -fsS -H "X-Alchemist-User: engineer" "$api/runs/$1" | python3 -c "import json,sys; print(json.load(sys.stdin)['run']['status'])"; }
+wait_for() {  # run, status
+  for _ in $(seq 120); do s="$(run_status "$1")"; [ "$s" = "$2" ] && return 0; sleep 1; done
+  echo "run $1 is $s, expected $2"; return 1
+}
+rid="$(docker compose exec -T api python -c "from alchemist.demo import script; import json; print(json.dumps({
+  'workspace': 'quality', 'project': 'smoke', 'question': script.QUESTION, 'scope': script.SCOPE}))" |
+  curl -fsS -H "X-Alchemist-User: engineer" -H "Content-Type: application/json" --data-binary @- "$api/questions" |
+  python3 -c "import json,sys; print(json.load(sys.stdin)['run_id'])")"
+wait_for "$rid" awaiting_approval
+curl -fsS -X POST -H "X-Alchemist-User: engineer" -H "Content-Type: application/json" -d '{}' \
+  "$api/runs/$rid/plan:approve" >/dev/null
+wait_for "$rid" completed
+docker compose logs worker | grep -q "analyse step of run $rid"
 
 docker compose cp ../../tests/fake_piwebapi.py api:/tmp/fake_piwebapi.py
 docker compose exec -d -T api python -c "

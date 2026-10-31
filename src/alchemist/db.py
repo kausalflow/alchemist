@@ -141,6 +141,25 @@ create table if not exists model_choices (
   role text primary key, spec text not null, updated_by text, updated_at text
 );
 """),
+    (6, "run queue: steps waiting for a worker, and the worker running each",
+     """
+create table if not exists run_jobs (
+  id integer primary key autoincrement, run_id text not null, step text not null, user_id text,
+  status text not null, attempt integer not null default 1, worker text, created_at real not null,
+  claimed_at real, heartbeat_at real, finished_at real, error text
+);
+create index if not exists run_jobs_status on run_jobs(status, id);
+create index if not exists run_jobs_run on run_jobs(run_id);
+""",
+     """
+create table if not exists run_jobs (
+  id bigserial primary key, run_id text not null, step text not null, user_id text,
+  status text not null, attempt integer not null default 1, worker text, created_at double precision not null,
+  claimed_at double precision, heartbeat_at double precision, finished_at double precision, error text
+);
+create index if not exists run_jobs_status on run_jobs(status, id);
+create index if not exists run_jobs_run on run_jobs(run_id);
+"""),
 ]
 
 LATEST = MIGRATIONS[-1][0]

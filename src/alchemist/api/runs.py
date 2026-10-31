@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import zipfile
 from typing import Any, Literal
 
@@ -22,6 +23,8 @@ from ..catalog import now
 from ..paths import as_path, is_cloud, read_json, read_yaml
 from ..workspace import verify
 from .deps import Me, Svc, access_error, entitled, entitled_run, in_workspace, run_or_404
+
+log = logging.getLogger("alchemist.api")
 
 router = APIRouter(tags=["runs"])
 
@@ -86,6 +89,15 @@ def _transcript_steps(path) -> list[dict]:
 
 def _launcher(request: Request):
     return request.app.state.launcher
+
+
+def _queue_position(request: Request, run_id: str) -> dict | None:
+    position = getattr(_launcher(request), "position", None)
+    try:
+        return position(run_id) if position else None
+    except Exception:
+        log.exception("reading the queue position of run %s failed", run_id)
+        return None
 
 
 def _launch(svc, request: Request, run_id: str, step: str, *args) -> None:
@@ -167,7 +179,7 @@ def list_runs(svc: Svc, me: Me, workspace: str | None = None, project: str | Non
 
 
 @router.get("/runs/{run_id}")
-def get_run(run_id: str, svc: Svc, me: Me) -> dict:
+def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
     """Everything the run page shows: question, plan, progress, conclusion, findings, data used, methods, provenance."""
     row = run_or_404(svc, run_id)
     if not in_workspace(me, row["workspace"]):
@@ -203,6 +215,8 @@ def get_run(run_id: str, svc: Svc, me: Me) -> dict:
             "replay": bool(row["seal_sha256"]),
             "verdict": bool(row["seal_sha256"]) and in_workspace(me, row["workspace"]),
         },
+        # With the run queue: whether its current step waits for a worker (and behind how many) or which one runs it.
+        "queue": _queue_position(request, run_id) if row["status"] in ("planning", "running") else None,
         "conclusion_md": conclusion_md,
         "conclusion_html": markdown.markdown(conclusion_md, extensions=["tables"]) if conclusion_md else None,
         "findings": findings,

@@ -80,9 +80,9 @@ knowledge:
 env: {}
 
 api:
-  # One replica: runs execute in the API process (each analysis in its own kernel in the sandbox), and the API
-  # reconciles them.
-  # Scale up with resources, or on AWS with the CDK stack, which runs each step as its own task.
+  # With workers enabled the API only queues steps, so it can have several replicas behind the Service. Without
+  # workers, runs execute in the API process and it must stay at one.
+  replicas: 1
   resources:
     requests: {cpu: "1", memory: 4Gi}
     limits: {memory: 16Gi}
@@ -90,10 +90,31 @@ api:
   tolerations: []
   affinity: {}
 
+# Workers run the steps of runs (planning, analysis, replays) that the API queues in the database. Add replicas for
+# more runs at once; a worker that dies has its step queued again after ALC_JOB_LEASE_SECONDS (env), and an analysis
+# continues from its last checkpoint. Off: steps run on threads in the API (ALC_LAUNCHER=local).
+workers:
+  enabled: true
+  replicas: 2
+  concurrency: 2                        # steps each worker runs at once
+  terminationGracePeriodSeconds: 120
+  # Scale on the queue with KEDA (installed separately): one replica per `concurrency` waiting or running steps.
+  autoscaling:
+    enabled: false
+    minReplicas: 1                      # 0 also works: the first queued step starts a worker
+    maxReplicas: 8
+    cooldownSeconds: 300
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+    limits: {memory: 4Gi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 # The analysis kernels, in their own Deployment: the Python the model writes runs there, not in the API. The sandbox
 # gets no database, model, PI or sign-in credentials (only the pseudonym key and storage), no Kubernetes API token,
-# and a NetworkPolicy that admits only the API and lets it reach only DNS and `networkPolicy.egress`. Off: kernels run
-# inside the API container.
+# and a NetworkPolicy that admits only the API and the workers and lets it reach only DNS and `networkPolicy.egress`.
+# Off: kernels run inside the worker (or API) container.
 sandbox:
   enabled: true
   maxKernels: 4                         # runs analysed at once; more wait for a free kernel

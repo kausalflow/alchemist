@@ -70,6 +70,8 @@ database:
 
 workflow:
   sandbox_mode: in_process        # `separate`: kernel in its own task with broker credentials (try in dev first)
+  launcher: step_functions        # `queue`: a worker service takes steps from the run queue, scaled on its backlog
+  # workers: {min_count: 1, max_count: 4, concurrency: 2}   # with launcher: queue
   approval_timeout_days: 14
   analysis_retries: 2             # a failed or timed-out analysis task restarts and resumes from its checkpoint
 
