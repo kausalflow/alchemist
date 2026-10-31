@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type DevUser, type ModelRole, type ModelSettings, type Workspace } from "../../api";
+import { api, type DevUser, type ModelRole, type ModelSettings, type RunLimit, type Workspace } from "../../api";
 import { useApi, useSession } from "../../session";
 import { day, ErrorNote, Loading } from "../../components/bits";
 import { plantTitle, useAdmin } from "./AdminLayout";
@@ -266,17 +266,10 @@ export function ModelsPage() {
         )}
 
         <h2 className="h-section">Limits</h2>
+        <LimitsForm canEdit={canEdit} />
         <div className="table-wrap">
           <table className="table kv">
             <tbody>
-              <tr>
-                <th scope="row">Tool calls per run step</th>
-                <td className="mono">{meta.budgets.max_steps}</td>
-              </tr>
-              <tr>
-                <th scope="row">Output tokens per run step</th>
-                <td className="mono">{meta.budgets.max_output_tokens.toLocaleString()}</td>
-              </tr>
               <tr>
                 <th scope="row">Runs execute on</th>
                 <td className="mono">{meta.launcher}</td>
@@ -290,5 +283,123 @@ export function ModelsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Run limits: how long a run may work by default and at most, and the per-step budgets. Admins change them. */
+function LimitsForm({ canEdit }: { canEdit: boolean }) {
+  const { reload } = useSession();
+  const { data, error, setData } = useApi<{ limits: RunLimit[] }>("/admin/limits");
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const value = (l: RunLimit) => draft[l.name] ?? String(l.value);
+  const changed = data ? data.limits.filter((l) => value(l).trim() !== String(l.value)) : [];
+
+  const save = async (limits: Record<string, number | null>, done: string) => {
+    setBusy(true);
+    setSaveError(null);
+    setMsg(null);
+    try {
+      setData(await api.put<{ limits: RunLimit[] }>("/admin/limits", { limits }));
+      setDraft({});
+      setMsg(done);
+      reload(); // the limits people see when approving a plan
+    } catch (err) {
+      setSaveError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    save(
+      Object.fromEntries(changed.map((l) => [l.name, value(l).trim() ? Number(value(l)) : null])),
+      "Saved. Plans approved from now on get these limits; runs already approved keep theirs.",
+    );
+  };
+
+  if (error) return <ErrorNote error={error} />;
+  if (!data) return <Loading />;
+  return (
+    <form onSubmit={submit} className="stack">
+      <div className="table-wrap">
+        <table className="table edit-table">
+          <thead>
+            <tr>
+              <th scope="col">Limit</th>
+              <th scope="col">Value</th>
+              <th scope="col">Set by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.limits.map((l) => (
+              <tr key={l.name}>
+                <td>
+                  <div className="strong-ish">{l.label}</div>
+                  <div className="muted small">{l.does}</div>
+                </td>
+                <td>
+                  {canEdit ? (
+                    <input
+                      className="mono limit-input"
+                      type="number"
+                      min={l.minimum}
+                      max={l.maximum}
+                      aria-label={l.label}
+                      value={value(l)}
+                      onChange={(e) => setDraft({ ...draft, [l.name]: e.target.value })}
+                    />
+                  ) : (
+                    <span className="mono">{l.value.toLocaleString()}</span>
+                  )}
+                </td>
+                <td className="small">
+                  {l.source === "admin" ? (
+                    <>
+                      <div>
+                        {l.updated_by}, {day(l.updated_at)}
+                      </div>
+                      {canEdit && (
+                        <button type="button" className="ghost small" disabled={busy} onClick={() => save({ [l.name]: null }, `${l.label} uses the configured value again.`)}>
+                          Use the configured {l.configured.toLocaleString()}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <span className="muted">
+                      configuration (<span className="mono">{l.env}</span>)
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ErrorNote error={saveError} />
+      {msg && (
+        <p className="ok-text small" role="status">
+          {msg}
+        </p>
+      )}
+      {canEdit && (
+        <div className="row-center">
+          <button className="primary" disabled={busy || changed.length === 0}>
+            {busy ? "Saving…" : "Save limits"}
+          </button>
+          {changed.length > 0 && (
+            <button type="button" className="ghost" onClick={() => setDraft({})}>
+              Undo changes
+            </button>
+          )}
+        </div>
+      )}
+      <p className="muted small measure">
+        The time limit counts the analysis's working time; time paused or waiting for a worker does not count. It is checked before each model
+        call, so a long query or cell can run a little past it. A run that reaches a limit stops and seals a partial report of what it found.
+      </p>
+    </form>
   );
 }

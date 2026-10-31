@@ -53,7 +53,7 @@ export interface Meta {
   version: string;
   auth: string;
   models: { roles: Record<ModelRoleName, string>; allowed_providers: string[]; scripted: boolean };
-  budgets: { max_steps: number; max_output_tokens: number };
+  budgets: { max_steps: number; max_output_tokens: number; max_run_minutes: number; max_run_minutes_cap: number };
   tools: { planning: Tool[]; analysis: Tool[] };
   prompts: string;
   plugins: (string | { name: string; version?: string | null })[];
@@ -78,6 +78,21 @@ export interface ModelRole {
   updated_by: string | null;
   updated_at: string | null;
   ignored: { spec: string; reason: string } | null;
+}
+
+/** A run limit as an admin sees it: its value now, and whether an admin or the configuration set it. */
+export interface RunLimit {
+  name: string;
+  label: string;
+  does: string;
+  env: string;
+  minimum: number;
+  maximum: number;
+  configured: number;
+  value: number;
+  source: "admin" | "configuration";
+  updated_by: string | null;
+  updated_at: string | null;
 }
 
 export interface ModelSettings {
@@ -129,6 +144,7 @@ export interface Plan {
   notes?: string;
   approved_by?: string;
   approved_at?: string;
+  time_limit_minutes?: number;
   submitted_at?: string;
   revises?: number;
 }
@@ -189,6 +205,8 @@ export interface RunDetail {
   notes?: RunNote[];
   // With the run queue (ALC_LAUNCHER=queue): whether the run's current step waits for a worker, or which one runs it.
   queue?: { state: "queued" | "running"; step: string; attempt: number; ahead?: number; worker?: string } | null;
+  // The approved run's time limit, and the analysis's working time so far (null before its first step).
+  time_limit?: { minutes: number; used_seconds: number | null } | null;
   plan_history?: Plan[];
   conclusion_md?: string | null;
   conclusion_html?: string | null;

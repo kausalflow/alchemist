@@ -95,8 +95,23 @@ database and the audit log. `alchemist verify <run-id>` checks a folder against 
 ## Budgets and partial results
 
 Each step of a run has a tool-call budget (`ALC_MAX_STEPS`, default 60) and an output-token budget (`ALC_MAX_OUTPUT_TOKENS`, default
-400,000). If the analysis stops early, the run still builds a partial report from the findings recorded so far, says
-why it stopped, and is sealed with status `partial`.
+400,000), and the analysis has a time limit (`ALC_MAX_RUN_MINUTES`, default 120 minutes). If the analysis stops
+early, the run still builds a partial report from the findings recorded so far, says why it stopped, and is sealed
+with status `partial`.
+
+### Time limit
+
+The time limit counts the analysis's working time: from when a worker starts it until it finishes, carried over when
+a paused run resumes. Time waiting for approval, paused, or queued for a worker does not count. Like the other budgets
+it is checked before each model call, so a long query or cell can run a little past it.
+
+Whoever approves the plan can set the run's limit (the **Time limit** field next to Approve, or
+`alchemist approve --time-limit MINUTES`), up to `ALC_MAX_RUN_MINUTES_CAP` (default 480). Left empty, the run gets the
+default. The run records its limit in the approved plan, so changing the default later does not change runs already
+approved. The run page shows the minutes used against it under **Run limits**.
+
+Admins change the default, the cap and the per-step budgets on the admin **Models and limits** page. A value saved
+there overrides the variable, and every change is audited.
 
 ## Stopping, pausing and failures
 

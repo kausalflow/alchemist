@@ -41,8 +41,8 @@ All paths are under `/api`.
 | `POST /questions` | create a question and its first run, and start planning; body `{workspace, project, question, scope}` | workspace member, within their plants |
 | `GET /questions/similar?q=` | past questions the user may open, by word overlap | any user |
 | `GET /runs?workspace=&project=&question_id=` | runs in the user's workspaces, newest first | members |
-| `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts | entitled viewer |
-| `POST /runs/{id}/plan:approve` | approve the plan, or send `{plan}` to approve an edited one; starts the analysis | who asked, or an admin |
+| `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts, `time_limit` (`{minutes, used_seconds}` once approved) | entitled viewer |
+| `POST /runs/{id}/plan:approve` | approve the plan, or send `{plan}` to approve an edited one, and optionally `{time_limit_minutes}` (up to the cap in `GET /meta` `budgets`; 422 above it); starts the analysis | who asked, or an admin |
 | `POST /runs/{id}/plan:send-back` | `{text}`: return the plan to planning with a note; a revised version comes back for approval | who asked, or an admin |
 | `POST /runs/{id}/notes` | `{text}`: leave a note the agent reads before its next model call (planning, waiting, running or paused runs) | run owner, admin |
 | `GET /runs/{id}/notes` | every note, with when the agent read it (`delivered`, or `null`) | entitled viewer |
@@ -91,6 +91,8 @@ admins only.
 | `PUT /admin/plants/{plant}/lines` | replace the plant's lines `{lines: [{id, name, description}]}`; also writes the searchable document `LINES-<plant>` |
 | `GET /admin/models` | each role's model (`planning`, `analysis`, `reviewer`, `small`): the spec in use, whether it is an admin's choice or the configuration, and the configured value |
 | `PUT /admin/models` | admins only: `{models: {role: spec}}` sets a role's model (allowed providers only; audited as `models.update`), `{role: null}` goes back to the configured one |
+| `GET /admin/limits` | each run limit (`max_run_minutes`, `max_run_minutes_cap`, `max_steps`, `max_output_tokens_total`): the value in use, whether it is an admin's choice or the configuration, and the configured value |
+| `PUT /admin/limits` | admins only: `{limits: {name: n}}` sets a limit (audited as `limits.update`; the default time may not exceed the cap), `{name: null}` goes back to the configured one |
 | `POST /admin/plants/{plant}/preview` | `{question}`: what an agent on a question scoped to that plant would find (catalog search, knowledge search, fact tables, lines) |
 | `GET /admin/documents/{id}` | a document's details and Markdown body |
 | `POST /admin/documents` | save a document `{id?, plant, title, type, lines, review_date, content}`; an existing id gets the next version |

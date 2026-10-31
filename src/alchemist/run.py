@@ -11,6 +11,7 @@ import datetime as dt
 import importlib.metadata
 import json
 import platform
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -23,6 +24,7 @@ from .llm import role_model
 from .catalog import Catalog, now
 from .credentials import CredentialBroker, RefreshingCredentials
 from .knowledge import Knowledge
+from . import limits
 from .model_roles import with_choices
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json, write_text
 from .plugins import get_registry
@@ -65,6 +67,8 @@ class Services:
         self.catalog = catalog or Catalog(settings.db_path)
         # The role models, with any an admin picked on the "Models and limits" page (model_roles.py).
         self.settings = settings = with_choices(settings, self.catalog.db)
+        # Run limits, with any an admin set on the same page (limits.py).
+        self.settings = settings = limits.with_choices(settings, self.catalog.db)
         self.access = access or reg.access_providers.get(settings.access_provider).load(settings)
         self.knowledge = knowledge or Knowledge(settings.knowledge_root, packs=list(reg.knowledge_packs))
         self.broker = broker or CredentialBroker.from_settings(settings)
@@ -574,14 +578,61 @@ def ask(svc: Services, *, user: "str | User", workspace: str, project: str, ques
     return plan(svc, row["run_id"], model=model)
 
 
+class RunBudget(Budget):
+    """The step budgets plus a time limit on the analysis's working time, which carries over when a paused run
+    resumes. Like the other budgets it is checked before each model call, so a long cell can overrun it."""
+
+    def __init__(self, max_steps: int, max_output_tokens: int, max_seconds: float | None = None):
+        super().__init__(max_steps, max_output_tokens)
+        self.max_seconds = max_seconds
+        self.seconds_before = 0.0
+        self.started = time.monotonic()
+
+    @property
+    def seconds(self) -> float:
+        return self.seconds_before + time.monotonic() - self.started
+
+    def exceeded(self) -> str | None:
+        reason = super().exceeded()
+        if reason is None and self.max_seconds and self.seconds >= self.max_seconds:
+            reason = f"time limit of {self.max_seconds / 60:g} minutes used"
+        return reason
+
+    def as_dict(self) -> dict:
+        return {**super().as_dict(), "seconds": round(self.seconds, 1)}
+
+
+def time_limit(svc: Services, plan: dict | None) -> int:
+    """The run's time limit in minutes: what it was approved with, else the current default."""
+    return int((plan or {}).get("time_limit_minutes") or svc.settings.max_run_minutes)
+
+
+def check_time_limit(svc: Services, minutes: int | None) -> int:
+    """The time limit for a run being approved: the person's choice (up to the cap) or the default."""
+    if minutes is None:
+        return svc.settings.max_run_minutes
+    cap = svc.settings.max_run_minutes_cap
+    if not 1 <= int(minutes) <= cap:
+        raise TimeLimitError(f"the time limit must be between 1 and {cap} minutes")
+    return int(minutes)
+
+
+class TimeLimitError(ValueError):
+    pass
+
+
 def approve(svc: Services, run_id: str, *, user: "str | User", plan: dict | None = None, model: Model | None = None,
-            reviewer: Model | None = None, should_stop: Callable[[], bool] | None = None) -> dict:
-    start_approval(svc, run_id, user=user, plan=plan)
+            reviewer: Model | None = None, should_stop: Callable[[], bool] | None = None,
+            time_limit_minutes: int | None = None) -> dict:
+    start_approval(svc, run_id, user=user, plan=plan, time_limit_minutes=time_limit_minutes)
     return analyse(svc, run_id, user=getattr(user, "id", user), model=model, reviewer=reviewer, should_stop=should_stop)
 
 
-def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict | None = None) -> dict:
-    """Record the approval (with the user's edits, if any) and mark the run running. Returns the approved plan."""
+def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict | None = None,
+                   time_limit_minutes: int | None = None) -> dict:
+    """Record the approval (with the user's edits, if any, and the run's time limit) and mark the run running.
+    Returns the approved plan."""
+    minutes = check_time_limit(svc, time_limit_minutes)
     row = svc.catalog.run(run_id)
     if row["status"] != "awaiting_approval":
         raise ValueError(f"run {run_id} is {row['status']}, not awaiting approval")
@@ -594,19 +645,19 @@ def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict
     if not svc.catalog.transition(run_id, "awaiting_approval", "running"):  # approved twice at once, or cancelled
         raise ValueError(f"run {run_id} is {svc.catalog.run(run_id)['status']}, not awaiting approval")
     try:
-        return _record_approval(svc, row, user, plan)
+        return _record_approval(svc, row, user, plan, minutes)
     except Exception as e:  # the run must not look busy when nothing will run it
         end_run(svc, run_id, "failed", actor="system", reason=f"approval failed: {type(e).__name__}: {e}",
                 from_status=("running",))
         raise
 
 
-def _record_approval(svc: Services, row: dict, user: str, plan: dict | None) -> dict:
+def _record_approval(svc: Services, row: dict, user: str, plan: dict | None, minutes: int) -> dict:
     run_id = row["run_id"]
     ctx = RunContext(svc, row, user=user)
     if plan is not None:  # the user edited the plan
         ctx.plan = {**plan, "version": (ctx.plan or {}).get("version", 1) + 1}
-    ctx.plan = {**ctx.plan, "approved_by": user, "approved_at": now()}
+    ctx.plan = {**ctx.plan, "approved_by": user, "approved_at": now(), "time_limit_minutes": minutes}
     update_question(ctx.qdir, plan=ctx.plan, status="running")
     svc.catalog.audit(user, "plan.approve", run_id)
 
@@ -671,7 +722,7 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     model = model or role_model(s, "analysis")
     reviewer = reviewer or role_model(s, "reviewer")
     ctx.models.update(planned_models(ctx.run), analysis=model.name, reviewer=reviewer.name)
-    budget = Budget(s.max_steps, s.max_output_tokens_total)
+    budget = RunBudget(s.max_steps, s.max_output_tokens_total, max_seconds=time_limit(svc, ctx.plan) * 60)
     saved = checkpoint_of(ctx.run)
     # Notes are delivered once: a resumed step starts from its checkpoint's list (a note given in a turn that never
     # completed is given again), a new one from the notes the planning step delivered.
@@ -750,6 +801,8 @@ def _restore(ctx: RunContext, sb: Sandbox, budget: Budget, model: Model, saved: 
     b = saved["budget"]
     budget.steps, budget.model_calls = b["steps"], b["model_calls"]
     budget.input_tokens, budget.output_tokens = b["input_tokens"], b["output_tokens"]
+    if isinstance(budget, RunBudget):  # working time before the pause counts towards the time limit
+        budget.seconds_before = float(b.get("seconds", 0))
     if hasattr(model, "advance"):  # the offline script continues from the turn it reached
         model.advance(budget.model_calls)
     sb.add_markdown(f"*Resumed {now()} from the checkpoint of {saved['at']}: the cells above were re-run on their "

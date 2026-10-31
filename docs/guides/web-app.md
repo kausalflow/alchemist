@@ -82,7 +82,7 @@ every plant's questions also search. Each plant has:
 
 Add a plant from the side menu. Who may read a plant's data is still decided by the `alc-plant-<code>` group (or
 `access.yaml`); the Workspaces and Access groups pages show the current setup read-only, since
-those are set in the identity provider. On Models and limits, admins choose the model for each role. See [Domain knowledge](../concepts/knowledge.md) for
+those are set in the identity provider. On Models and limits, admins choose the model for each role and set the run limits, including how long a run may work. See [Domain knowledge](../concepts/knowledge.md) for
 where documents and facts are stored.
 
 ### What a run page shows

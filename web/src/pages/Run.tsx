@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, fileUrl, CLOSED, SEALED, TERMINAL, type RunDetail, type Step } from "../api";
 import { useApi, useSession } from "../session";
@@ -238,8 +238,20 @@ function RunningView({
     if (s.tool === "record_finding" && typeof s.input?.hypothesis === "string")
       found.set(s.input.hypothesis, (found.get(s.input.hypothesis) ?? 0) + 1);
 
+  // Working time: the last checkpoint's count from the server, plus the time since this page loaded it.
+  const loadedAt = useMemo(() => Date.now(), [run]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (r.status !== "running") return;
+    const t = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, [r.status]);
+  const tl = run.time_limit;
+  const usedSeconds = tl ? (tl.used_seconds ?? 0) + (r.status === "running" ? Math.max(0, now - loadedAt) / 1000 : 0) : 0;
+
   const limits = meta
     ? [
+        ...(tl ? [{ name: "Minutes", used: Math.floor(usedSeconds / 60), max: tl.minutes }] : []),
         { name: "Tool calls", used: tools, max: meta.budgets.max_steps },
         {
           name: "Output tokens",
@@ -380,7 +392,7 @@ function RunningView({
                 </div>
               );
             })}
-            <p className="faint tiny">Limits per run step, set in the deployment's configuration. Counted from the steps shown here.</p>
+            <p className="faint tiny">Minutes count the analysis's working time, against the limit it was approved with; tool calls and tokens are per run step. Admins set the defaults.</p>
           </section>
         )}
       </aside>

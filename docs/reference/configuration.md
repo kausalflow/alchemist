@@ -105,6 +105,12 @@ See [Plugins](../guides/plugins.md).
 | --- | --- | --- |
 | `ALC_MAX_STEPS` | `60` | tool calls per planning or analysis step |
 | `ALC_MAX_OUTPUT_TOKENS` | `400000` | output tokens per planning or analysis step |
+| `ALC_MAX_RUN_MINUTES` | `120` | default time limit of a run's analysis, in minutes of working time ([Time limit](../concepts/runs.md#time-limit)) |
+| `ALC_MAX_RUN_MINUTES_CAP` | `480` | the longest time limit a person may choose when approving a plan |
+
+An admin's value on the admin "Models and limits" page overrides `ALC_MAX_STEPS`, `ALC_MAX_OUTPUT_TOKENS`,
+`ALC_MAX_RUN_MINUTES` and `ALC_MAX_RUN_MINUTES_CAP` (saved in the app database, audited as `limits.update`).
+
 | `ALC_MAX_ACTIVE_RUNS_PER_USER` | `3` | runs one person may have planning or analysing at once (0: no limit) |
 | `ALC_MAX_ACTIVE_RUNS` | `0` | runs planning or analysing at once in total (0: no limit) |
 | `ALC_MODEL_RETRY_SECONDS` | `300` | how long a throttled model call keeps retrying |
