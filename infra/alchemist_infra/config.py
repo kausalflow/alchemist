@@ -204,12 +204,27 @@ class Commands(_Model):
     migrate: list[str] = ["db", "migrate"]
 
 
+class QueueWorkers(_Model):
+    """Workers for workflow.launcher: queue, an ECS service scaled on the steps waiting or running."""
+
+    min_count: int = Field(default=1, ge=0)   # 0: no worker runs while nothing is queued; the first step waits ~1 min
+    max_count: int = Field(default=4, ge=1)
+    concurrency: int = Field(default=2, ge=1)  # steps each worker runs at once
+
+
 class Workflow(_Model):
     # in_process (default): the analyse task runs the kernel itself, assumes the run role (ALC_RUN_ROLE_ARN) for data
     #   access, and builds the report and seals the run.
     # separate: the kernel runs in a sandbox task (`alchemist sandbox serve`) that gets data credentials only from the
     #   broker Lambda, refreshed as they expire, and has no route to Bedrock; Report and Seal are their own steps.
     sandbox_mode: Literal["in_process", "separate"] = "in_process"
+    # step_functions (default): every step of a run is its own Fargate task, started by the run's Step Functions
+    #   execution; nothing runs while no run does.
+    # queue: an ECS service of workers takes steps from the run queue in Aurora (`alchemist worker`). Warm workers start
+    #   a step in seconds; the service scales between workers.min_count and max_count on the queue's backlog. Needs
+    #   sandbox_mode in_process.
+    launcher: Literal["step_functions", "queue"] = "step_functions"
+    workers: QueueWorkers = QueueWorkers()
     approval_timeout_days: int = 14
     analysis_timeout_hours: int = 6
     # Attempts after the first when an analysis task fails or times out; each resumes from the run's checkpoint.
@@ -252,6 +267,14 @@ class EnvConfig(_Model):
     def _object_lock_needs_versioning(self):
         if self.storage.object_lock_governance_days and not self.storage.workspace_versioning:
             raise ValueError("storage.object_lock_governance_days needs storage.workspace_versioning: true")
+        return self
+
+    @model_validator(mode="after")
+    def _queue_runs_kernels_in_process(self):
+        if self.workflow.launcher == "queue" and self.workflow.sandbox_mode != "in_process":
+            raise ValueError("workflow.launcher queue needs workflow.sandbox_mode in_process")
+        if self.workflow.workers.min_count > self.workflow.workers.max_count:
+            raise ValueError("workflow.workers.min_count is above max_count")
         return self
 
     @model_validator(mode="after")

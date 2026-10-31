@@ -2,7 +2,8 @@
 
 The API only records what was asked and hands the step to a launcher, then returns at once; the browser follows
 progress through the run's event stream. `LocalLauncher` runs steps on a thread pool in the API process, which is
-what `alchemist serve` uses on a laptop. In AWS the launcher starts the run's Step Functions execution (planning)
+what `alchemist serve` uses on a laptop. `alchemist.runqueue.QueueLauncher` puts them in the run queue for
+`alchemist worker` processes (docker compose, Kubernetes, or AWS with workers). In AWS the launcher starts the run's Step Functions execution (planning)
 and sends the task token on approval instead; everything a step needs is in the database and the run folder, so a
 step can run in any process.
 
@@ -95,6 +96,45 @@ def last_launch(svc, run_id: str) -> dict | None:
     return json.loads(row["detail"]) if row and row["detail"] else None
 
 
+def run_step(services_factory: Callable[[], object], run_id: str, step: str, user: str | None = None) -> str | None:
+    """Run one step of a run ("plan", "analyse" or "replay") in this thread, with its own database connection.
+
+    A step that finds the run has moved on (cancelled while queued) does nothing. A step that crashes outside its own
+    error handling pauses the run if it can resume from a checkpoint, and fails it otherwise. Returns the error, if
+    any."""
+    from ..run import analyse, execute_replay, interrupted, plan
+
+    try:
+        svc = services_factory()  # one connection per thread: SQLite connections are not shared across threads
+        try:
+            status = svc.catalog.run(run_id)["status"]
+            if step == "plan":
+                if status == "planning":
+                    model, _ = models(svc.settings, "plan")
+                    plan(svc, run_id, model=model, should_stop=lambda: stop_requested(svc, run_id))
+            elif step == "analyse":
+                if status == "running":
+                    model, reviewer = models(svc.settings, "analysis")
+                    analyse(svc, run_id, user=user or approved_by(services_factory, run_id), model=model,
+                            reviewer=reviewer, should_stop=lambda: stop_requested(svc, run_id))
+            elif step == "replay":
+                execute_replay(svc, run_id)
+            else:
+                raise ValueError(f"unknown step {step!r}")
+        finally:
+            svc.catalog.db.close()
+    except Exception as e:
+        error = f"{type(e).__name__}: {e}"
+        log.error("run %s step %s failed:\n%s", run_id, step, traceback.format_exc())
+        svc = services_factory()
+        try:
+            interrupted(svc, run_id, error)
+        finally:
+            svc.catalog.db.close()
+        return error
+    return None
+
+
 class LocalLauncher:
     """Steps on a thread pool in this process. One `alchemist serve` per database: a run this process did not
     launch but another LocalLauncher did is taken to have died with that process."""
@@ -105,26 +145,13 @@ class LocalLauncher:
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="alc-run")
         self.instance = secrets.token_hex(8)
 
-    def _submit(self, run_id: str, fn):
+    def _submit(self, run_id: str, step: str, user: str | None = None):
         svc = self.services()
         try:
             svc.catalog.audit("system", "run.launch", run_id, {"launcher": "local", "instance": self.instance})
         finally:
             svc.catalog.db.close()
-
-        def wrapped():
-            try:
-                fn()
-            except Exception as e:  # an analysis with a checkpoint is paused, so it can resume; others fail
-                from ..run import interrupted
-
-                log.error("run %s step failed:\n%s", run_id, traceback.format_exc())
-                svc = self.services()
-                try:
-                    interrupted(svc, run_id, f"{type(e).__name__}: {e}")
-                finally:
-                    svc.catalog.db.close()
-        return self.pool.submit(wrapped)
+        return self.pool.submit(run_step, self.services, run_id, step, user)
 
     def cancel(self, run_id: str) -> None:
         pass  # the step sees the stop flag; a queued step finds the run cancelled and does nothing
@@ -142,18 +169,7 @@ class LocalLauncher:
             svc.catalog.db.close()
 
     def plan(self, run_id: str) -> None:
-        def go():
-            from ..run import plan
-
-            svc = self.services()  # one connection per thread: SQLite connections are not shared across threads
-            try:
-                if svc.catalog.run(run_id)["status"] != "planning":
-                    return  # cancelled while queued
-                model, _ = models(svc.settings, "plan")
-                plan(svc, run_id, model=model, should_stop=lambda: stop_requested(svc, run_id))
-            finally:
-                svc.catalog.db.close()
-        self._submit(run_id, go)
+        self._submit(run_id, "plan")
 
     def resume(self, run_id: str) -> None:
         self.analyse(run_id, approved_by(self.services, run_id))
@@ -162,30 +178,10 @@ class LocalLauncher:
         self.plan(run_id)  # the planning step continues its saved conversation with the note
 
     def analyse(self, run_id: str, user: str) -> None:
-        def go():
-            from ..run import analyse
-
-            svc = self.services()
-            try:
-                if svc.catalog.run(run_id)["status"] != "running":
-                    return
-                model, reviewer = models(svc.settings, "analysis")
-                analyse(svc, run_id, user=user, model=model, reviewer=reviewer,
-                        should_stop=lambda: stop_requested(svc, run_id))
-            finally:
-                svc.catalog.db.close()
-        self._submit(run_id, go)
+        self._submit(run_id, "analyse", user)
 
     def replay(self, run_id: str) -> None:
-        def go():
-            from ..run import execute_replay
-
-            svc = self.services()
-            try:
-                execute_replay(svc, run_id)
-            finally:
-                svc.catalog.db.close()
-        self._submit(run_id, go)
+        self._submit(run_id, "replay")
 
     def shutdown(self) -> None:
         self.pool.shutdown(wait=True)

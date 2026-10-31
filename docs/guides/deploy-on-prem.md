@@ -57,12 +57,25 @@ docker compose exec -e ALC_ACCESS=/data/access.yaml -e ALC_KNOWLEDGE=/data/knowl
   sh -c "alchemist demo setup && alchemist demo run"
 ```
 
+Runs go through the `worker` service: the API queues each step (planning, analysis, replay) in PostgreSQL and the
+workers run them, `ALC_WORKER_CONCURRENCY` (default 2) each. For more runs at once, add workers:
+
+```bash
+docker compose up -d --scale worker=4
+```
+
+Stop, pause and notes from the web app reach a run whichever worker has it. A worker that dies has its step picked up
+again by another after `ALC_JOB_LEASE_SECONDS`, and an analysis continues from its last checkpoint (see
+[Running many runs](../concepts/runs.md#running-many-runs-in-the-background)). `ALC_LAUNCHER=local` in `.env` runs
+steps in the API instead, without workers.
+
 The stack keeps run folders and the lake on the `alchemist-home` volume. To use the plant's object store (AWS S3,
 MinIO, Ceph, NetApp StorageGRID ...), set `ALC_WORKSPACE`, `ALC_LAKE` and the `AWS_*` variables in `.env`.
 
 `deploy/compose/smoke.sh` is the end-to-end check CI runs on every change: the stack comes up on PostgreSQL, the demo
 investigation runs, replays and verifies with its kernels in the sandbox (which must reach neither PostgreSQL nor the
-internet), and a PI source syncs from a fake PI Web API into the lake and the catalog.
+internet), a question asked through the API is planned and analysed by two workers, and a PI source syncs from a fake
+PI Web API into the lake and the catalog.
 
 ## Helm
 
@@ -121,8 +134,12 @@ ingress:
 
 The chart runs:
 
-- the **API** (one replica, `Recreate`): the web app, the REST API and the runs; a `db migrate` init container applies
+- the **API** (`api.replicas`, default 1): the web app and the REST API; a `db migrate` init container applies
   schema migrations first;
+- the **workers** (`workers.replicas`, default 2, each running `workers.concurrency` steps at once), which run the
+  steps the API queues. With [KEDA](https://keda.sh) installed, `workers.autoscaling.enabled: true` scales them on the
+  queue's length instead, one replica per `workers.concurrency` waiting or running steps, between `minReplicas` and
+  `maxReplicas`. `workers.enabled: false` runs the steps in the API, which must then stay at one replica;
 - the **sandbox** (`sandbox.enabled`), where each run's analysis kernel runs, see [below](#the-analysis-sandbox);
 - the **sync** CronJob (`sync.schedule`), `concurrencyPolicy: Forbid`;
 - optionally **Ollama** as a StatefulSet with a GPU (`ollama.enabled`), when the cluster has no model server yet.

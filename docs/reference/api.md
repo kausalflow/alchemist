@@ -111,10 +111,13 @@ Events are read from the run folder's transcripts, so they work whichever proces
 
 ## How long steps run
 
-`POST /questions`, `plan:approve` and `:replay` return at once; the step runs through a launcher
-(`alchemist.api.jobs`). Locally that is `LocalLauncher`, a thread pool in the API process. Each step needs only the
-database row and the run folder, so in AWS a launcher that starts the run's Step Functions execution (and sends the
-task token on approval) can replace it with `ALC_LAUNCHER=package.module:factory`, where `factory(services_factory)`
+`POST /questions`, `plan:approve` and `:replay` return at once; the step runs through a launcher chosen with
+`ALC_LAUNCHER`. `local` (the default) is a thread pool in the API process. `queue` puts the step in the run queue in
+the database for `alchemist worker` processes ([Running many runs](../concepts/runs.md#running-many-runs-in-the-background));
+`GET /runs/{id}` then has `queue`: `{"state": "queued", "ahead": n, "step", "attempt"}` while the step waits, or
+`{"state": "running", "worker", "step", "attempt"}`. Each step needs only the database row and the run folder, so in
+AWS `step-functions` starts the run's Step Functions execution (and sends the task token on approval) instead. Any other
+launcher plugs in with `ALC_LAUNCHER=package.module:factory`, where `factory(services_factory)`
 returns an object with `plan(run_id)`, `analyse(run_id, user)`, `replay(run_id)`, `cancel(run_id)` (a run cancelled
 while planning or waiting), `resume(run_id)` (a paused run; its analysis step continues from the checkpoint),
 `replan(run_id)` (a plan sent back with a note; its planning step continues with the note) and `reconcile()` (close or pause

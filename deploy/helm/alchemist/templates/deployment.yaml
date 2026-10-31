@@ -5,9 +5,13 @@ metadata:
   labels: {{- include "alchemist.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
+  {{- if .Values.workers.enabled }}
+  replicas: {{ .Values.api.replicas }}
+  {{- else }}
   replicas: 1  # runs execute in this process; see values.yaml api
   strategy:
     type: Recreate
+  {{- end }}
   selector:
     matchLabels: {{- include "alchemist.selector" . | nindent 6 }}
       app.kubernetes.io/component: api

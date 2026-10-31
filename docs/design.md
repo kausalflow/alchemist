@@ -46,7 +46,7 @@ flowchart TB
 | Document search | keyword ranking | hybrid (embeddings + full text) |
 | Plan approval and progress | web app with plan editing and live progress, or the CLI | same |
 | Sign-in | pick a user from `access.yaml` (`ALC_AUTH=dev`) | corporate OIDC at the load balancer, groups mapped to plants and workspaces |
-| Long steps | thread pool in the API process | Step Functions execution per run, through a launcher plugged in with `ALC_LAUNCHER` |
+| Long steps | thread pool in the API process, or the run queue and `alchemist worker` processes (`ALC_LAUNCHER=queue`) | Step Functions execution per run, or an ECS service of queue workers scaled on the backlog (`workflow.launcher`) |
 
 ## Not in the MVP yet
 

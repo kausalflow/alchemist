@@ -122,9 +122,15 @@ See [Plugins](../guides/plugins.md).
 | `ALC_OIDC_USER_CLAIM` | `email` | claim used as the user id (falls back to `sub`) |
 | `ALC_OIDC_GROUPS_CLAIM` | `groups` | claim holding the `alc-*` group names (`ALC_GROUP_CLAIM` is accepted too); when the access model has `user_from_claims`, its `identity:` settings in `access.yaml` decide instead |
 | `ALC_API_MODEL` | unset | `scripted` plays the offline demo script instead of calling a model (`alchemist serve --scripted`) |
-| `ALC_LAUNCHER` | unset | `package.module:factory` for a launcher that runs plan, analysis and replay steps elsewhere; default runs them on a thread pool in the API process |
-| `ALC_RECONCILE_SECONDS` | `60` | how often the API closes runs whose step died (0: never) |
-| `ALC_LOCAL_WORKERS` | `2` | steps `LocalLauncher` runs at once; more wait in a queue |
+| `ALC_LAUNCHER` | `local` | where plan, analysis and replay steps run: `local` on a thread pool in the API process; `queue` in `alchemist worker` processes that take them from the run queue in the database ([Running many runs](../concepts/runs.md#running-many-runs-in-the-background)); `step-functions` one Step Functions execution per run (AWS); or `package.module:factory` for another launcher |
+| `ALC_RECONCILE_SECONDS` | `60` | how often the API closes runs whose step died, and (queue) re-queues steps whose worker died (0: never) |
+| `ALC_LOCAL_WORKERS` | `2` | steps `local` runs at once; more wait in memory |
+| `ALC_QUEUE_EMBEDDED_WORKERS` | `0` | with `queue`, steps the API process also runs itself, so one `alchemist serve` needs no separate worker |
+| `ALC_WORKER_CONCURRENCY` | `2` | steps each `alchemist worker` runs at once (`--concurrency`) |
+| `ALC_JOB_LEASE_SECONDS` | `120` | a step whose worker sent no heartbeat for this long is taken to have lost its worker |
+| `ALC_JOB_RETRIES` | `2` | times such a step is queued again (an analysis continues from its checkpoint) before its run is paused or failed |
+| `ALC_WORKER_POLL_SECONDS` | `2` | how often an idle worker looks for a queued step |
+| `ALC_QUEUE_METRICS_NAMESPACE` | unset | CloudWatch namespace the API sends the queue's `QueuedSteps`, `RunningSteps` and `Backlog` to (AWS: what the worker service scales on) |
 | `ALC_SERVICES_TTL` | `60` | seconds the API reuses the access model and knowledge index between requests |
 | `ALC_WEB_DIST` | `web/dist` | built web app to serve at `/`; the API alone runs if it is missing |
 

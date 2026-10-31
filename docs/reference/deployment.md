@@ -26,6 +26,7 @@ All tasks run the one image built from the repository `Dockerfile` (entry point 
 | --- | --- | --- | --- |
 | api (service) | `api --host 0.0.0.0 --port 8080`; health check `GET /healthz` returns 200 | api (HTTPS egress) | read the workspace bucket (presigned downloads); write `workspaces/*` outside run folders, `_grants/` and `_approvals/`; start, stop and read executions; send task success or failure |
 | orchestrator | `worker plan --run-id <id>`, `worker analyse --run-id <id>`, `worker replay --run-id <id>`; separate: also `worker report --run-id <id>`, and `analyse`/`replay` with `--sandbox-task-arn <arn>` | app | invoke allow-listed Bedrock models; read and write run folders and `question.yaml`; in-process: assume the run role; separate: no `inputs/*.parquet` or `work/`, no `SEALED`; describe tasks in the cluster |
+| worker (service, `workflow.launcher: queue` only) | `worker --concurrency <workflow.workers.concurrency>` | app | the orchestrator's role, in-process (assumes the run role) |
 | sandbox (separate only) | `sandbox serve --port 8888` | sandbox | invoke the broker, nothing else |
 | sealer (separate only) | `worker seal --run-id <id>` | app | read run folders, write `SEALED` |
 | indexer | `catalog index` and `knowledge ingest` (nightly), `db migrate` (by hand) | app | read the lake and knowledge buckets; invoke the sub and embedding models |
@@ -58,7 +59,8 @@ In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandb
 | `ALC_ALB_ARN` | api | the ALB that must have signed the header |
 | `ALC_OIDC_GROUPS_CLAIM`, `ALC_GROUP_CLAIM` | api | the groups claim, from `oidc.group_claim` |
 | `ALC_ACCESS_PROVIDER` | api | `plugins.access_provider`, default `alb-oidc`: users only from verified claims; plants, workspaces and group patterns from `ALC_ACCESS` |
-| `ALC_LAUNCHER` | api | `alchemist.sfn_launcher:StepFunctionsLauncher` |
+| `ALC_LAUNCHER` | api | `alchemist.sfn_launcher:StepFunctionsLauncher`; `queue` with `workflow.launcher: queue` |
+| `ALC_QUEUE_METRICS_NAMESPACE`, `ALC_RECONCILE_SECONDS` | api | `Alchemist` and `30` with `workflow.launcher: queue`: the API sends the queue's backlog to CloudWatch, where the worker service scales on it (the API role may put metrics in that namespace only) |
 | `ALC_STATE_MACHINE_ARN` | api | the run workflow |
 | `ALC_GRANT_HOURS` | api | how long a broker grant lasts after approval or resume: `workflow.analysis_timeout_hours` × (1 + `workflow.analysis_retries`) + 2 |
 | `ALC_APPROVALS` | api | `s3://<workspace bucket>/_approvals/` |

@@ -1,5 +1,5 @@
 """ECS cluster, the Alchemist image, IAM roles, task definitions, the API service behind an ALB with OIDC,
-the credential broker, and the nightly indexers.
+the credential broker, the nightly indexers, and (workflow.launcher: queue) the worker service.
 
 Roles follow the split in the technical design:
 
@@ -18,6 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from aws_cdk import Duration, Token
+from aws_cdk import aws_applicationautoscaling as appscaling
+from aws_cdk import aws_cloudwatch as cloudwatch
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
@@ -39,6 +41,7 @@ from .storage import APPROVALS_PREFIX, GRANTS_PREFIX, RUNS_PATTERN, SEALED_PATTE
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BROKER_CODE = Path(__file__).resolve().parent / "lambdas" / "broker"
 ORIGIN_HEADER = "X-Alchemist-Origin-Verify"
+QUEUE_METRICS_NAMESPACE = "Alchemist"
 IMAGE_EXCLUDES = [".git", ".venv", "**/.venv", "alchemist-home", "infra", "site", "web/node_modules", "**/__pycache__",
                   "**/.pytest_cache", "cdk.out"]
 
@@ -256,6 +259,37 @@ class Services(Construct):
         self.indexer_task, self.indexer_container = self.add_task(
             "Indexer", "indexer", sz.indexer, self.indexer_role, cfg.commands.catalog_index,
             {**self.common_env, **self.db_env, **self.model_env}, {**self.db_secrets, **pseudonym})
+
+        # ---------------------------------------------------------------- run queue workers
+        self.worker_task = self.worker_container = self.worker_service = None
+        if cfg.workflow.launcher == "queue":
+            w = cfg.workflow.workers
+            self.worker_task, self.worker_container = self.add_task(
+                "Worker", "worker", orch_size, self.orchestrator_role, ["worker", "--concurrency", str(w.concurrency)],
+                {**self.common_env, **self.db_env, **self.model_env, **run_env}, {**self.db_secrets, **pseudonym})
+            self.worker_service = ecs.FargateService(
+                self, "WorkerService", cluster=self.cluster, task_definition=self.worker_task,
+                desired_count=w.min_count, vpc_subnets=network.app_subnets,
+                security_groups=[network.orchestrator_sg], assign_public_ip=False,
+                circuit_breaker=ecs.DeploymentCircuitBreaker(rollback=True), enable_execute_command=False)
+            # The API publishes the queue's backlog (steps waiting or running) every ALC_RECONCILE_SECONDS; the
+            # service runs one worker per `concurrency` steps of it.
+            backlog = cloudwatch.Metric(namespace=QUEUE_METRICS_NAMESPACE, metric_name="Backlog",
+                                        dimensions_map={"Environment": cfg.env_name}, statistic="Maximum",
+                                        period=Duration.minutes(1))
+            steps = [appscaling.ScalingInterval(upper=1, change=w.min_count)]
+            steps += [appscaling.ScalingInterval(lower=(n - 1) * w.concurrency + 1, change=max(n, w.min_count))
+                      for n in range(1, w.max_count + 1)]
+            self.worker_service.auto_scale_task_count(min_capacity=w.min_count, max_capacity=w.max_count) \
+                .scale_on_metric("ScaleOnBacklog", metric=backlog, scaling_steps=steps,
+                                 adjustment_type=appscaling.AdjustmentType.EXACT_CAPACITY,
+                                 cooldown=Duration.seconds(60), evaluation_periods=1)
+            self.api_container.add_environment("ALC_LAUNCHER", "queue")
+            self.api_container.add_environment("ALC_QUEUE_METRICS_NAMESPACE", QUEUE_METRICS_NAMESPACE)
+            self.api_container.add_environment("ALC_RECONCILE_SECONDS", "30")
+            self.api_role.add_to_policy(iam.PolicyStatement(
+                actions=["cloudwatch:PutMetricData"], resources=["*"],
+                conditions={"StringEquals": {"cloudwatch:namespace": QUEUE_METRICS_NAMESPACE}}))
 
         # ---------------------------------------------------------------- API service and ALB
         self.api_service = ecs.FargateService(

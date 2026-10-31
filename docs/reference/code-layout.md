@@ -21,6 +21,7 @@ src/alchemist/
   workspace.py  S3 (or local) folder layout, sealing and verification
   sources.py    data sources (AVEVA PI, lake tables) synced into the lake with penguineer's connectors, registered and drafted
   knowledge.py  plant documents and structured knowledge; which plants a run may read (search is penguineer's)
+  runqueue.py   the run queue: steps waiting for `alchemist worker` processes, heartbeats, lost steps re-queued
   paths.py      cloudpathlib helpers, DuckDB S3 secret, conditional writes, ULIDs, hashing, glob expansion
   plugins.py    plugin registry and extension-point types; the built-in defaults are registered here
   api/

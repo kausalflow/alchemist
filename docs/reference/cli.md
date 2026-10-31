@@ -28,12 +28,19 @@ Runs the [REST API](api.md) under `/api` and, when `web/dist` has been built, th
 ## `worker`
 
 ```text
+alchemist worker [--concurrency N] [--drain] [--scripted]
 alchemist worker {plan,analyse,report,seal,replay} --run-id RUN [--sandbox-task-arn ARN | --sandbox-url URL]
 ```
 
-Runs one step of an existing run in this process and exits: planning of a created run, the analysis of an approved
-run, or a replay created by the API. In AWS each step is an ECS task started by the run's Step Functions execution;
-locally the API runs the same steps on a thread pool.
+Without a step, takes steps from the run queue (`ALC_LAUNCHER=queue` on the API) and runs them, `--concurrency` at a
+time (default `ALC_WORKER_CONCURRENCY` or 2), until it gets SIGTERM or Ctrl-C; then it finishes the steps in hand and
+exits. `--drain` exits once the queue is empty. Start as many workers as you want runs going at once, on one computer
+or many: they only need the same database and workspace. See
+[Running many runs](../concepts/runs.md#running-many-runs-in-the-background).
+
+With a step, runs one step of an existing run in this process and exits: planning of a created run, the analysis of
+an approved run, or a replay created by the API. With `ALC_LAUNCHER=step-functions` (AWS) each step is an ECS task
+started by the run's Step Functions execution this way.
 
 With the default `ALC_SANDBOX_MODE=in_process` the kernel is a child of the worker, and `analyse` and `replay` also
 report and seal the run. With `ALC_SANDBOX_MODE=separate` they drive the kernel of a separate sandbox task, found by

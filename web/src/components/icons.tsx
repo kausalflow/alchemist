@@ -22,6 +22,7 @@ const PATHS: Record<string, string[]> = {
   trash: ["M4 7h16", "M10 11v6", "M14 11v6", "M6 7l1 13h10l1-13", "M9 7V4h6v3"],
   note: ["M5 4h14v12l-4 4H5z", "M15 20v-4h4", "M9 9h6", "M9 13h3"],
   shield: ["M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6l-7-3z"],
+  clock: ["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z", "M12 7v5l3 2"],
 };
 
 export default function Icon({ name, size = 16, className }: { name: keyof typeof PATHS | string; size?: number; className?: string }) {

@@ -39,6 +39,7 @@ data:
   {{- with include "alchemist.localUrl" . }}
   ALC_LOCAL_LLM_URL: {{ . | quote }}
   {{- end }}
+  ALC_LAUNCHER: {{ ternary "queue" "local" .Values.workers.enabled | quote }}
   {{- if .Values.sandbox.enabled }}
   ALC_SANDBOX_URL: "http://{{ include "alchemist.fullname" . }}-sandbox:8888"
   {{- end }}

@@ -135,6 +135,9 @@ spec:
         - podSelector:
             matchLabels: {{- include "alchemist.selector" . | nindent 14 }}
               app.kubernetes.io/component: api
+        - podSelector:
+            matchLabels: {{- include "alchemist.selector" . | nindent 14 }}
+              app.kubernetes.io/component: worker
       ports:
         - {port: 8888, protocol: TCP}
   egress:

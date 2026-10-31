@@ -46,6 +46,15 @@ export default function RunPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, status, run?.entitled]);
 
+  // While its step waits for a worker nothing streams yet: look again until a worker has it.
+  const queued = run?.queue?.state === "queued";
+  useEffect(() => {
+    if (!queued) return;
+    const t = setInterval(reload, 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queued]);
+
   if (error)
     return (
       <div className="fullpage">
@@ -108,7 +117,9 @@ export default function RunPage() {
         )}
         <span className="push">
           <StatusChip status={r.status}>
-            {r.status === "running" && toolCount
+            {queued
+              ? "Queued"
+              : r.status === "running" && toolCount
               ? `${reviewing ? "In review" : "Running"} · step ${toolCount}`
               : r.status === "awaiting_approval"
                 ? "Needs approval"
@@ -121,6 +132,8 @@ export default function RunPage() {
       <Stepper run={run} reviewing={reviewing} />
 
       <div className="pad-page">
+        {queued && <QueueNote run={run} />}
+
         {status === "planning" && (
           <PlanningView run={run} steps={live.filter((s) => s.phase === "planning")} onStop={act("stop")} reload={reload} />
         )}
@@ -135,6 +148,25 @@ export default function RunPage() {
 
         {status && CLOSED.has(status) && <ClosedView run={run} reload={reload} onAsk={() => nav("/ask")} />}
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ queue
+
+function QueueNote({ run }: { run: RunDetail }) {
+  const q = run.queue!;
+  const ahead = q.ahead ?? 0;
+  const what = q.step === "plan" ? "Drafting the plan" : q.step === "analyse" ? "The analysis" : "The replay";
+  return (
+    <div className="callout small queue-note" role="status">
+      <Icon name="clock" />
+      <span>
+        <strong>Waiting for a free worker.</strong>{" "}
+        {what} {ahead === 0 ? "is next in line" : `starts after ${ahead} ${ahead === 1 ? "step" : "steps"} queued before it`}
+        {q.attempt > 1 ? ` (attempt ${q.attempt}: its last worker stopped)` : ""}.{" "}
+        <span className="muted">You can leave this page; stop and notes work while it waits.</span>
+      </span>
     </div>
   );
 }

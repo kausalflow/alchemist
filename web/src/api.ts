@@ -187,6 +187,8 @@ export interface RunDetail {
     verdict: boolean;
   };
   notes?: RunNote[];
+  // With the run queue (ALC_LAUNCHER=queue): whether the run's current step waits for a worker, or which one runs it.
+  queue?: { state: "queued" | "running"; step: string; attempt: number; ahead?: number; worker?: string } | null;
   plan_history?: Plan[];
   conclusion_md?: string | null;
   conclusion_html?: string | null;
