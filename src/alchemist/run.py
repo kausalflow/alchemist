@@ -10,6 +10,8 @@ from __future__ import annotations
 import datetime as dt
 import importlib.metadata
 import json
+import logging
+import math
 import platform
 import time
 from pathlib import Path
@@ -31,6 +33,8 @@ from .plugins import get_registry
 from .report import ReportError, render
 from .sandbox import RemoteKernel, Sandbox, finding_cell, query_cell
 from .workspace import (create_question, create_run, ensure_project, seal, update_question, verify)
+
+log = logging.getLogger("alchemist.run")
 
 ACTIVE = ("planning", "running")  # a step is (or should be) working on the run
 OPEN = ACTIVE + ("awaiting_approval",)  # not finished yet
@@ -169,6 +173,8 @@ class RunContext:
         self.query_n = self.finding_n = self.penguineer_n = 0
         self.findings_done = self.review = self.report_out = None
         self.review_requested = False
+        self.wrap_up_for: float | None = None  # the time limit (s) whose wrap-up note the agent has received
+        self.wrapping_up = False  # this step told the agent to conclude with what it has
         self.models: dict = {"prompts": prompts.prompt_version()}
         logs = self.run / "logs" / "citations.json"
         if logs.exists():
@@ -275,6 +281,8 @@ class RunContext:
     def build_report(self, inp: dict) -> ToolOutput:
         if not self.review_requested:
             return ToolOutput("Call finish_analysis first to get the independent review.", is_error=True)
+        if self.wrapping_up and not any(str(x).startswith(PRELIMINARY) for x in inp.get("limitations", [])):
+            inp = {**inp, "limitations": [preliminary_note(self.plan), *inp.get("limitations", [])]}
         if self.sandbox is not None:  # the Report step of a separate sandbox has no kernel
             self.sandbox.execute("alc.check_results()", kind="check")
         try:
@@ -441,19 +449,46 @@ def pause(svc: Services, run_id: str, *, user: "str | User") -> None:
     svc.catalog.audit(u.id, "run.pause", run_id)
 
 
-def resume(svc: Services, run_id: str, *, user: "str | User") -> None:
+def paused_at_time_limit(run) -> bool:
+    """Whether the run paused because it reached its time limit (then it waits for more time, or to be finished)."""
+    f = as_path(run) / "manifest.json"
+    try:
+        return f.exists() and str(read_json(f).get("analysis_ended", "")).startswith(TIME_LIMIT_PAUSE)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return False
+
+
+def resume(svc: Services, run_id: str, *, user: "str | User", more_minutes: int | None = None) -> None:
     """Mark a paused run running again; the caller hands it to the launcher's resume(), whose analysis step picks
-    up from the checkpoint."""
+    up from the checkpoint.
+
+    `more_minutes` gives the analysis that much more working time (up to the cap), counted from the time it has
+    used; a run paused at its time limit gets the default (`max_run_minutes`) if no one says. The agent is told."""
     row = svc.catalog.run(run_id)
     u = _owner(svc, row, user, "resume")
     if row["status"] != "paused":
         raise ValueError(f"run {run_id} is {row['status']}, not paused")
+    run = as_path(row["path"])
+    if more_minutes is None and paused_at_time_limit(run):
+        more_minutes = svc.settings.max_run_minutes
+    more = check_time_limit(svc, more_minutes) if more_minutes is not None else None
     # Without a checkpoint (paused before its first step finished) the analysis simply starts again.
     check_capacity(svc, row["user_id"])
     if not svc.catalog.transition(run_id, "paused", "running"):
         raise ValueError(f"run {run_id} is {svc.catalog.run(run_id)['status']}, not paused")
+    qdir = run.parent.parent
+    if more:
+        plan = read_yaml(qdir / "question.yaml").get("plan") or {}
+        used = float(((checkpoint_of(run) or {}).get("budget") or {}).get("seconds", 0))
+        before = time_limit(svc, plan)
+        after = math.ceil(used / 60) + more
+        update_question(qdir, plan={**plan, "time_limit_minutes": after})
+        svc.catalog.audit(u.id, "run.extend", run_id, {"from_minutes": before, "to_minutes": after,
+                                                       "more_minutes": more})
+        steering.add(svc, run_id, author=u.id, kind="more_time", phase="paused",
+                     text=f"{more} more minutes (the time limit is now {after} minutes of working time)")
     svc.catalog.audit(u.id, "run.resume", run_id)
-    update_question(as_path(row["path"]).parent.parent, status="running")
+    update_question(qdir, status="running")
 
 
 def note(svc: Services, run_id: str, *, user: "str | User", text: str) -> None:
@@ -600,6 +635,28 @@ class RunBudget(Budget):
 
     def as_dict(self) -> dict:
         return {**super().as_dict(), "seconds": round(self.seconds, 1)}
+
+
+def wrap_up_seconds(max_seconds: float) -> float:
+    """How long before the time limit the agent is told to conclude: a tenth of the limit, at most 10 minutes."""
+    return min(600.0, max_seconds / 10)
+
+
+WRAP_UP = ("Time is nearly up: about {left} of this run's {limit}-minute limit remain. Stop exploring now. Record any "
+           "finding you can already support, call finish_analysis, then build_report with your best conclusion from "
+           "the findings so far, and say in the limitations what is still open. The run then pauses with this "
+           "preliminary report; a person can give it more time, and you would continue from here.")
+PRELIMINARY = "Preliminary:"
+TIME_LIMIT_PAUSE = "paused: time limit"
+
+
+def preliminary_note(plan: dict | None) -> str:
+    return (f"{PRELIMINARY} the run reached its time limit of {(plan or {}).get('time_limit_minutes', '?')} minutes "
+            "and concluded with what it had found so far.")
+
+
+def _minutes(seconds: float) -> str:
+    return f"{seconds / 60:.0f} minutes" if seconds >= 90 else f"{seconds:.0f} seconds"
 
 
 def time_limit(svc: Services, plan: dict | None) -> int:
@@ -762,23 +819,66 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
                              handlers=handlers, first_message=first, done=lambda: ctx.report_out is not None,
                              budget=budget, transcript=as_path(ctx.run / "logs" / "transcript.jsonl"), write_text=write_text, should_stop=should_stop,
                              checkpoint=lambda state: _save_checkpoint(ctx, sb, budget, state), resume=saved,
-                             steer=ctx.steering)
+                             steer=lambda: _steer(ctx, budget))
         except Exception as e:  # a model or network failure still ends in a sealed, partial run
             ended = f"error: {type(e).__name__}: {e}"
             if is_retryable(e) and checkpoint_of(ctx.run):  # the provider is down: keep the work, resume later
                 ended = f"paused: the model provider is unavailable ({type(e).__name__}: {str(e)[:300]})"
-        finally:
-            if ctx.report_out is None and ctx._findings() and not ended.startswith("paused"):
-                # Budget stop or failure: still leave a partial report of what was found.
-                partial = {"title": f"Partial result: {question['text']}",
-                           "conclusion": "The run stopped before it finished; findings so far are listed below.",
-                           "top_causes": [], "limitations": [f"Run ended early: {ended}"]}
-                ctx.review_requested = True
-                ctx.build_report(partial)
+        # At the time limit (or once the agent concluded after being told time was nearly up) the run pauses with a
+        # preliminary report, so a person can read it and give the run more time, or finish it. A stop finishes it.
+        stopping = should_stop is not None and should_stop() not in (None, False, "pause")
+        out_of_time = ended.startswith("budget: time limit") or (ended == "done" and ctx.wrapping_up)
+        if out_of_time and not stopping and checkpoint_of(ctx.run):
+            ended = f"{TIME_LIMIT_PAUSE} of {time_limit(svc, ctx.plan)} minutes reached"
+        try:
+            if ctx.report_out is None and ctx._findings() and not ended.startswith("paused") \
+                    or ended.startswith(TIME_LIMIT_PAUSE) and ctx.report_out is None and ctx._findings():
+                _fallback_report(ctx, ended)
+        except Exception:  # the run must still end (or pause) cleanly
+            log.exception("building the partial report of run %s failed", run_id)
     if ended.startswith("paused"):
         return _pause(svc, ctx, budget, ended)
-    status = "completed" if ended == "done" else "partial"
+    status = "completed" if ended == "done" and not ctx.wrapping_up else "partial"
     return _finish(svc, ctx, status, usage=budget.as_dict(), extra={"analysis_ended": ended})
+
+
+def _steer(ctx: RunContext, budget: "RunBudget") -> dict | None:
+    """Notes from people following the run, and once per time limit, near its end, the note to conclude."""
+    note = ctx.steering() if ctx.steering else None
+    limit = budget.max_seconds
+    if not limit or ctx.wrap_up_for == limit or budget.seconds < limit - wrap_up_seconds(limit):
+        return note
+    ctx.wrap_up_for, ctx.wrapping_up = limit, True
+    text = WRAP_UP.format(left=_minutes(max(0.0, limit - budget.seconds)), limit=f"{limit / 60:g}")
+    return {"text": f"{note['text']}\n\n{text}" if note else text,
+            "notes": [*(note["notes"] if note else []), {"kind": "time_limit", "text": text}]}
+
+
+def _fallback_report(ctx: RunContext, ended: str) -> None:
+    """The report of a run that ended (or paused at its time limit) without building one: the agent's own report
+    input if it built one before (a preliminary report, when a person finishes a run paused at its time limit),
+    else a partial report listing the findings so far."""
+    ctx.review_requested = True
+    saved = ctx.run / "logs" / "report_input.json"
+    if saved.exists():
+        inp = read_json(saved)
+        if not ended.startswith("paused"):  # finished without more time: the report is no longer preliminary
+            inp["limitations"] = [x for x in inp.get("limitations", []) if not str(x).startswith(PRELIMINARY)] + [
+                f"Concluded early: the run reached its time limit of {time_limit(ctx.svc, ctx.plan)} minutes and "
+                "was finished without more time."]
+        ctx.wrapping_up = ended.startswith("paused")
+        if ctx.build_report(inp).is_error is False:
+            return
+    if ended.startswith("paused"):
+        ctx.wrapping_up = True  # marks it preliminary
+        partial = {"title": f"Preliminary result: {ctx.question['text']}",
+                   "conclusion": "The run reached its time limit before it concluded; findings so far are listed below.",
+                   "top_causes": [], "limitations": []}
+    else:
+        partial = {"title": f"Partial result: {ctx.question['text']}",
+                   "conclusion": "The run stopped before it finished; findings so far are listed below.",
+                   "top_causes": [], "limitations": [f"Run ended early: {ended}"]}
+    ctx.build_report(partial)
 
 
 def _save_checkpoint(ctx: RunContext, sb: Sandbox, budget: Budget, state: dict) -> None:
@@ -787,7 +887,7 @@ def _save_checkpoint(ctx: RunContext, sb: Sandbox, budget: Budget, state: dict) 
         "budget": budget.as_dict(),
         "context": {"query_n": ctx.query_n, "finding_n": ctx.finding_n, "penguineer_n": ctx.penguineer_n,
                     "review_requested": ctx.review_requested,
-                    "review": ctx.review},
+                    "review": ctx.review, "wrap_up_for": ctx.wrap_up_for},
         "notebook": {"cells": len(sb.nb.cells), "counter": sb.counter},
         "steering": ctx.steering.delivered if ctx.steering else []})
 
@@ -798,6 +898,7 @@ def _restore(ctx: RunContext, sb: Sandbox, budget: Budget, model: Model, saved: 
     c = saved["context"]
     ctx.query_n, ctx.finding_n, ctx.penguineer_n = c["query_n"], c["finding_n"], c.get("penguineer_n", 0)
     ctx.review_requested, ctx.review = c["review_requested"], c["review"]
+    ctx.wrap_up_for = c.get("wrap_up_for")
     b = saved["budget"]
     budget.steps, budget.model_calls = b["steps"], b["model_calls"]
     budget.input_tokens, budget.output_tokens = b["input_tokens"], b["output_tokens"]

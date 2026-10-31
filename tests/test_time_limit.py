@@ -1,5 +1,6 @@
 """How long a run may work: the default, an admin's choice, a person's choice at approval, and the stop."""
 
+import json
 import os
 from types import SimpleNamespace
 
@@ -56,17 +57,105 @@ def test_the_time_limit_counts_working_time_from_before_a_pause():
     assert "step budget" in b.exceeded()  # the other budgets are checked first, as before
 
 
-def test_a_run_over_its_time_limit_stops_with_a_partial_report(svc, monkeypatch):
-    rid = planned(svc)
-    start_approval(svc, rid, user="eng_p1", time_limit_minutes=1)
-    clock = iter(range(0, 10_000, 15))  # each look at the clock is 15 s later
-    monkeypatch.setattr(run_module, "time", SimpleNamespace(monotonic=lambda: next(clock)))
-    out = analyse(svc, rid, user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
+class Clock:
+    """Working time that moves only when the model is called: `per_call` seconds a call."""
+
+    def __init__(self, monkeypatch, per_call=60):
+        self.now, self.per_call = 0.0, per_call
+        monkeypatch.setattr(run_module, "time", SimpleNamespace(monotonic=lambda: self.now))
+
+    def model(self, inner):
+        clock = self
+
+        class Timed:
+            name = inner.name
+
+            def create(self, **kw):
+                clock.now += clock.per_call
+                return inner.create(**kw)
+
+            if hasattr(inner, "advance"):
+                def advance(self, n):
+                    inner.advance(n)
+        return Timed()
+
+
+def transcript_steering(path):
+    lines = [json.loads(x) for x in (run_module.as_path(path) / "logs" / "transcript.jsonl").read_text().splitlines()]
+    return [n for x in lines for n in x.get("steering", [])]
+
+
+def test_near_the_limit_the_agent_concludes_and_the_run_pauses_with_a_preliminary_report(svc, monkeypatch):
+    rid = planned(svc, "time-limit-wrap-up")
+    start_approval(svc, rid, user="eng_p1", time_limit_minutes=11)
+    clock = Clock(monkeypatch)
+    out = analyse(svc, rid, user="eng_p1", model=clock.model(ScriptedModel(script.ANALYSIS_TURNS)),
                   reviewer=ScriptedReviewer(script.REVIEW))
-    assert out["status"] == "partial"
-    assert out["analysis_ended"] == "budget: time limit of 1 minutes used"
-    manifest = run_module.read_json(run_module.as_path(out["path"]) / "manifest.json")
-    assert manifest["usage"]["seconds"] >= 60
+    # Each model call takes a minute; the last tenth of the limit is for wrapping up, so the agent is told before its
+    # 11th call, and builds its report in it.
+    assert out["status"] == "paused" and out["analysis_ended"] == "paused: time limit of 11 minutes reached"
+    assert [n["kind"] for n in transcript_steering(out["path"])] == ["time_limit"]
+    run = run_module.as_path(out["path"])
+    assert run_module.paused_at_time_limit(run)
+    inp = run_module.read_json(run / "logs" / "report_input.json")
+    assert inp["title"] == script.ANALYSIS_TURNS[10][0][1]["title"]  # the agent's own conclusion, marked preliminary
+    assert inp["limitations"][0].startswith("Preliminary: the run reached its time limit of 11 minutes")
+    assert (run / "report" / "conclusion.md").exists() and not (run / "SEALED").exists()
+
+    # More time: the same run continues from where it stopped, the agent is told, and its report replaces the
+    # preliminary one.
+    run_module.resume(svc, rid, user="eng_p1", more_minutes=5)
+    plan = run_module.read_yaml(run.parent.parent / "question.yaml")["plan"]
+    assert plan["time_limit_minutes"] == 11 + 5  # 11 minutes used, then 5 more
+    finish = ScriptedModel([script.ANALYSIS_TURNS[9], script.ANALYSIS_TURNS[10]])
+    out = analyse(svc, rid, user="eng_p1", model=clock.model(SimpleNamespace(name="scripted", create=finish.create)),
+                  reviewer=ScriptedReviewer(script.REVIEW))
+    assert out["status"] == "completed" and out["seal_sha256"]
+    assert [n["kind"] for n in transcript_steering(out["path"])] == ["time_limit", "more_time"]
+    assert not any(x.startswith("Preliminary:")
+                   for x in run_module.read_json(run / "logs" / "report_input.json")["limitations"])
+    assert run_module.read_json(run / "manifest.json")["usage"]["seconds"] == 13 * 60
+
+
+def test_a_run_that_runs_out_of_time_mid_analysis_pauses_then_can_be_finished(svc, monkeypatch):
+    rid = planned(svc, "time-limit-hard")
+    start_approval(svc, rid, user="eng_p1", time_limit_minutes=5)
+    clock = Clock(monkeypatch)
+    out = analyse(svc, rid, user="eng_p1", model=clock.model(ScriptedModel(script.ANALYSIS_TURNS)),
+                  reviewer=ScriptedReviewer(script.REVIEW))
+    assert out["status"] == "paused" and out["analysis_ended"] == "paused: time limit of 5 minutes reached"
+    run = run_module.as_path(out["path"])
+    inp = run_module.read_json(run / "logs" / "report_input.json")
+    assert inp["title"].startswith("Preliminary result") and inp["limitations"][0].startswith("Preliminary:")
+
+    # Finishing it (stop) seals the report as it stands, no longer preliminary.
+    assert run_module.cancel(svc, rid, user="eng_p1") == "finishing"
+    out = analyse(svc, rid, user="eng_p1", model=clock.model(ScriptedModel(script.ANALYSIS_TURNS)),
+                  reviewer=ScriptedReviewer(script.REVIEW), should_stop=lambda: "stop")
+    assert out["status"] == "partial" and out["seal_sha256"]
+    limitations = run_module.read_json(run / "logs" / "report_input.json")["limitations"]
+    assert not any(x.startswith("Preliminary:") for x in limitations)
+    assert any("finished without more time" in x for x in limitations)
+
+
+def test_more_time_is_capped_and_defaults_for_a_run_paused_at_its_limit(client, svc, monkeypatch):
+    rid = planned(svc, "time-limit-more")
+    start_approval(svc, rid, user="eng_p1", time_limit_minutes=5)
+    clock = Clock(monkeypatch)
+    analyse(svc, rid, user="eng_p1", model=clock.model(ScriptedModel(script.ANALYSIS_TURNS)),
+            reviewer=ScriptedReviewer(script.REVIEW))
+    with pytest.raises(TimeLimitError, match="between 1 and 480"):
+        run_module.resume(svc, rid, user="eng_p1", more_minutes=500)
+    assert svc.catalog.run(rid)["status"] == "paused"
+    r = client.post(f"/api/runs/{rid}:resume", headers=ENGINEER, json={"more_minutes": 500})
+    assert r.status_code == 422 and "between 1 and 480" in r.text
+    got = client.get(f"/api/runs/{rid}", headers=ENGINEER).json()
+    assert got["time_limit"]["reached"] and got["permissions"]["resume"] and got["conclusion_md"]
+    run_module.resume(svc, rid, user="eng_p1")
+    run = run_module.as_path(svc.catalog.run(rid)["path"])
+    plan = run_module.read_yaml(run.parent.parent / "question.yaml")["plan"]
+    assert plan["time_limit_minutes"] == 5 + svc.settings.max_run_minutes
+    svc.catalog.transition(rid, "running", "failed")
 
 
 def test_a_person_chooses_a_limit_up_to_the_cap(svc):

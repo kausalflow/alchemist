@@ -95,7 +95,7 @@ def _launcher(request: Request):
 def _time_limit(svc, run, plan: dict | None, status: str) -> dict | None:
     """The approved run's time limit and the analysis's working time so far (from its last checkpoint, plus the time
     since while it is running)."""
-    from ..run import checkpoint_of, time_limit
+    from ..run import checkpoint_of, paused_at_time_limit, time_limit
 
     if not (plan or {}).get("approved_at"):
         return None
@@ -111,7 +111,8 @@ def _time_limit(svc, run, plan: dict | None, status: str) -> dict | None:
                 pass
     else:
         used = (_json(run / "manifest.json") or {}).get("usage", {}).get("seconds")
-    return {"minutes": time_limit(svc, plan), "used_seconds": None if used is None else round(used)}
+    return {"minutes": time_limit(svc, plan), "used_seconds": None if used is None else round(used),
+            "reached": status == "paused" and paused_at_time_limit(run)}
 
 
 def _queue_position(request: Request, run_id: str) -> dict | None:
@@ -579,19 +580,26 @@ def pause_run(run_id: str, svc: Svc, me: Me) -> dict:
     return {"run_id": run_id, "pause_requested": True}
 
 
+class ResumeBody(BaseModel):
+    more_minutes: int | None = None
+
+
 @router.post("/runs/{run_id}:resume")
-def resume_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
+def resume_run(run_id: str, svc: Svc, me: Me, request: Request, body: ResumeBody | None = None) -> dict:
     """Continue a paused run from its last step: a fresh kernel re-runs the notebook on its stored snapshots, then the
-    agent carries on."""
-    from ..run import RunLimit, resume
+    agent carries on. `more_minutes` gives it more working time (up to the cap); a run paused at its time limit gets
+    the default if it is left out."""
+    from ..run import RunLimit, TimeLimitError, resume
 
     entitled_run(svc, me, run_id)
     try:
-        resume(svc, run_id, user=me.user)
+        resume(svc, run_id, user=me.user, more_minutes=body.more_minutes if body else None)
     except AccessDenied as e:
         raise HTTPException(403, str(e)) from e
     except RunLimit as e:
         raise _limit_error(e) from e
+    except TimeLimitError as e:
+        raise HTTPException(422, str(e)) from e
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
     _launch(svc, request, run_id, "resume")

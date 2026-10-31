@@ -206,7 +206,7 @@ export interface RunDetail {
   // With the run queue (ALC_LAUNCHER=queue): whether the run's current step waits for a worker, or which one runs it.
   queue?: { state: "queued" | "running"; step: string; attempt: number; ahead?: number; worker?: string } | null;
   // The approved run's time limit, and the analysis's working time so far (null before its first step).
-  time_limit?: { minutes: number; used_seconds: number | null } | null;
+  time_limit?: { minutes: number; used_seconds: number | null; reached?: boolean } | null;
   plan_history?: Plan[];
   conclusion_md?: string | null;
   conclusion_html?: string | null;

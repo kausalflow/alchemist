@@ -41,14 +41,14 @@ All paths are under `/api`.
 | `POST /questions` | create a question and its first run, and start planning; body `{workspace, project, question, scope}` | workspace member, within their plants |
 | `GET /questions/similar?q=` | past questions the user may open, by word overlap | any user |
 | `GET /runs?workspace=&project=&question_id=` | runs in the user's workspaces, newest first | members |
-| `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts, `time_limit` (`{minutes, used_seconds}` once approved) | entitled viewer |
+| `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts, `time_limit` (`{minutes, used_seconds, reached}` once approved; `reached` while paused at the limit) | entitled viewer |
 | `POST /runs/{id}/plan:approve` | approve the plan, or send `{plan}` to approve an edited one, and optionally `{time_limit_minutes}` (up to the cap in `GET /meta` `budgets`; 422 above it); starts the analysis | who asked, or an admin |
 | `POST /runs/{id}/plan:send-back` | `{text}`: return the plan to planning with a note; a revised version comes back for approval | who asked, or an admin |
 | `POST /runs/{id}/notes` | `{text}`: leave a note the agent reads before its next model call (planning, waiting, running or paused runs) | run owner, admin |
 | `GET /runs/{id}/notes` | every note, with when the agent read it (`delivered`, or `null`) | entitled viewer |
 | `GET /runs/{id}/events` | live progress (server-sent events, below) | entitled viewer |
 | `POST /runs/{id}:pause` | pause a running analysis after its current step; it can be resumed later | run owner, admin |
-| `POST /runs/{id}:resume` | continue a paused run from its last step | run owner, admin |
+| `POST /runs/{id}:resume` | continue a paused run from its last step; `{more_minutes}` gives it more working time (up to the cap; a run paused at its time limit gets the default if left out; 422 above the cap) | run owner, admin |
 | `POST /runs/{id}:stop` | planning or waiting for approval: cancel now; running: stop after the current step, then build and seal a partial report | run owner, admin |
 | `POST /runs/{id}:replay` | new run in `replay` (snapshots) or `rerun` (current data) mode; body `{mode}` | entitled viewer |
 | `POST /runs/{id}/verdict` | `{verdict: confirmed \| partly_confirmed \| rejected, note, findings}` | workspace member |
