@@ -159,9 +159,9 @@ image also ships DuckDB's S3 extensions, so nothing is downloaded at run time. W
 The analysis model writes Python, and that code runs in a kernel. In both deployments the kernels run in their own
 container, `alchemist sandbox serve`, not in the API:
 
-- **No credentials but storage.** The sandbox gets the pseudonym key and the object store keys (or, in Kubernetes,
-  the service account's workload identity), nothing else: no database password, no model or PI keys, no
-  sign-in settings, no Kubernetes API token. Kernels do not even see the token the API drives the sandbox with.
+- **No credentials but storage.** The sandbox gets the pseudonym key and, at most, storage access: no database
+  password, no model or PI keys, no sign-in settings, no Kubernetes API token. Kernels do not even see the token the
+  API drives the sandbox with.
 - **No network but storage.** In docker compose the sandbox's only network is `internal`, with no route out; it
   reaches the API's requests and nothing else (with the workspace on the local volume it needs no network at all).
   In Kubernetes a NetworkPolicy admits only the API's pods and lets kernels reach DNS and
@@ -174,16 +174,40 @@ Each run has its own kernel process; `ALC_SANDBOX_MAX_KERNELS` (Helm: `sandbox.m
 once. To run kernels inside the API container instead, set `ALC_SANDBOX_URL=` (empty) in `.env`, or
 `sandbox.enabled: false`.
 
-With the workspace on an object store, give the sandbox its own keys if you can (`SANDBOX_AWS_ACCESS_KEY_ID` and
+### One run, its own data
+
+Runs share the sandbox, but not each other's files:
+
+- **Files (Landlock).** Before it runs anything, each kernel confines itself with Linux Landlock: it may read the
+  folders of the datasets its run was given and its own run folder, write only its run folder and a private
+  temporary folder, and read the system and Python files it needs. Another plant's lake files, another run's
+  folder, and another kernel's connection key and sockets are out of reach, and a kernel cannot trace or read the
+  memory of processes outside its confinement. Landlock needs Linux 5.13 or later on the host (Ubuntu 22.04+,
+  Debian 12+, RHEL 9+) and Docker 23 or later; it needs no privileges. With `ALC_KERNEL_JAIL=auto` (the default;
+  Helm: `sandbox.kernelJail`) kernels are confined where the host supports it, and each run's manifest records
+  `filesystem: landlock v<N>` or `shared`; `required` refuses runs on hosts without it. Check a host with
+  `docker compose exec sandbox python -c "from alchemist import fsjail; print(fsjail.abi())"` (0: not supported).
+- **Object store (per-run sessions).** Set `ALC_RUN_ROLE_ARN` (Helm: `storage.runRoleArn`) and the API assumes that
+  role once per run through the store's STS (AWS, MinIO, Ceph RGW) with a session policy that allows reading only
+  the run's datasets and reading and writing only its folder, never `SEALED`. It sends the session to the sandbox
+  with the kernel's start and sends a new one before the last expires; the kernel reads it from a file only it can
+  open. The sandbox then holds no storage keys at all: in compose leave `SANDBOX_AWS_ACCESS_KEY_ID` and
+  `SANDBOX_AWS_SECRET_ACCESS_KEY` empty and set `ALC_SANDBOX_REQUIRE_SCOPED=1`; the chart does both and gives the
+  sandbox a service account without workload identity. The API's own keys must belong to a user allowed to assume
+  the role (on MinIO, not the root user).
+
+Without a run role, give the sandbox its own keys if you can (`SANDBOX_AWS_ACCESS_KEY_ID` and
 `SANDBOX_AWS_SECRET_ACCESS_KEY` in `.env`; `sandbox.existingSecret` or `sandbox.serviceAccountName` in Helm), limited
-to reading the lake and reading and writing the workspace, and attach the compose sandbox to a network that reaches
-the store (see the comment in `docker-compose.yml`).
+to reading the lake and reading and writing the workspace. Either way, attach the compose sandbox to a network that
+reaches the store (see the comment in `docker-compose.yml`).
 
 ## What this deployment does not enforce yet
 
-Compared with the [AWS architecture](deploy-aws.md), all runs share one sandbox and its storage rights: a kernel's
-SQL is read-only and limited to the run's approved datasets, and every result is sealed, but Python in one run's
-kernel could read another plant's lake files or another run's folder. On AWS each run gets its own sandbox task and
-credentials scoped to its datasets and folder (`ALC_RUN_ROLE_ARN`, the credential broker), which need AWS STS. Until
-that comes to these deployments, keep one Alchemist installation per group of plants whose users may see each
-other's data.
+Compared with the [AWS architecture](deploy-aws.md), where each run gets its own sandbox task:
+
+- **Object store without a run role.** Every kernel uses the sandbox's keys, so Python in one run could read
+  another plant's data on the store. Set `ALC_RUN_ROLE_ARN` for a pilot with more than one plant.
+- **Hosts without Landlock** (RHEL 8, older Ubuntu): kernels share the sandbox's view of the volume. Use
+  `ALC_KERNEL_JAIL=required` to refuse runs there rather than find out from a manifest.
+- **Memory and CPU are shared.** One run's kernel can use up the sandbox's memory and slow the others; size
+  `sandbox.resources` (or the compose host) for `maxKernels` analyses at once.

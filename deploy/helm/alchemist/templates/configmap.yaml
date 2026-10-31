@@ -23,6 +23,9 @@ data:
   {{- with .Values.storage.endpoint }}
   AWS_ENDPOINT_URL: {{ . | quote }}
   {{- end }}
+  {{- with .Values.storage.runRoleArn }}
+  ALC_RUN_ROLE_ARN: {{ . | quote }}
+  {{- end }}
   ALC_DB_HOST: {{ required "database.host is required" .Values.database.host | quote }}
   ALC_DB_PORT: {{ .Values.database.port | quote }}
   ALC_DB_NAME: {{ .Values.database.name | quote }}

@@ -10,9 +10,16 @@ Two deployments use it:
 The API, reachable only from the orchestrator or the API:
 
     GET  /healthz    {"ok": true, "kernel": <any running>, "kernels": <number running>}
-    POST /start      {"run_dir", "run_mode", "seed"} -> {"credentials": <manifest record>}
-    POST /execute    {"run_dir", "code", "timeout"} -> {"messages": [{"msg_type", "content"}], "reply": <execute_reply content>}
-    POST /stop       {"run_dir"}
+    POST /start        {"run_dir", "run_mode", "seed", "read_paths"?, "credentials"?} -> {"credentials": <manifest record>}
+    POST /execute      {"run_dir", "code", "timeout"} -> {"messages": [{"msg_type", "content"}], "reply": <execute_reply content>}
+    POST /credentials  {"run_dir", "credentials"}  (the API's fresh scoped keys for a running kernel)
+    POST /stop         {"run_dir"}
+
+Each kernel is confined to its own files where Landlock is available (fsjail.py, ALC_KERNEL_JAIL auto, required or
+off): it reads the local datasets its run was given (`read_paths`) and writes only its run folder. With
+`credentials` (credential_process JSON the API issued for this run, scoped to its datasets and folder) the kernel's
+AWS profile reads them from a file only that kernel can open, and the sandbox needs no storage keys of its own;
+ALC_SANDBOX_REQUIRE_SCOPED=1 refuses kernels without them.
 
 One kernel per run folder. `run_dir` may be left out of /execute and /stop while one kernel runs (the one-run task).
 The kernel's environment is built here, not by the caller: this process's own variables (the pseudonym key, plugin
@@ -26,13 +33,15 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .credentials import process_profile_env
+from . import fsjail
+from .credentials import AMBIENT_AWS_VARS, process_profile_env, write_credentials
 from .sandbox import LocalKernel, kernel_env
 
 MAX_BODY = 16 * 1024 * 1024
@@ -92,25 +101,77 @@ class KernelHost:
     def _make_room(self) -> None:
         now = time.monotonic()
         for key in [k for k, t in self.used.items() if now - t > self.idle_timeout]:
-            self.kernels.pop(key).stop()
-            self.used.pop(key, None)
+            self._discard(key, self.kernels.pop(key))
         if len(self.kernels) >= self.max_kernels:
             raise Busy(f"{len(self.kernels)} kernels are running, the most this sandbox allows (ALC_SANDBOX_MAX_KERNELS)")
 
-    def start(self, run_dir: str, run_mode: str = "live", seed: int = 1729) -> dict:
+    def jail_mode(self) -> str:
+        mode = self.env.get("ALC_KERNEL_JAIL", "auto")
+        if mode not in ("auto", "required", "off"):
+            raise ValueError(f"ALC_KERNEL_JAIL is {mode!r}; use auto, required or off")
+        return mode
+
+    def jail(self, run_dir: str, read_paths: list[str] | None, extra_read: list[str]) -> dict | None:
+        """The paths a run's kernel may use, or None to leave it unrestricted (no Landlock, or ALC_KERNEL_JAIL=off)."""
+        mode = self.jail_mode()
+        if mode == "off":
+            return None
+        if not fsjail.available():
+            if mode == "required":
+                raise PermissionError("ALC_KERNEL_JAIL=required, but this machine has no Landlock (Linux 5.13+)")
+            return None
+        local = [p for p in (read_paths or []) if "://" not in p]
+        return {"read": [*local, *extra_read], "write": [] if "://" in run_dir else [run_dir]}
+
+    def pushed_credentials_env(self, credentials: dict) -> tuple[dict, dict, str]:
+        """The run's own scoped keys, sent by the API, in a file only this run's kernel reads."""
+        if "AccessKeyId" not in credentials:
+            raise ValueError("credentials must be credential_process JSON")
+        folder = tempfile.mkdtemp(prefix="alc-creds-")
+        write_credentials(os.path.join(folder, "credentials.json"), credentials)
+        command = [sys.executable, "-m", "alchemist.cli", "broker", "credentials", "--file",
+                   os.path.join(folder, "credentials.json")]
+        extra = {**{k: None for k in AMBIENT_AWS_VARS}, **process_profile_env(folder, command)}
+        return extra, {"mode": "scoped", "refresh": "api"}, folder
+
+    def start(self, run_dir: str, run_mode: str = "live", seed: int = 1729, *, read_paths: list[str] | None = None,
+              credentials: dict | None = None) -> dict:
         key = self._check_run_dir(run_dir)
+        if credentials is None and self.env.get("ALC_SANDBOX_REQUIRE_SCOPED") == "1":
+            raise PermissionError("this sandbox only runs kernels with the run's own scoped credentials")
         with self.lock:
             old = self.kernels.pop(key, None)
             if old is not None:
-                old.stop()
+                self._discard(key, old)
             self._make_room()
-            extra, record = self.credentials_env()
+            folder = None
+            if credentials is not None:
+                extra, record, folder = self.pushed_credentials_env(credentials)
+            else:
+                extra, record = self.credentials_env()
             extra.update({k: None for k in self.env if k.startswith(KERNEL_DROPS)})
-            kernel = LocalKernel(kernel_env(key, extra, base=self.env))
+            jail = self.jail(key, read_paths, [folder] if folder else [])
+            record = {**record, "filesystem": f"landlock v{fsjail.abi()}" if jail is not None else "shared"}
+            kernel = LocalKernel(kernel_env(key, extra, base=self.env), jail=jail)
+            kernel.credentials_folder = folder
             kernel.start()
             self.kernels[key], self.used[key] = kernel, time.monotonic()
             self.locks.setdefault(key, threading.Lock())
             return {"credentials": record}
+
+    def refresh_credentials(self, run_dir: str, credentials: dict) -> None:
+        key = self._key(run_dir)
+        folder = getattr(self.kernels[key], "credentials_folder", None)
+        if folder is None:
+            raise ValueError(f"the kernel for {key} was started without pushed credentials")
+        write_credentials(os.path.join(folder, "credentials.json"), credentials)
+
+    def _discard(self, key: str, kernel: LocalKernel) -> None:
+        kernel.stop()
+        self.used.pop(key, None)
+        folder = getattr(kernel, "credentials_folder", None)
+        if folder:
+            shutil.rmtree(folder, ignore_errors=True)
 
     def execute(self, code: str, timeout: float = 900, run_dir: str | None = None) -> dict:
         key = self._key(run_dir)
@@ -131,9 +192,8 @@ class KernelHost:
             keys = list(self.kernels) if run_dir is None else [str(run_dir).rstrip("/")]
             for key in keys:
                 kernel = self.kernels.pop(key, None)
-                self.used.pop(key, None)
                 if kernel is not None:
-                    kernel.stop()
+                    self._discard(key, kernel)
 
 
 def make_handler(host: KernelHost):
@@ -155,7 +215,8 @@ def make_handler(host: KernelHost):
 
         def do_GET(self):  # noqa: N802 - http.server naming
             if self.path == "/healthz":
-                self._send(200, {"ok": True, "kernel": bool(host.kernels), "kernels": len(host.kernels)})
+                self._send(200, {"ok": True, "kernel": bool(host.kernels), "kernels": len(host.kernels),
+                                 "landlock": fsjail.abi(), "jail": host.jail_mode()})
             else:
                 self._send(404, {"error": "not found"})
 
@@ -168,7 +229,11 @@ def make_handler(host: KernelHost):
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if self.path == "/start":
-                    out = host.start(body["run_dir"], body.get("run_mode", "live"), int(body.get("seed", 1729)))
+                    out = host.start(body["run_dir"], body.get("run_mode", "live"), int(body.get("seed", 1729)),
+                                     read_paths=body.get("read_paths"), credentials=body.get("credentials"))
+                elif self.path == "/credentials":
+                    host.refresh_credentials(body["run_dir"], body["credentials"])
+                    out = {"ok": True}
                 elif self.path == "/execute":
                     out = host.execute(body["code"], float(body.get("timeout", 900)), body.get("run_dir"))
                 elif self.path == "/stop":

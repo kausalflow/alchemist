@@ -22,7 +22,7 @@ Alchemist reads its settings from environment variables, with local-friendly def
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALC_RUN_ROLE_ARN` | unset | role assumed once per run with a session policy limited to the run's data and folder; unset means the sandbox uses the process's credentials |
+| `ALC_RUN_ROLE_ARN` | unset | role assumed once per run with a session policy limited to the run's data and folder (AWS STS, or the store's own STS at `AWS_ENDPOINT_URL`: MinIO, Ceph); with `ALC_SANDBOX_URL` the session goes to the sandbox service. Unset means the sandbox uses the process's credentials |
 | `ALC_RUN_CREDENTIAL_SECONDS` | `3600` | lifetime of each of a run's credential sessions (one hour at most with role chaining); the worker issues a new one before it expires |
 | `AWS_ENDPOINT_URL_S3` | unset | custom S3 endpoint (MinIO, moto, LocalStack), used by boto3, cloudpathlib and DuckDB |
 
@@ -34,6 +34,8 @@ Alchemist reads its settings from environment variables, with local-friendly def
 | `ALC_SANDBOX_TOKEN` | unset | on both: the bearer token the API sends and the sandbox requires. Never passed to kernels |
 | `ALC_SANDBOX_MAX_KERNELS` | `4` | on the sandbox: kernels running at once; a run that finds none free fails to start its analysis |
 | `ALC_SANDBOX_IDLE_SECONDS` | `14400` | on the sandbox: a kernel unused this long is stopped when another run needs room |
+| `ALC_KERNEL_JAIL` | `auto` | on the sandbox: confine each kernel with Linux Landlock to its run's datasets and folder where the host supports it; `required` refuses runs where it does not; `off` |
+| `ALC_SANDBOX_REQUIRE_SCOPED` | `0` | on the sandbox: `1` starts kernels only with the run's own scoped session, which the API sends when `ALC_RUN_ROLE_ARN` is set |
 
 See [Deploy on-prem or in your cloud](../guides/deploy-on-prem.md#the-analysis-sandbox).
 

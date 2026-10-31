@@ -11,6 +11,7 @@ src/alchemist/
   nb.py         helpers used inside the kernel as `alc` (query, finding, penguineer, align, effect, check_results)
   sandbox.py    one Jupyter kernel per run (local, or a separate sandbox's); every call becomes a notebook cell
   sandbox_server.py  `alchemist sandbox serve`: the kernels' HTTP API (a sandbox task per run, or one sandbox service)
+  fsjail.py          Landlock: a kernel confines itself to its run's datasets and folder
   llm.py        which providers may see plant data (allow-list) and the models built for them; calls go through penguineer.agent
   agent.py      re-exports penguineer's tool loop (`ToolOutput` and friends) for plugins
   prompts.py    system prompts (penguineer's method plus Alchemist's tools) and tool definitions; their hash goes into each manifest

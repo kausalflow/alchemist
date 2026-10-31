@@ -74,6 +74,8 @@ jobs:
           helm template t deploy/helm/alchemist $args --set sandbox.enabled=false > /dev/null
           helm template t deploy/helm/alchemist $args --set sandbox.networkPolicy.enabled=false \
             --set sandbox.existingSecret=sandbox-keys > /dev/null
+          helm template t deploy/helm/alchemist $args --set storage.runRoleArn=arn:aws:iam::1:role/run \
+            --set sandbox.kernelJail=required > /dev/null
           # Required values are enforced.
           if helm template t deploy/helm/alchemist --set auth.oidc.issuer=x --set auth.oidc.audience=y 2>/dev/null; then
             echo "::error::helm template accepted a release without database.host"; exit 1

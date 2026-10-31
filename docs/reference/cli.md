@@ -59,7 +59,9 @@ kernel per run folder over a small HTTP API (`GET /healthz`, `POST /start`, `POS
 settings or its own token. With `ALC_BROKER_FUNCTION` set, the kernel has no AWS keys: its AWS profile's
 `credential_process` is `alchemist broker credentials`, so boto3, cloudpathlib and DuckDB get the run's credentials
 from the broker and fetch new ones when they expire. With `ALC_RUN_ID` set it serves only that run's folder. Without
-`ALC_BROKER_FUNCTION` the kernel uses the ambient credentials. With `ALC_WORKSPACE` set it only starts kernels for
+`ALC_BROKER_FUNCTION` the kernel uses the credentials the API sent for the run (`POST /start` and
+`POST /credentials`, when `ALC_RUN_ROLE_ARN` is set), or else the ambient ones. Where Linux Landlock is available each
+kernel confines itself to its run's datasets and folder (`ALC_KERNEL_JAIL`). With `ALC_WORKSPACE` set it only starts kernels for
 folders in that workspace, and with `ALC_SANDBOX_TOKEN` set it answers only requests that carry the token
 (`Authorization: Bearer ...`). In AWS only the orchestrator's security group can reach the port; in docker compose
 and Kubernetes only the API can (an internal network, a NetworkPolicy).

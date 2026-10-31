@@ -316,6 +316,7 @@ class RefreshingCredentials:
         from pathlib import Path
 
         self.issue = issue
+        self.on_issue: list = []  # e.g. pushing each new session to a sandbox service's kernel
         self.refresh_before = refresh_before
         self.check_every = check_every
         self.dir = Path(config_dir or tempfile.mkdtemp(prefix="alc-aws-"))
@@ -326,14 +327,10 @@ class RefreshingCredentials:
         self._thread: threading.Thread | None = None
 
     def _write(self, creds: RunCredentials) -> RunCredentials:
-        import os
-
-        tmp = self.file.with_suffix(".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(creds.process_json(), f)
-        os.replace(tmp, self.file)  # the kernel never reads half a file
+        write_credentials(str(self.file), creds.process_json())
         self.issued += 1
+        for hook in self.on_issue:
+            hook(creds)
         return creds
 
     def refresh_if_due(self, now: dt.datetime | None = None) -> bool:
@@ -373,6 +370,17 @@ class RefreshingCredentials:
 
     def record(self) -> dict:
         return {**self.current.record(), "refresh": "worker"}
+
+
+def write_credentials(path: str, body: dict) -> None:
+    """Write credential_process JSON so that only this user can read it, and no reader sees half a file."""
+    import os
+
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(body, f)
+    os.replace(tmp, path)
 
 
 def read_credentials_file(path: str) -> dict:

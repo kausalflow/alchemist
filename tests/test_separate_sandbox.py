@@ -246,7 +246,7 @@ def test_analysis_on_the_sandbox_leaves_sealing_to_the_seal_step(separate_svc, s
     run = Path(separate_run["path"])
     assert not (run / "SEALED").exists() and (run / "report" / "report.html").exists()
     m = read_json(run / "manifest.json")
-    assert m["access"]["credentials"] == {"mode": "ambient"}  # no broker on a laptop
+    assert m["access"]["credentials"]["mode"] == "ambient"  # no broker on a laptop
     assert set(m["result_hashes"]) == {"F1", "F2", "F3", "F4", "F5", "F6"}
     assert any(p.name.endswith(".png") for p in (run / "figures").iterdir())
 
@@ -369,3 +369,110 @@ def test_in_process_run_on_the_sandbox_service_is_sealed_by_the_worker(svc, sand
                   reviewer=ScriptedReviewer(script.REVIEW))
     assert res["status"] == "completed" and res["seal_sha256"]
     assert verify(Path(res["path"]), res["seal_sha256"])["ok"]
+
+
+# ------------------------------------------------------------------ one run's kernel sees only its own files and keys
+
+from alchemist import fsjail  # noqa: E402
+
+needs_landlock = pytest.mark.skipif(not fsjail.available(), reason="needs Linux Landlock")
+
+
+def _text(out: dict) -> str:
+    return "".join(m["content"].get("text", "") for m in out["messages"] if m["msg_type"] == "stream")
+
+
+@needs_landlock
+def test_kernel_reads_only_its_datasets_and_writes_only_its_run(tmp_path):
+    ws, lake = tmp_path / "ws", tmp_path / "lake"
+    for d in (ws / "R1", ws / "R2", lake / "P01", lake / "P02"):
+        d.mkdir(parents=True)
+    (lake / "P01" / "a.csv").write_text("x\n1\n")
+    (lake / "P02" / "b.csv").write_text("x\n2\n")
+    (ws / "R2" / "secret.txt").write_text("other run")
+    host = KernelHost({**os.environ, "ALC_WORKSPACE": str(ws), "ALC_KERNEL_JAIL": "required"})
+    try:
+        rec = host.start(str(ws / "R1"), read_paths=[str(lake / "P01")])["credentials"]
+        assert rec["filesystem"].startswith("landlock")
+        code = f"""
+import duckdb, pathlib
+print(duckdb.sql("select sum(x) from read_csv('{lake}/P01/*.csv')").fetchone()[0])
+pathlib.Path('{ws}/R1/out.txt').write_text('mine')
+for p in ['{lake}/P02/b.csv', '{ws}/R2/secret.txt', '/root/.bashrc']:
+    try:
+        open(p).read(); print('READ', p)
+    except PermissionError:
+        print('denied')
+try:
+    open('{ws}/R2/planted.txt', 'w')
+except PermissionError:
+    print('denied')
+"""
+        assert _text(host.execute(code, run_dir=str(ws / "R1"))).split() == ["1", "denied", "denied", "denied", "denied"]
+        assert (ws / "R1" / "out.txt").read_text() == "mine"
+    finally:
+        host.stop()
+
+
+def test_required_jail_refuses_without_landlock(tmp_path, monkeypatch):
+    monkeypatch.setattr(fsjail, "available", lambda: False)
+    with pytest.raises(PermissionError, match="Landlock"):
+        KernelHost({**os.environ, "ALC_KERNEL_JAIL": "required"}).start(str(tmp_path))
+    rec = KernelHost({**os.environ, "ALC_KERNEL_JAIL": "auto"})
+    try:
+        assert rec.start(str(tmp_path))["credentials"]["filesystem"] == "shared"
+    finally:
+        rec.stop()
+
+
+def test_pushed_credentials_reach_only_their_kernel(tmp_path):
+    host = KernelHost({**os.environ, "ALC_SANDBOX_REQUIRE_SCOPED": "1", "AWS_ACCESS_KEY_ID": "AKIASTANDING"})
+    with pytest.raises(PermissionError, match="scoped"):
+        host.start(str(tmp_path / "R0"))
+    try:
+        rec = host.start(str(tmp_path / "R1"), credentials={**CREDS, "AccessKeyId": "ASIARUN1"})["credentials"]
+        assert rec["mode"] == "scoped"
+        code = ("import boto3, os; print(boto3.Session().get_credentials().access_key, "
+                "os.environ.get('AWS_ACCESS_KEY_ID'))")
+        assert _text(host.execute(code, run_dir=str(tmp_path / "R1"))).split() == ["ASIARUN1", "None"]
+        host.refresh_credentials(str(tmp_path / "R1"), {**CREDS, "AccessKeyId": "ASIARUN2"})
+        assert _text(host.execute(code, run_dir=str(tmp_path / "R1"))).split()[0] == "ASIARUN2"
+        folder = host.kernels[str(tmp_path / "R1")].credentials_folder
+    finally:
+        host.stop()
+    assert not Path(folder).exists()  # the keys go with the kernel
+
+
+class _CountingSTS:
+    def __init__(self):
+        self.calls = []
+
+    def assume_role(self, **kw):
+        self.calls.append(kw)
+        return {"Credentials": {"AccessKeyId": f"ASIA{len(self.calls)}", "SecretAccessKey": "s", "SessionToken": "t",
+                                "Expiration": dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)}}
+
+
+def test_worker_sends_the_runs_scoped_session_to_the_sandbox_service(svc, sandbox_url, monkeypatch):
+    """ALC_RUN_ROLE_ARN with ALC_SANDBOX_URL: the worker assumes the run role and the sandbox gets that session."""
+    from alchemist.credentials import CredentialBroker
+    from alchemist.sandbox import RemoteKernel
+
+    pushed = []
+    monkeypatch.setattr(RemoteKernel, "push_credentials", lambda self, c: pushed.append(c["AccessKeyId"]))
+    s = copy.copy(svc)
+    s.settings = dataclasses.replace(svc.settings, sandbox_url=sandbox_url)
+    sts = _CountingSTS()
+    s.broker = CredentialBroker("arn:aws:iam::1:role/run", sts=sts)
+    d = svc.catalog.latest_card("resin_lots", status=None)
+    if d["status"] == "draft":
+        svc.catalog.approve("resin_lots", d["version"], reviewer="data_admin")
+    out = ask(s, user="eng_p1", workspace="quality", project="line2-scoped", question=script.QUESTION,
+              scope=script.SCOPE, model=ScriptedModel(script.PLAN_TURNS))
+    start_approval(s, out["run_id"], user="eng_p1")
+    res = analyse(s, out["run_id"], user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
+                  reviewer=ScriptedReviewer(script.REVIEW))
+    assert res["status"] == "completed" and len(sts.calls) == 1 and pushed == []  # one session, not yet due
+    creds = read_json(Path(res["path"]) / "manifest.json")["access"]["credentials"]
+    assert creds["mode"] == "scoped" and creds["role"] == "arn:aws:iam::1:role/run"
+    assert creds["filesystem"] == ("landlock v%d" % fsjail.abi() if fsjail.available() else "shared")

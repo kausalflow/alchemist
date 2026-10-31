@@ -57,7 +57,8 @@ services:
 
   # The analysis kernels: the Python the model writes runs here, not in the API. The sandbox gets no .env: no
   # database, model, PI or sign-in credentials, only the pseudonym key and the storage. Its only network is
-  # `sandbox`, which has no route out, so code in a kernel reaches nothing but the API that drives it.
+  # `sandbox`, which has no route out, so code in a kernel reaches nothing but the API that drives it. Each kernel
+  # confines itself with Linux Landlock to its run's datasets and folder (ALC_KERNEL_JAIL).
   sandbox:
     image: ${ALC_IMAGE:-ghcr.io/kausalflow/alchemist:latest}
     restart: unless-stopped
@@ -68,16 +69,21 @@ services:
       ALC_WORKSPACE: ${ALC_WORKSPACE:-/data/workspace}
       ALC_LAKE: ${ALC_LAKE:-/data/lake}
       ALC_SANDBOX_MAX_KERNELS: ${ALC_SANDBOX_MAX_KERNELS:-4}
+      # auto: confine kernels where the host supports Landlock (Linux 5.13+); required: refuse runs where it does not.
+      ALC_KERNEL_JAIL: ${ALC_KERNEL_JAIL:-auto}
+      # 1 with ALC_RUN_ROLE_ARN: only run kernels with the run's own scoped session, which the API sends.
+      ALC_SANDBOX_REQUIRE_SCOPED: ${ALC_SANDBOX_REQUIRE_SCOPED:-0}
       # The image's root file system is read-only here: kernels keep their runtime files in /tmp.
       JUPYTER_RUNTIME_DIR: /tmp/jupyter
       IPYTHONDIR: /tmp/ipython
       MPLCONFIGDIR: /tmp/matplotlib
-      # With s3:// buckets: the sandbox's own keys (read the lake, read and write the workspace), and a network that
-      # reaches the object store (see below).
+      # With s3:// buckets: a network that reaches the object store (see below), and either per-run sessions from the
+      # API (ALC_RUN_ROLE_ARN; set SANDBOX_AWS_ACCESS_KEY_ID= and SANDBOX_AWS_SECRET_ACCESS_KEY= empty so the sandbox
+      # holds no keys) or the sandbox's own keys (read the lake, read and write the workspace).
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      AWS_ACCESS_KEY_ID: ${SANDBOX_AWS_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}
-      AWS_SECRET_ACCESS_KEY: ${SANDBOX_AWS_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}
+      AWS_ACCESS_KEY_ID: ${SANDBOX_AWS_ACCESS_KEY_ID-${AWS_ACCESS_KEY_ID:-}}
+      AWS_SECRET_ACCESS_KEY: ${SANDBOX_AWS_SECRET_ACCESS_KEY-${AWS_SECRET_ACCESS_KEY:-}}
     volumes:
       - alchemist-home:/data
     read_only: true
