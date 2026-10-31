@@ -89,6 +89,11 @@ uv run alchemist runs                                        # every run, with s
 
 ## When a run stops early
 
-If the analysis exceeds its step or token budget, or fails, the run builds a partial report from the findings recorded
-so far, lists why it stopped under limitations, and is sealed with status `partial`. Raise `ALC_MAX_STEPS` or
-`ALC_MAX_OUTPUT_TOKENS` if your questions need more room.
+If the analysis exceeds its step or token budget, or fails, the run builds a partial report from the findings
+recorded so far, lists why it stopped under limitations, and is sealed with status `partial`.
+
+When time is nearly up, the agent is told to conclude with what it has, and at the limit the run pauses with that
+preliminary conclusion on its page. Read it, then either **Continue for N more minutes**, which carries on in the same
+run from where it stopped, or **Finish with this report** to seal it as it stands. If your questions need
+more room, give a run a longer time limit when you approve it, or ask an admin to raise the limits on the Models and
+limits page (or `ALC_MAX_STEPS`, `ALC_MAX_OUTPUT_TOKENS`, `ALC_MAX_RUN_MINUTES`).

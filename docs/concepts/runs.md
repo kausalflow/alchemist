@@ -95,8 +95,41 @@ database and the audit log. `alchemist verify <run-id>` checks a folder against 
 ## Budgets and partial results
 
 Each step of a run has a tool-call budget (`ALC_MAX_STEPS`, default 60) and an output-token budget (`ALC_MAX_OUTPUT_TOKENS`, default
-400,000). If the analysis stops early, the run still builds a partial report from the findings recorded so far, says
-why it stopped, and is sealed with status `partial`.
+400,000), and the analysis has a time limit (`ALC_MAX_RUN_MINUTES`, default 120 minutes). If the analysis stops
+early on a step or token budget, the run still builds a partial report from the findings recorded so far, says why it
+stopped, and is sealed with status `partial`. At the time limit it pauses instead, with a preliminary report, so a
+person can give it more time (see [When time runs out](#when-time-runs-out)).
+
+### Time limit
+
+The time limit counts the analysis's working time: from when a worker starts it until it finishes, carried over when
+a paused run resumes. Time waiting for approval, paused, or queued for a worker does not count. Like the other budgets
+it is checked before each model call, so a long query or cell can run a little past it.
+
+Whoever approves the plan can set the run's limit (the **Time limit** field next to Approve, or
+`alchemist approve --time-limit MINUTES`), up to `ALC_MAX_RUN_MINUTES_CAP` (default 480). Left empty, the run gets the
+default. The run records its limit in the approved plan, so changing the default later does not change runs already
+approved. The run page shows the minutes used against it under **Run limits**.
+
+#### When time runs out
+
+Near the end (the last tenth of the limit, at most 10 minutes), the agent is told that time is nearly up: stop
+exploring, record what it can support, have its findings reviewed and build a report with its best conclusion so far,
+saying what is still open. That report is marked **preliminary**. If the agent has not built one when the limit is
+reached, a preliminary report listing the findings so far is built for it.
+
+The run then **pauses**, unsealed, with the preliminary conclusion on its page, and waits for a person:
+
+- **Continue for N more minutes** (`POST /runs/{id}:resume` with `{"more_minutes": N}`, up to the cap; left out, the
+  default) resumes the same run from where it stopped: the notebook is re-run on its stored snapshots, and the agent
+  continues the same conversation with its findings, told how much more time it has. The new limit is the time used
+  plus N; the extension is audited (`run.extend`) and shows in the run's notes. When the agent finishes, its report
+  replaces the preliminary one; near the new limit it is told to wrap up again.
+- **Finish with this report** (Stop) seals the run as `partial` with the preliminary report as it stands, noting that
+  it was finished without more time.
+
+Admins change the default, the cap and the per-step budgets on the admin **Models and limits** page. A value saved
+there overrides the variable, and every change is audited.
 
 ## Stopping, pausing and failures
 

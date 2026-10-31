@@ -62,6 +62,10 @@ def for_model(notes_: list[dict]) -> str:
         if n["kind"] == "send_back":
             parts.append(f"{n['author']} sent the plan back for revision ({n['at']}):\n{n['text']}\n"
                          "Revise the plan accordingly and call submit_plan again.")
+        elif n["kind"] == "more_time":
+            parts.append(f"{n['author']} gave this run {n['text']}. Continue the investigation from where you stopped; "
+                         "when you have finished, call finish_analysis and build_report again, and that report "
+                         "replaces the preliminary one.")
         else:
             parts.append(f"Note from {n['author']} ({n['at']}), who is following this run:\n{n['text']}\n"
                          "Take it into account from your next step.")

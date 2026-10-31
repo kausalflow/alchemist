@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import model_roles
+from .. import limits, model_roles
 from .. import plant_catalog as pc
 from ..catalog import now
 from ..knowledge import Knowledge
@@ -251,6 +251,34 @@ def get_models(request: Request, svc: Svc, me: Admin) -> dict:
 class ModelsBody(BaseModel):
     # role -> `provider:model-id`, or null to go back to the deployment's configured model
     models: dict[str, str | None]
+
+
+class LimitsBody(BaseModel):
+    # limit name -> value, or null to go back to the deployment's configured value
+    limits: dict[str, int | None]
+
+
+def _limits(request: Request, svc) -> dict:
+    return {"limits": limits.describe(request.app.state.settings, svc.catalog.db)}
+
+
+@router.get("/limits")
+def get_limits(request: Request, svc: Svc, me: Admin) -> dict:
+    """Each run limit now, and where it comes from: an admin's choice or the configuration."""
+    return _limits(request, svc)
+
+
+@router.put("/limits")
+def save_limits(body: LimitsBody, request: Request, svc: Svc, me: Admin) -> dict:
+    """Admins only. Runs approved after the change get the new limits; a run keeps the time limit it was approved
+    with."""
+    if not me.user.is_admin:
+        raise HTTPException(403, "only admins can change the limits")
+    try:
+        limits.save_choices(svc.catalog, request.app.state.settings, body.limits, actor=me.user.id, now=now())
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return _limits(request, svc)
 
 
 @router.put("/models")

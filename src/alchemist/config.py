@@ -67,6 +67,10 @@ class Settings:
     # Budgets per run.
     max_steps: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_STEPS", "60")))
     max_output_tokens_total: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_OUTPUT_TOKENS", "400000")))
+    # How long a run's analysis may work, in minutes (time paused or waiting for a worker does not count), and the
+    # longest a person may choose when approving the plan. Admins can change both on the "Models and limits" page.
+    max_run_minutes: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_RUN_MINUTES", "120")))
+    max_run_minutes_cap: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_RUN_MINUTES_CAP", "480")))
     # Runs planning or analysing at once (waiting for approval does not count): per user, and in total (0: no limit).
     # They share the model quota and the cost, so one person cannot starve everyone else.
     max_active_runs_per_user: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_ACTIVE_RUNS_PER_USER", "3")))

@@ -20,6 +20,7 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [minutes, setMinutes] = useState<string>("");
   const { data: datasets } = useApi<DatasetSummary[]>("/datasets");
   const canApprove = !!run.permissions?.approve;
   const kept = plan.hypotheses.filter((_, i) => !dropped.has(i));
@@ -65,7 +66,8 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/runs/${run.run.run_id}/plan:approve`, edited ? { plan: finalPlan } : {});
+      const limit = minutes.trim() ? { time_limit_minutes: Number(minutes) } : {};
+      await api.post(`/runs/${run.run.run_id}/plan:approve`, edited ? { plan: finalPlan, ...limit } : limit);
       onApproved();
     } catch (e) {
       setError((e as Error).message);
@@ -299,11 +301,34 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
               <p className="muted small">The agent revises the plan with your note and it comes back here as a new version. Nothing is read from the data lake.</p>
             </div>
           )}
+          {canApprove && meta && (
+            <label className="field time-limit">
+              <span className="field-label">Time limit</span>
+              <span className="row-center">
+                <input
+                  type="number"
+                  min={1}
+                  max={meta.budgets.max_run_minutes_cap}
+                  step={5}
+                  inputMode="numeric"
+                  value={minutes}
+                  placeholder={String(meta.budgets.max_run_minutes)}
+                  onChange={(e) => setMinutes(e.target.value)}
+                  aria-describedby="time-limit-help"
+                />
+                <span className="small muted" id="time-limit-help">
+                  minutes of analysis, up to {meta.budgets.max_run_minutes_cap}. When it runs out, the agent stops and reports what it found.
+                </span>
+              </span>
+            </label>
+          )}
           {canApprove && (
             <p className="muted small">
               Approving lets the agent read the {reads.length} data {reads.length === 1 ? "source" : "sources"} listed
-              {meta ? `, within ${meta.budgets.max_steps} tool calls and ${meta.budgets.max_output_tokens.toLocaleString()} output tokens` : ""}. You
-              can pause or stop it at any step.
+              {meta
+                ? `, for up to ${minutes.trim() || meta.budgets.max_run_minutes} minutes, ${meta.budgets.max_steps} tool calls and ${meta.budgets.max_output_tokens.toLocaleString()} output tokens`
+                : ""}
+              . You can pause or stop it at any step.
             </p>
           )}
         </section>

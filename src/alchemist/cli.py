@@ -232,7 +232,8 @@ def cmd_approve(a) -> None:
 
     plan = json.loads(Path(a.plan_file).read_text()) if a.plan_file else None
     svc = _svc()
-    res = approve(svc, a.run_id, user=_user(a, svc), plan=plan, model=_model(a.model, "analysis"), reviewer=_reviewer(a.model, a.reviewer_model))
+    res = approve(svc, a.run_id, user=_user(a, svc), plan=plan, model=_model(a.model, "analysis"),
+                  reviewer=_reviewer(a.model, a.reviewer_model), time_limit_minutes=a.time_limit)
     _report(res)
 
 
@@ -588,6 +589,8 @@ def main(argv=None) -> None:
     ap.add_argument("--plan-file", help="edited plan JSON")
     ap.add_argument("--model", default="default",
                    help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default: the planning model for planning, the analysis model for analysis")
+    ap.add_argument("--time-limit", type=int, metavar="MINUTES",
+                    help="how long the analysis may work (default ALC_MAX_RUN_MINUTES or the admin's default)")
     ap.set_defaults(fn=cmd_approve)
 
     nt = sub.add_parser("note", help="leave a note the agent reads before its next step")

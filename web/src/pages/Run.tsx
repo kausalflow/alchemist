@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, fileUrl, CLOSED, SEALED, TERMINAL, type RunDetail, type Step } from "../api";
 import { useApi, useSession } from "../session";
@@ -238,8 +238,23 @@ function RunningView({
     if (s.tool === "record_finding" && typeof s.input?.hypothesis === "string")
       found.set(s.input.hypothesis, (found.get(s.input.hypothesis) ?? 0) + 1);
 
+  // Working time: the last checkpoint's count from the server, plus the time since this page loaded it.
+  const loadedAt = useMemo(() => Date.now(), [run]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (r.status !== "running") return;
+    const t = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, [r.status]);
+  const tl = run.time_limit;
+  const atLimit = paused && !!tl?.reached;
+  const [more, setMore] = useState(() => meta?.budgets.max_run_minutes ?? 30);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const usedSeconds = tl ? (tl.used_seconds ?? 0) + (r.status === "running" ? Math.max(0, now - loadedAt) / 1000 : 0) : 0;
+
   const limits = meta
     ? [
+        ...(tl ? [{ name: "Minutes", used: Math.floor(usedSeconds / 60), max: tl.minutes }] : []),
         { name: "Tool calls", used: tools, max: meta.budgets.max_steps },
         {
           name: "Output tokens",
@@ -282,6 +297,18 @@ function RunningView({
       </aside>
 
       <div className="center-col stack">
+        {atLimit && run.conclusion_html && (
+          <section aria-labelledby="prelim" className="panel pad stack-sm">
+            <h2 id="prelim" className="h-panel">
+              Preliminary conclusion
+            </h2>
+            <div className="small muted">
+              The run reached its time limit of {tl?.minutes} minutes and concluded with what it had found. Give it
+              more time to carry on from here, or finish it with this report.
+            </div>
+            <article className="answer-body" dangerouslySetInnerHTML={{ __html: run.conclusion_html }} />
+          </section>
+        )}
         <FigureStrip runId={r.run_id} steps={steps} />
         <section aria-labelledby="log" className="panel">
           <div className="panel-head">
@@ -317,7 +344,11 @@ function RunningView({
           </h2>
           {paused && (
             <p className="small muted">
-              {run.closed?.reason?.startsWith("interrupted") ? "The analysis stopped unexpectedly. " : ""}
+              {atLimit
+                ? `Paused at its time limit of ${tl?.minutes} minutes. `
+                : run.closed?.reason?.startsWith("interrupted")
+                  ? "The analysis stopped unexpectedly. "
+                  : ""}
               The conversation and notebook are saved after every step.
             </p>
           )}
@@ -329,7 +360,41 @@ function RunningView({
               <div className="small muted">Nothing is lost and nothing is spent while paused.</div>
             </>
           )}
-          {run.permissions?.resume && (
+          {run.permissions?.resume && atLimit && (
+            <form
+              className="stack-sm"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setMoreError(null);
+                try {
+                  await api.post(`/runs/${r.run_id}:resume`, { more_minutes: more });
+                  reload();
+                } catch (err) {
+                  setMoreError(String((err as Error).message ?? err));
+                }
+              }}
+            >
+              <label className="field more-time">
+                <span className="small muted">More minutes</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={meta?.budgets.max_run_minutes_cap}
+                  value={more}
+                  onChange={(e) => setMore(Number(e.target.value))}
+                />
+              </label>
+              <button type="submit" className="primary">
+                <Icon name="play" /> Continue for {more} more minutes
+              </button>
+              {moreError && <div className="error small">{moreError}</div>}
+              <div className="small muted">
+                Carries on from where it stopped, with the same notebook and findings; its next report replaces the
+                preliminary one.
+              </div>
+            </form>
+          )}
+          {run.permissions?.resume && !atLimit && (
             <>
               <button type="button" className="primary" onClick={act("resume")}>
                 <Icon name="play" /> Resume
@@ -341,10 +406,14 @@ function RunningView({
           )}
           {run.permissions?.stop && (
             <>
-              <button type="button" className="danger" onClick={act("stop")}>
-                <Icon name="stop" /> Stop and write a partial report
+              <button type="button" className={atLimit ? "outline" : "danger"} onClick={act("stop")}>
+                <Icon name="stop" /> {atLimit ? "Finish with this report" : "Stop and write a partial report"}
               </button>
-              <div className="small muted">Stops after the current step; the findings so far are reviewed and sealed.</div>
+              <div className="small muted">
+                {atLimit
+                  ? "Seals the run with the preliminary report as it stands."
+                  : "Stops after the current step; the findings so far are reviewed and sealed."}
+              </div>
             </>
           )}
           {!run.permissions?.pause && !run.permissions?.resume && !run.permissions?.stop && (
@@ -380,7 +449,7 @@ function RunningView({
                 </div>
               );
             })}
-            <p className="faint tiny">Limits per run step, set in the deployment's configuration. Counted from the steps shown here.</p>
+            <p className="faint tiny">Minutes count the analysis's working time, against the limit it was approved with; tool calls and tokens are per run step. Admins set the defaults.</p>
           </section>
         )}
       </aside>

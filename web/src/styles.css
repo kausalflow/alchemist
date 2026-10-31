@@ -666,3 +666,6 @@ iframe.report { width: 100%; height: 75vh; border: 1px solid var(--line); border
   .table.findings { min-width: 720px; }
 }
 .queue-note { margin-bottom: 16px; }
+.limit-input { width: 9rem; }
+.time-limit input { width: 7rem; }
+.more-time input { width: 7rem; }

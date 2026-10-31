@@ -160,6 +160,17 @@ create table if not exists run_jobs (
 create index if not exists run_jobs_status on run_jobs(status, id);
 create index if not exists run_jobs_run on run_jobs(run_id);
 """),
+    (7, "limit choices: run limits an admin set",
+     """
+create table if not exists limit_choices (
+  name text primary key, value integer not null, updated_by text, updated_at text
+);
+""",
+     """
+create table if not exists limit_choices (
+  name text primary key, value bigint not null, updated_by text, updated_at text
+);
+"""),
 ]
 
 LATEST = MIGRATIONS[-1][0]

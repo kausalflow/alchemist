@@ -7,6 +7,7 @@ see them. A workspace member who is not entitled to every plant a run used sees 
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import io
 import json
 import logging
@@ -89,6 +90,29 @@ def _transcript_steps(path) -> list[dict]:
 
 def _launcher(request: Request):
     return request.app.state.launcher
+
+
+def _time_limit(svc, run, plan: dict | None, status: str) -> dict | None:
+    """The approved run's time limit and the analysis's working time so far (from its last checkpoint, plus the time
+    since while it is running)."""
+    from ..run import checkpoint_of, paused_at_time_limit, time_limit
+
+    if not (plan or {}).get("approved_at"):
+        return None
+    used = None
+    saved = checkpoint_of(run) if status in ("running", "paused") else None
+    if saved:
+        used = float(saved.get("budget", {}).get("seconds", 0))
+        if status == "running":
+            try:
+                at = dt.datetime.fromisoformat(saved["at"].replace("Z", "+00:00"))
+                used += max(0.0, (dt.datetime.now(dt.timezone.utc) - at).total_seconds())
+            except (KeyError, ValueError):
+                pass
+    else:
+        used = (_json(run / "manifest.json") or {}).get("usage", {}).get("seconds")
+    return {"minutes": time_limit(svc, plan), "used_seconds": None if used is None else round(used),
+            "reached": status == "paused" and paused_at_time_limit(run)}
 
 
 def _queue_position(request: Request, run_id: str) -> dict | None:
@@ -217,6 +241,7 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
         },
         # With the run queue: whether its current step waits for a worker (and behind how many) or which one runs it.
         "queue": _queue_position(request, run_id) if row["status"] in ("planning", "running") else None,
+        "time_limit": _time_limit(svc, run, q["plan"], row["status"]),
         "conclusion_md": conclusion_md,
         "conclusion_html": markdown.markdown(conclusion_md, extensions=["tables"]) if conclusion_md else None,
         "findings": findings,
@@ -433,12 +458,14 @@ def _sse(event: str, data: dict) -> str:
 
 class ApproveBody(BaseModel):
     plan: dict[str, Any] | None = None  # the edited plan; omitted means approve as proposed
+    # How long the analysis may work, up to the admins' cap; omitted means the default (GET /meta budgets).
+    time_limit_minutes: int | None = None
 
 
 @router.post("/runs/{run_id}/plan:approve")
 def approve(run_id: str, body: ApproveBody, svc: Svc, me: Me, request: Request) -> dict:
     """Approve (or edit and approve) the plan; the analysis starts."""
-    from ..run import RunLimit, start_approval
+    from ..run import RunLimit, TimeLimitError, start_approval
 
     row = entitled_run(svc, me, run_id)
     if body.plan is not None and not body.plan.get("hypotheses"):
@@ -449,11 +476,13 @@ def approve(run_id: str, body: ApproveBody, svc: Svc, me: Me, request: Request) 
         if unknown:
             raise HTTPException(422, f"datasets not available to this run: {unknown}")
     try:
-        plan = start_approval(svc, run_id, user=me.user, plan=body.plan)
+        plan = start_approval(svc, run_id, user=me.user, plan=body.plan, time_limit_minutes=body.time_limit_minutes)
     except AccessDenied as e:
         raise access_error(e) from e
     except RunLimit as e:
         raise _limit_error(e) from e
+    except TimeLimitError as e:
+        raise HTTPException(422, str(e)) from e
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
     _launch(svc, request, run_id, "analyse", me.user.id)
@@ -551,19 +580,26 @@ def pause_run(run_id: str, svc: Svc, me: Me) -> dict:
     return {"run_id": run_id, "pause_requested": True}
 
 
+class ResumeBody(BaseModel):
+    more_minutes: int | None = None
+
+
 @router.post("/runs/{run_id}:resume")
-def resume_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
+def resume_run(run_id: str, svc: Svc, me: Me, request: Request, body: ResumeBody | None = None) -> dict:
     """Continue a paused run from its last step: a fresh kernel re-runs the notebook on its stored snapshots, then the
-    agent carries on."""
-    from ..run import RunLimit, resume
+    agent carries on. `more_minutes` gives it more working time (up to the cap); a run paused at its time limit gets
+    the default if it is left out."""
+    from ..run import RunLimit, TimeLimitError, resume
 
     entitled_run(svc, me, run_id)
     try:
-        resume(svc, run_id, user=me.user)
+        resume(svc, run_id, user=me.user, more_minutes=body.more_minutes if body else None)
     except AccessDenied as e:
         raise HTTPException(403, str(e)) from e
     except RunLimit as e:
         raise _limit_error(e) from e
+    except TimeLimitError as e:
+        raise HTTPException(422, str(e)) from e
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
     _launch(svc, request, run_id, "resume")

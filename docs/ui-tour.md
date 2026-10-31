@@ -221,7 +221,9 @@ Read-only: who may read which plant, as set in the identity provider or `access.
 
 The model for each role (planning, analysis, reviewer, small jobs) and where it comes from. Admins can choose another
 model for a role, from the allowed providers only, or go back to the configured one; catalog admins see them
-read-only. The run limits below come from configuration.
+read-only. Below them are the run limits: the default time limit for a run, the longest a person may choose when
+approving a plan, and the tool-call and token budgets per step. Admins change them here, or go back to the configured
+value.
 
 ![Models and limits](assets/ui/admin-models-light.png#only-light)
 ![Models and limits](assets/ui/admin-models-dark.png#only-dark)
