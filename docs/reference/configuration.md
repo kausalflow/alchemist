@@ -2,6 +2,42 @@
 
 Alchemist reads its settings from environment variables, with local-friendly defaults under `ALC_HOME`.
 
+## Settings file
+
+The same settings can live in a YAML file, keyed by the variable names, so one setup is easy to keep and reuse:
+
+```yaml
+# alchemist.yaml
+ALC_HOME: C:\alc
+ALC_AWS_PROFILE: alchemist-data          # storage (S3) and other AWS clients
+ALC_AWS_REGION: eu-central-1
+ALC_BEDROCK_PROFILE: alchemist-models    # model calls only
+ALC_PLANNING_MODEL: eu.anthropic.claude-opus-5-5
+ALC_ALLOWED_PROVIDERS: [bedrock]         # lists become comma-separated values
+```
+
+Alchemist reads `--config FILE` (before the command: `alchemist --config bedrock.yaml models check`), else the file
+named by `ALC_CONFIG`, else `alchemist.yaml` in the current folder if there is one. A variable set in the environment
+wins over the file, so a shared file can be overridden in one shell. `alchemist models` prints which file was read and
+which settings it supplied. Keep secrets such as API keys and database passwords out of files you share.
+
+## AWS profile and region
+
+`ALC_AWS_PROFILE` and `ALC_AWS_REGION` are Alchemist's own names for the AWS profile and region. They apply only to
+Alchemist (it copies them onto `AWS_PROFILE` and `AWS_REGION` inside its own processes), so they never change your
+other AWS tools, and they win over `AWS_PROFILE` / `AWS_REGION` when both are set.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_AWS_PROFILE` | unset (`AWS_PROFILE`, else the AWS credential chain) | AWS profile for storage (S3) and every AWS client Alchemist uses |
+| `ALC_AWS_REGION` | `AWS_REGION`, else `eu-central-1` | AWS region for the same; the profile's region and `AWS_DEFAULT_REGION` are not used |
+| `ALC_BEDROCK_PROFILE` | the profile above | AWS profile for model calls only, so they can use another identity than storage |
+| `ALC_BEDROCK_REGION` | the region above | region for model calls only |
+
+Access-key variables (`AWS_ACCESS_KEY_ID`, ...) in the environment win over a profile in the AWS credential chain,
+except for model calls with `ALC_BEDROCK_PROFILE`. A run's kernel with scoped run credentials (`ALC_RUN_ROLE_ARN`)
+never sees these profile names.
+
 ## Storage
 
 | Variable | Default | Meaning |
@@ -62,7 +98,7 @@ See [S3 and the workspace](../guides/s3.md).
 | `ALC_LEAD_MODEL`, `ALC_SUB_MODEL` | unset | older shared settings, still read: lead for planning and analysis, sub for the reviewer and small jobs |
 | `ALC_ALLOWED_PROVIDERS` | `bedrock` | comma-separated providers plant data may go to; `*` for all |
 | `ALC_EFFORT` | `high` | thinking effort of the lead; `off` disables thinking |
-| `AWS_REGION` | `eu-central-1` | Bedrock region |
+| `ALC_BEDROCK_PROFILE`, `ALC_BEDROCK_REGION` | `ALC_AWS_PROFILE`, `ALC_AWS_REGION` | AWS profile and region for model calls only; see [AWS profile and region](#aws-profile-and-region) |
 
 An admin's choice on the admin "Models and limits" page overrides these for new steps (it is saved in the app
 database). Provider credentials are read the usual way: the AWS credential chain for Bedrock, `ANTHROPIC_API_KEY`,

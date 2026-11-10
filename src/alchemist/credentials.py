@@ -34,7 +34,12 @@ MAX_POLICY_CHARS = 2048
 AMBIENT_AWS_VARS = ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
                     "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
                     "AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
-                    "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE")
+                    "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "ALC_AWS_PROFILE", "ALC_BEDROCK_PROFILE",
+                    "ALC_CONFIG")
+# Alchemist's own profile names and its settings file: an `alchemist` command started in the kernel (the
+# credential_process) would copy them onto AWS_PROFILE (config.apply_alchemist_aws_env, apply_config_file), so a
+# kernel with scoped run credentials never inherits them.
+ALC_PROFILE_VARS = ("ALC_AWS_PROFILE", "ALC_BEDROCK_PROFILE", "ALC_CONFIG")
 
 
 @dataclass(frozen=True)
@@ -266,7 +271,7 @@ def credential_process(env: dict | None = None, *, broker: LambdaBroker | None =
     import os
 
     env = os.environ if env is None else env
-    for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", *STATIC_AWS_VARS):
+    for k in ("AWS_PROFILE", "AWS_CONFIG_FILE", *STATIC_AWS_VARS, *ALC_PROFILE_VARS):
         env.pop(k, None)
     run_id, token = env.get("ALC_RUN_ID"), env.get("ALC_BROKER_TOKEN")
     if not (run_id and token and (broker or env.get("ALC_BROKER_FUNCTION"))):
@@ -290,7 +295,7 @@ def process_profile_env(config_dir: str, command: list[str]) -> dict[str, str | 
     path.chmod(0o600)
     return {"AWS_CONFIG_FILE": str(path), "AWS_PROFILE": PROFILE, "AWS_SDK_LOAD_CONFIG": "1",
             "ALC_S3_CREDENTIALS": "process", "AWS_EC2_METADATA_DISABLED": "true",
-            **{k: None for k in STATIC_AWS_VARS}}
+            **{k: None for k in (*STATIC_AWS_VARS, *ALC_PROFILE_VARS)}}
 
 
 # ------------------------------------------------------------------ in-process sandbox: credentials the worker refreshes

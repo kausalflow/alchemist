@@ -10,3 +10,4 @@ site/
 cdk.out/
 node_modules/
 deploy/compose/.env
+alchemist.yaml

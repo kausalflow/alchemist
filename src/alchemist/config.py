@@ -51,7 +51,11 @@ class Settings:
     # Searchable domain documents (markdown with front matter).
     knowledge_root: str = field(default_factory=lambda: os.environ.get("ALC_KNOWLEDGE") or _home("knowledge"))
     # Models are Pydantic AI specs `provider:model-id`; a bare id means Bedrock (and may be an inference profile ARN).
-    aws_region: str = field(default_factory=lambda: os.environ.get("AWS_REGION", "eu-central-1"))
+    aws_region: str = field(default_factory=lambda: os.environ.get("ALC_AWS_REGION") or os.environ.get("AWS_REGION", "eu-central-1"))
+    # Bedrock may use its own AWS profile and region, so model calls and storage (S3) can use different identities.
+    # Unset: the AWS profile and region of everything else (ALC_AWS_PROFILE / ALC_AWS_REGION, else AWS_*).
+    bedrock_profile: str | None = field(default_factory=lambda: os.environ.get("ALC_BEDROCK_PROFILE") or None)
+    bedrock_region: str = field(default_factory=lambda: os.environ.get("ALC_BEDROCK_REGION") or os.environ.get("ALC_AWS_REGION") or os.environ.get("AWS_REGION", "eu-central-1"))
     # One model per job (see model_roles.py). Each falls back to the older ALC_LEAD_MODEL (planning, analysis) or
     # ALC_SUB_MODEL (reviewer, small jobs), then to the default. An admin's choice in the database overrides these.
     planning_model: str = field(default_factory=lambda: _model("planning"))
@@ -88,7 +92,83 @@ class Settings:
             Path(self.workspace_root).mkdir(parents=True, exist_ok=True)
 
 
+CONFIG_FILE_NAME = "alchemist.yaml"
+_applied_config: dict = {"path": None, "keys": []}
+
+
+def find_config_file(explicit: str | None = None) -> str | None:
+    """The settings file: --config, else ALC_CONFIG, else ./alchemist.yaml if it exists."""
+    if explicit:
+        return explicit
+    if os.environ.get("ALC_CONFIG"):
+        return os.environ["ALC_CONFIG"]
+    return CONFIG_FILE_NAME if Path(CONFIG_FILE_NAME).is_file() else None
+
+
+def _env_value(key: str, value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(v) for v in value)
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    raise ValueError(f"{key}: a setting is a string, number, true/false or a list, not {type(value).__name__}")
+
+
+def apply_config_file(path: str | None) -> list[str]:
+    """Read a YAML file of settings, named like the environment variables, into this process's environment.
+
+    A variable already set in the environment wins over the file, so one file can be reused and overridden per
+    shell. Values only reach this process and what it starts (workers, kernels), never the user's other programs, so
+    AWS_PROFILE here picks the profile for Alchemist alone. Returns the keys taken from the file.
+    """
+    if not path:
+        return []
+    import yaml
+
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise FileNotFoundError(f"settings file not found: {p}")
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{p}: expected a mapping of setting names to values, e.g. ALC_HOME: C:\\alc")
+    applied = []
+    for key, value in data.items():
+        key = str(key)
+        if not key.replace("_", "").isalnum() or key.upper() != key:
+            raise ValueError(f"{p}: {key!r} is not a setting name; use the variable names, e.g. ALC_BEDROCK_PROFILE")
+        if value is None or key in os.environ:
+            continue
+        os.environ[key] = _env_value(key, value)
+        applied.append(key)
+    _applied_config.update(path=str(p), keys=applied)
+    return applied
+
+
+def applied_config() -> dict:
+    """The settings file this process read, and which keys it set (the others were already in the environment)."""
+    return dict(_applied_config)
+
+
+# Alchemist's own names for the AWS profile and region. They are copied onto the standard AWS variables inside this
+# process (and what it starts: workers, kernels), so every AWS client Alchemist uses (S3 through cloudpathlib and
+# DuckDB, STS, Step Functions, Bedrock) picks them up, while the user's other AWS tools keep their own settings.
+ALC_AWS_ALIASES = {"ALC_AWS_PROFILE": "AWS_PROFILE", "ALC_AWS_REGION": "AWS_REGION"}
+
+
+def apply_alchemist_aws_env() -> dict[str, str]:
+    """Set AWS_PROFILE / AWS_REGION from ALC_AWS_PROFILE / ALC_AWS_REGION, which win. Returns what it set."""
+    out = {}
+    for ours, theirs in ALC_AWS_ALIASES.items():
+        value = os.environ.get(ours)
+        if value and os.environ.get(theirs) != value:
+            os.environ[theirs] = value
+            out[theirs] = value
+    return out
+
+
 def load_settings() -> Settings:
+    apply_alchemist_aws_env()
     s = Settings()
     s.ensure_local_dirs()
     return s
