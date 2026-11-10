@@ -528,20 +528,21 @@ def cmd_broker(a) -> None:
 
 BEDROCK_HINTS = [
     (("unable to locate credentials", "nocredentials"),
-     "no AWS credentials found: run `aws sso login --profile <name>` (or `aws configure`) and set AWS_PROFILE"),
+     "no AWS credentials found: run `aws sso login --profile <name>` (or `aws configure`) and set ALC_BEDROCK_PROFILE "
+     "(models only) or AWS_PROFILE"),
     (("security token included in the request is invalid", "unrecognizedclient", "invalidclienttokenid"),
-     "AWS rejected the credentials: check AWS_PROFILE, or clear stale AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / "
+     "AWS rejected the credentials: check ALC_BEDROCK_PROFILE / AWS_PROFILE, or clear stale AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / "
      "AWS_SESSION_TOKEN variables that override the profile"),
     (("expiredtoken", "token has expired", "sso session", "token is expired"),
      "the AWS session expired: run `aws sso login --profile <name>` again"),
     (("on-demand throughput", "inference profile"),
      "this model needs an inference profile id here, e.g. eu.anthropic.<model> or global.anthropic.<model>; list "
-     "them with `aws bedrock list-inference-profiles --region <region>`"),
+     "them with `aws bedrock list-inference-profiles --region <region> --profile <name>`"),
     (("accessdenied", "not authorized", "don't have access", "do not have access"),
      "the AWS identity may not call this model: request model access in the Bedrock console for this region, and "
      "check that its IAM policy allows bedrock:InvokeModel on the model or inference profile"),
     (("model identifier is invalid", "resourcenotfound", "could not resolve", "not found"),
-     "this id is not offered in AWS_REGION: check it with `aws bedrock list-inference-profiles --region <region>`"),
+     "this id is not offered in the Bedrock region: check it with `aws bedrock list-inference-profiles --region <region> --profile <name>`"),
 ]
 
 
@@ -564,8 +565,12 @@ def cmd_models(a) -> None:
     roles = [a.role] if a.role else list(ROLES)
     specs = {r: getattr(settings, ROLES[r].field) for r in roles}
     if any(split_spec(s)[0] == "bedrock" for s in specs.values()):
-        print(f"Bedrock region (AWS_REGION): {settings.aws_region}; "
-              f"AWS profile: {os.environ.get('AWS_PROFILE') or '(default credential chain)'}")
+        region_from = "ALC_BEDROCK_REGION" if os.environ.get("ALC_BEDROCK_REGION") else "AWS_REGION"
+        if settings.bedrock_profile:
+            profile = f"{settings.bedrock_profile} (ALC_BEDROCK_PROFILE)"
+        else:
+            profile = f"{os.environ['AWS_PROFILE']} (AWS_PROFILE)" if os.environ.get("AWS_PROFILE") else "(default credential chain)"
+        print(f"Bedrock region: {settings.bedrock_region} ({region_from}); Bedrock AWS profile: {profile}")
     failed = 0
     for role, spec in specs.items():
         if a.action == "list":

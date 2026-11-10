@@ -15,8 +15,27 @@ that may call Bedrock in some region, and Alchemist installed as in [Getting sta
   also works.
 - **The region** is `AWS_REGION` only, default `eu-central-1`. The region in your profile and `AWS_DEFAULT_REGION` are
   not used, so set `AWS_REGION` to the region where you have Bedrock access.
+- **A separate identity for the models.** `ALC_BEDROCK_PROFILE` names an AWS profile used only for model calls, and
+  `ALC_BEDROCK_REGION` a region used only for them. Storage (S3) and everything else keep `AWS_PROFILE` and
+  `AWS_REGION`. A profile named this way also wins over access-key variables, for model calls.
 
 Leftover access-key variables win over `AWS_PROFILE`. If a check fails with "security token ... invalid", clear them.
+
+### Keeping it out of your other AWS work
+
+`$env:` variables in PowerShell last only for that window and what you start from it, so they do not change your
+other windows or the `default` profile. Put the settings in a script and dot-source it when you work on Alchemist:
+
+```powershell
+# C:\alc\bedrock.ps1   load with:  . C:\alc\bedrock.ps1
+$env:ALC_HOME            = "C:\alc"
+$env:ALC_BEDROCK_PROFILE = "alchemist-models"   # model calls (Bedrock)
+$env:ALC_BEDROCK_REGION  = "eu-central-1"
+$env:AWS_PROFILE         = "alchemist-data"     # storage (S3); leave unset for local files
+$env:AWS_REGION          = "eu-central-1"
+```
+
+Avoid setting `AWS_PROFILE` as a permanent Windows variable: every AWS tool would then use it.
 
 ## 1. Sign in
 
@@ -24,9 +43,9 @@ Leftover access-key variables win over `AWS_PROFILE`. If a check fails with "sec
 
     ```powershell
     aws sso login --profile my-profile      # SSO profiles only; skip for access-key profiles
-    $env:AWS_PROFILE = "my-profile"
+    $env:AWS_PROFILE = "my-profile"         # or $env:ALC_BEDROCK_PROFILE for model calls only
     $env:AWS_REGION  = "eu-central-1"
-    aws sts get-caller-identity             # shows the account and role you are using
+    aws sts get-caller-identity --profile my-profile   # shows the account and role you are using
     ```
 
 === "bash"
@@ -88,7 +107,7 @@ uv run alchemist models check      # sends each role one tiny request
 ```
 
 ```text
-Bedrock region (AWS_REGION): eu-central-1; AWS profile: my-profile
+Bedrock region: eu-central-1 (AWS_REGION); Bedrock AWS profile: my-profile (AWS_PROFILE)
 planning  eu.anthropic.claude-opus-5-5: answered 'OK'
 analysis  eu.anthropic.claude-sonnet-5-5: answered 'OK'
 reviewer  eu.anthropic.claude-opus-5-5: answered 'OK'
@@ -100,12 +119,12 @@ what runs would really use. When a model fails, the check prints the error and a
 
 | Error says | Fix |
 | --- | --- |
-| Unable to locate credentials | `aws sso login --profile ...` or `aws configure`, and set `AWS_PROFILE` |
+| Unable to locate credentials | `aws sso login --profile ...` or `aws configure`, and set `ALC_BEDROCK_PROFILE` or `AWS_PROFILE` |
 | The security token included in the request is invalid | stale access-key variables override the profile; clear them, or check `AWS_PROFILE` |
 | ExpiredToken, or the SSO session expired | `aws sso login` again |
 | on-demand throughput isn't supported ... inference profile | use the inference profile id from step 2 instead of the bare `anthropic.` id |
 | AccessDeniedException | request model access in the Bedrock console; the IAM policy must allow `bedrock:InvokeModel` on the model or profile |
-| model identifier is invalid, not found | the id is not offered in `AWS_REGION`; check step 2 for that region |
+| model identifier is invalid, not found | the id is not offered in the Bedrock region; check step 2 for that region |
 
 ## 5. Ask a real question
 

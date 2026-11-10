@@ -409,9 +409,12 @@ def _register_builtins(r: Registry) -> None:
     def bedrock(model_id: str, settings):
         from pydantic_ai.models.bedrock import BedrockConverseModel
         from pydantic_ai.providers.bedrock import BedrockProvider
-        return BedrockConverseModel(model_id, provider=BedrockProvider(region_name=settings.aws_region))
+        return BedrockConverseModel(model_id, provider=BedrockProvider(
+            region_name=getattr(settings, "bedrock_region", None) or settings.aws_region,
+            profile_name=getattr(settings, "bedrock_profile", None)))
 
-    r.model_providers.add(ModelProvider("bedrock", bedrock, "Amazon Bedrock Converse in AWS_REGION"))
+    r.model_providers.add(ModelProvider("bedrock", bedrock, "Amazon Bedrock Converse in ALC_BEDROCK_REGION or AWS_REGION, "
+                                                            "with ALC_BEDROCK_PROFILE if set"))
 
     def local(model_id: str, settings):
         import os

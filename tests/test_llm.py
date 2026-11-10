@@ -96,7 +96,7 @@ def test_models_check_reports_each_role_and_hints_at_bedrock_fixes(monkeypatch, 
     out = capsys.readouterr().out
     assert "2 of 4 models did not answer" in str(e.value)
     assert "small     eu.anthropic.claude-haiku-5-5: answered 'OK'" in out
-    assert "inference profile id" in out and "Bedrock region (AWS_REGION): " in out
+    assert "inference profile id" in out and "Bedrock region: eu-central-1 (AWS_REGION)" in out
 
     cli.main(["models", "--role", "analysis"])
     assert "analysis  bedrock:anthropic.claude-sonnet-5-5" in capsys.readouterr().out
@@ -109,3 +109,30 @@ def test_bedrock_hints():
     assert "AWS_PROFILE" in _model_error_hint("bedrock", "The security token included in the request is invalid.")
     assert "model access" in _model_error_hint("bedrock", "AccessDeniedException: You don't have access to the model")
     assert _model_error_hint("openai", "Unable to locate credentials") == ""
+
+
+def test_bedrock_can_use_its_own_profile_and_region(monkeypatch, tmp_path):
+    """Model calls may use a different AWS identity and region than storage (S3), which keeps AWS_PROFILE."""
+    import configparser
+
+    cfg = configparser.ConfigParser()
+    cfg["profile models"] = {"aws_access_key_id": "AKIAMODELS", "aws_secret_access_key": "x"}
+    cfg["profile storage"] = {"aws_access_key_id": "AKIASTORAGE", "aws_secret_access_key": "y"}
+    path = tmp_path / "config"
+    with open(path, "w") as f:
+        cfg.write(f)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(path))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "none"))
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("AWS_PROFILE", "storage")
+    monkeypatch.setenv("AWS_REGION", "eu-west-1")
+
+    def creds(model):
+        return model.client._request_signer._credentials.access_key, model.client.meta.region_name
+
+    assert creds(llm.build_model("eu.anthropic.claude-sonnet-5-5", Settings())) == ("AKIASTORAGE", "eu-west-1")
+    monkeypatch.setenv("ALC_BEDROCK_PROFILE", "models")
+    monkeypatch.setenv("ALC_BEDROCK_REGION", "eu-central-1")
+    assert creds(llm.build_model("eu.anthropic.claude-sonnet-5-5", Settings())) == ("AKIAMODELS", "eu-central-1")
+    assert Settings().aws_region == "eu-west-1"  # storage and run credentials keep AWS_REGION

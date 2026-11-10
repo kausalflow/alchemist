@@ -52,6 +52,10 @@ class Settings:
     knowledge_root: str = field(default_factory=lambda: os.environ.get("ALC_KNOWLEDGE") or _home("knowledge"))
     # Models are Pydantic AI specs `provider:model-id`; a bare id means Bedrock (and may be an inference profile ARN).
     aws_region: str = field(default_factory=lambda: os.environ.get("AWS_REGION", "eu-central-1"))
+    # Bedrock may use its own AWS profile and region, so model calls and storage (S3) can use different identities.
+    # Unset: the AWS credential chain (AWS_PROFILE, keys, roles) and AWS_REGION, as for everything else.
+    bedrock_profile: str | None = field(default_factory=lambda: os.environ.get("ALC_BEDROCK_PROFILE") or None)
+    bedrock_region: str = field(default_factory=lambda: os.environ.get("ALC_BEDROCK_REGION") or os.environ.get("AWS_REGION", "eu-central-1"))
     # One model per job (see model_roles.py). Each falls back to the older ALC_LEAD_MODEL (planning, analysis) or
     # ALC_SUB_MODEL (reviewer, small jobs), then to the default. An admin's choice in the database overrides these.
     planning_model: str = field(default_factory=lambda: _model("planning"))
