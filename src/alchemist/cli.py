@@ -526,6 +526,66 @@ def cmd_broker(a) -> None:
         sys.exit(str(e))
 
 
+BEDROCK_HINTS = [
+    (("unable to locate credentials", "nocredentials"),
+     "no AWS credentials found: run `aws sso login --profile <name>` (or `aws configure`) and set AWS_PROFILE"),
+    (("security token included in the request is invalid", "unrecognizedclient", "invalidclienttokenid"),
+     "AWS rejected the credentials: check AWS_PROFILE, or clear stale AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / "
+     "AWS_SESSION_TOKEN variables that override the profile"),
+    (("expiredtoken", "token has expired", "sso session", "token is expired"),
+     "the AWS session expired: run `aws sso login --profile <name>` again"),
+    (("on-demand throughput", "inference profile"),
+     "this model needs an inference profile id here, e.g. eu.anthropic.<model> or global.anthropic.<model>; list "
+     "them with `aws bedrock list-inference-profiles --region <region>`"),
+    (("accessdenied", "not authorized", "don't have access", "do not have access"),
+     "the AWS identity may not call this model: request model access in the Bedrock console for this region, and "
+     "check that its IAM policy allows bedrock:InvokeModel on the model or inference profile"),
+    (("model identifier is invalid", "resourcenotfound", "could not resolve", "not found"),
+     "this id is not offered in AWS_REGION: check it with `aws bedrock list-inference-profiles --region <region>`"),
+]
+
+
+def _model_error_hint(provider: str, error: str) -> str:
+    if provider != "bedrock":
+        return ""
+    low = error.lower()
+    return next((hint for keys, hint in BEDROCK_HINTS if any(k in low for k in keys)), "")
+
+
+def cmd_models(a) -> None:
+    """Each role's model; with `check`, send each a tiny request to see that the provider answers."""
+    import dataclasses
+
+    from .llm import complete, split_spec
+    from .model_roles import ROLES
+
+    svc = _svc()
+    settings = dataclasses.replace(svc.settings, model_retry_seconds=min(svc.settings.model_retry_seconds, 20))
+    roles = [a.role] if a.role else list(ROLES)
+    specs = {r: getattr(settings, ROLES[r].field) for r in roles}
+    if any(split_spec(s)[0] == "bedrock" for s in specs.values()):
+        print(f"Bedrock region (AWS_REGION): {settings.aws_region}; "
+              f"AWS profile: {os.environ.get('AWS_PROFILE') or '(default credential chain)'}")
+    failed = 0
+    for role, spec in specs.items():
+        if a.action == "list":
+            print(f"{role:9} {spec}")
+            continue
+        try:
+            reply = complete(settings, spec, system="You are a connectivity check. Reply with the single word OK.",
+                             user="Reply with OK.", effort="low", max_tokens=2000).strip()
+            print(f"{role:9} {spec}: answered {reply[:40]!r}")
+        except Exception as e:  # report every role, then fail
+            failed += 1
+            msg = f"{type(e).__name__}: {e}"
+            print(f"{role:9} {spec}: FAILED {msg[:400]}")
+            hint = _model_error_hint(split_spec(spec)[0], msg)
+            if hint:
+                print(f"{'':9} hint: {hint}")
+    if failed:
+        sys.exit(f"{failed} of {len(specs)} models did not answer")
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="alchemist", description="AI research system for process questions")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -667,6 +727,11 @@ def main(argv=None) -> None:
     brc.add_argument("--run-id", help="default ALC_RUN_ID; the token comes from ALC_BROKER_TOKEN")
     brc.add_argument("--file", help="in-process: read the credentials the worker keeps fresh in this file instead")
     brc.set_defaults(fn=cmd_broker)
+
+    mo = sub.add_parser("models", help="show each role's model, or check that each one answers")
+    mo.add_argument("action", nargs="?", choices=["list", "check"], default="list")
+    mo.add_argument("--role", choices=["planning", "analysis", "reviewer", "small"], help="only this role")
+    mo.set_defaults(fn=cmd_models)
 
     pl = sub.add_parser("plugins", help="list loaded plugins, or show every registered extension")
     pl.add_argument("action", choices=["list", "show"], nargs="?", default="list")

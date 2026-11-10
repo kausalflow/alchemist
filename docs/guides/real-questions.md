@@ -8,7 +8,8 @@ register datasets first with the [catalog admin guide](catalog-admin.md).
 === "Bedrock (default)"
 
     ```bash
-    export AWS_REGION=eu-central-1          # and any AWS credentials the credential chain can find
+    export AWS_REGION=eu-central-1          # only AWS_REGION sets the region, not your profile's
+    export AWS_PROFILE=my-profile           # or any credentials the AWS credential chain can find
     export ALC_PLANNING_MODEL=bedrock:anthropic.claude-opus-5-5
     export ALC_ANALYSIS_MODEL=bedrock:anthropic.claude-sonnet-5-5
     export ALC_REVIEWER_MODEL=bedrock:anthropic.claude-opus-5-5
@@ -26,7 +27,9 @@ register datasets first with the [catalog admin guide](catalog-admin.md).
     export ALC_SMALL_MODEL=anthropic:claude-haiku-5-5
     ```
 
-See [Model providers](models.md) for the full list and the allow-list.
+Then check that every role's model answers with `uv run alchemist models check`. In most regions Bedrock needs an
+inference profile id such as `eu.anthropic.claude-sonnet-5-5`; [Try Bedrock on your laptop](bedrock-local.md) shows how
+to find yours, with PowerShell commands. See [Model providers](models.md) for the full list and the allow-list.
 
 ## 2. Draft catalog cards with the model (optional)
 

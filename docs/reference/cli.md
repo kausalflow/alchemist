@@ -14,6 +14,13 @@ printed as JSON.
 | `alchemist demo setup [--use-model] [--no-approve] [--lake URI]` | generate the synthetic plant under `ALC_HOME`, register its datasets and index them. `--use-model` drafts cards with `ALC_SMALL_MODEL`; `--no-approve` leaves drafts for review; `--lake s3://...` uploads the lake there and registers it on S3 |
 | `alchemist demo run` | ask, approve, replay and verify the demo question offline, with the scripted model |
 
+## `models`
+
+| Command | Does |
+| --- | --- |
+| `alchemist models [--role ROLE]` | print each role's model (including an admin's saved choice), and the Bedrock region and AWS profile |
+| `alchemist models check [--role ROLE]` | send each role's model one tiny request; prints the reply, or the error with a hint for common Bedrock problems, and exits 1 if any failed |
+
 ## `serve`
 
 ```text

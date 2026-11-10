@@ -62,7 +62,7 @@ See [S3 and the workspace](../guides/s3.md).
 | `ALC_LEAD_MODEL`, `ALC_SUB_MODEL` | unset | older shared settings, still read: lead for planning and analysis, sub for the reviewer and small jobs |
 | `ALC_ALLOWED_PROVIDERS` | `bedrock` | comma-separated providers plant data may go to; `*` for all |
 | `ALC_EFFORT` | `high` | thinking effort of the lead; `off` disables thinking |
-| `AWS_REGION` | `eu-central-1` | Bedrock region |
+| `AWS_REGION` | `eu-central-1` | Bedrock region; the profile's region and `AWS_DEFAULT_REGION` are not used |
 
 An admin's choice on the admin "Models and limits" page overrides these for new steps (it is saved in the app
 database). Provider credentials are read the usual way: the AWS credential chain for Bedrock, `ANTHROPIC_API_KEY`,

@@ -76,3 +76,36 @@ def test_role_models_fall_back_to_the_shared_settings(monkeypatch):
         "anthropic.lead", "anthropic.analysis", "anthropic.sub", "anthropic.sub")
     assert model_roles.env_source("analysis") == "ALC_ANALYSIS_MODEL"
     assert model_roles.env_source("planning") == "ALC_LEAD_MODEL"
+
+
+def test_models_check_reports_each_role_and_hints_at_bedrock_fixes(monkeypatch, tmp_path, capsys):
+    from alchemist import cli
+
+    monkeypatch.setenv("ALC_HOME", str(tmp_path))
+    monkeypatch.setenv("ALC_SMALL_MODEL", "eu.anthropic.claude-haiku-5-5")
+
+    def fake_complete(settings, spec, **kw):
+        if "opus" in spec:
+            raise RuntimeError("ValidationException: Invocation of model ID anthropic.claude-opus-5-5 with on-demand "
+                               "throughput isn't supported. Retry your request with the ID or ARN of an inference profile")
+        return "OK"
+
+    monkeypatch.setattr("alchemist.llm.complete", fake_complete)
+    with pytest.raises(SystemExit) as e:
+        cli.main(["models", "check"])
+    out = capsys.readouterr().out
+    assert "2 of 4 models did not answer" in str(e.value)
+    assert "small     eu.anthropic.claude-haiku-5-5: answered 'OK'" in out
+    assert "inference profile id" in out and "Bedrock region (AWS_REGION): " in out
+
+    cli.main(["models", "--role", "analysis"])
+    assert "analysis  bedrock:anthropic.claude-sonnet-5-5" in capsys.readouterr().out
+
+
+def test_bedrock_hints():
+    from alchemist.cli import _model_error_hint
+
+    assert "aws sso login" in _model_error_hint("bedrock", "NoCredentialsError: Unable to locate credentials")
+    assert "AWS_PROFILE" in _model_error_hint("bedrock", "The security token included in the request is invalid.")
+    assert "model access" in _model_error_hint("bedrock", "AccessDeniedException: You don't have access to the model")
+    assert _model_error_hint("openai", "Unable to locate credentials") == ""

@@ -30,7 +30,7 @@ On Bedrock the deployment's IAM role must also be allowed to call the chosen mod
 
 | Provider | Example spec | Credentials |
 | --- | --- | --- |
-| Amazon Bedrock (default) | `bedrock:anthropic.claude-opus-5-5`, or an inference profile ARN | AWS credential chain, `AWS_REGION` |
+| Amazon Bedrock (default) | `bedrock:anthropic.claude-opus-5-5`, an inference profile id (`eu.anthropic.claude-opus-5-5`) or ARN | AWS credential chain (`AWS_PROFILE`, SSO, keys, roles), `AWS_REGION` ([try it locally](bedrock-local.md)) |
 | Anthropic API | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | Google Gemini | `google:gemini-3-pro` (Vertex AI: `google-cloud:gemini-3-pro`) | `GOOGLE_API_KEY`; Vertex uses Google Cloud credentials |
 | OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
@@ -99,6 +99,9 @@ Add a provider deliberately, after your data policy allows it. The allow-list ap
 choices on the Models and limits page.
 
 ## Choosing models
+
+To connect a laptop to Bedrock with your own AWS profile and check that each model answers, follow
+[Try Bedrock on your laptop](bedrock-local.md). `alchemist models check` sends each role one tiny request.
 
 ```bash
 export ALC_PLANNING_MODEL=bedrock:anthropic.claude-opus-5-5
