@@ -9,8 +9,8 @@ What the infrastructure in `infra/` gives the application, and what it expects b
 
 | Mode | Kernel | Data credentials | Report and seal | Status |
 | --- | --- | --- | --- | --- |
-| `in_process` (default) | inside the analyse task | the analyse task assumes the run role (`ALC_RUN_ROLE_ARN`) with a per-run session policy, again before each session expires | done by `worker analyse` | default |
-| `separate` | its own sandbox task (`sandbox serve`) with no route to Bedrock | the kernel's `credential_process` calls the broker Lambda, again whenever they expire; the sandbox role can do nothing else | `worker report` and `worker seal` steps | built; not yet run in an AWS account |
+| `separate` (default) | its own sandbox task (`sandbox serve`) with no route to Bedrock | the kernel's `credential_process` calls the broker Lambda, again whenever they expire; the sandbox role can do nothing else | `worker report` and `worker seal` steps | default; not yet run in an AWS account |
+| `in_process` | inside the analyse task | the analyse task assumes the run role (`ALC_RUN_ROLE_ARN`) with a per-run session policy, again before each session expires | done by `worker analyse` | needed by `workflow.launcher: queue`, and the default there |
 
 In `in_process` mode the process that calls Bedrock also holds data credentials for the run, so the split between
 model access and data access is enforced by the app, not by AWS. In `separate` mode the orchestrator drives the kernel

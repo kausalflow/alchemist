@@ -74,13 +74,20 @@ def test_sandbox_role_can_only_call_the_broker(resources):
         assert forbidden not in policy
 
 
-def test_orchestrator_has_bedrock_but_no_direct_lake_access(resources, dev_cfg):
-    _, policy = _policies_of(resources, "OrchestratorRole")
-    assert "bedrock:InvokeModel" in policy
-    for b in dev_cfg.lake.buckets:
-        assert b.name not in policy
-    # In-process (default) it reads data only through the run role, narrowed per run.
+def test_orchestrator_has_bedrock_but_no_direct_lake_access(resources, in_process_resources, dev_cfg):
+    for res in (resources, in_process_resources):
+        _, policy = _policies_of(res, "OrchestratorRole")
+        assert "bedrock:InvokeModel" in policy
+        for b in dev_cfg.lake.buckets:
+            assert b.name not in policy
+    # In-process it reads data only through the run role, narrowed per run.
+    _, policy = _policies_of(in_process_resources, "OrchestratorRole")
     assert "sts:AssumeRole" in policy and "RunRole" in policy
+
+
+def test_separate_sandbox_is_the_default(dev_cfg):
+    assert dev_cfg.workflow.sandbox_mode == "separate"
+    assert EnvConfig.model_fields["workflow"].default.sandbox_mode == "separate"
 
 
 def test_separate_sandbox_keeps_raw_rows_and_seal_away_from_the_orchestrator(separate_resources):
@@ -130,8 +137,8 @@ def _definition(resources) -> str:
     return dumps(sm["Properties"]["DefinitionString"])
 
 
-def test_run_workflow_waits_on_plan_approval(resources):
-    d = _definition(resources)
+def test_run_workflow_waits_on_plan_approval(in_process_resources):
+    d = _definition(in_process_resources)
     assert "lambda:invoke.waitForTaskToken" in d and "$$.Task.Token" in d
     for state in ("Mode", "Plan", "WaitForApproval", "Analyse", "Replay"):
         assert f'\\"{state}\\"' in d
@@ -237,8 +244,8 @@ def test_tasks_share_aurora_and_no_efs(template, resources, dev_cfg):
     assert svc["Properties"]["DesiredCount"] == dev_cfg.sizes.api_count >= 2
 
 
-def test_in_process_analysis_gets_the_run_role_and_the_pseudonym_key(resources):
-    td = next(v for k, v in resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and "OrchestratorTask" in k)
+def test_in_process_analysis_gets_the_run_role_and_the_pseudonym_key(in_process_resources):
+    td = next(v for k, v in in_process_resources.items() if v["Type"] == "AWS::ECS::TaskDefinition" and "OrchestratorTask" in k)
     c = td["Properties"]["ContainerDefinitions"][0]
     assert {"ALC_RUN_ROLE_ARN", "ALC_RUN_CREDENTIAL_SECONDS"} <= {e["Name"] for e in c["Environment"]}
     assert "ALC_PSEUDONYM_KEY" in {s["Name"] for s in c["Secrets"]}
@@ -281,10 +288,10 @@ def _mode_choices(resources) -> dict:
     return {c["And"][1]["StringEquals"]: c["Next"] for c in mode["Choices"]}
 
 
-def test_resume_goes_straight_to_the_analysis_which_is_retried(resources):
+def test_resume_goes_straight_to_the_analysis_which_is_retried(in_process_resources):
     """A paused run resumes in a new execution; a killed or timed-out analysis task is retried (it resumes too)."""
-    assert _mode_choices(resources) == {"replay": "Replay", "resume": "Analyse"}
-    retry = _states(resources)["Analyse"]["Retry"]
+    assert _mode_choices(in_process_resources) == {"replay": "Replay", "resume": "Analyse"}
+    retry = _states(in_process_resources)["Analyse"]["Retry"]
     assert {"States.TaskFailed", "States.Timeout"} <= set(retry[0]["ErrorEquals"]) and retry[0]["MaxAttempts"] == 2
 
 
@@ -329,3 +336,10 @@ def test_queue_needs_the_in_process_kernel(dev_cfg):
     data["workflow"] |= {"launcher": "queue", "sandbox_mode": "separate"}
     with pytest.raises(ValueError, match="in_process"):
         EnvConfig.model_validate(data)
+
+
+def test_queue_keeps_the_kernel_in_its_workers_unless_told_otherwise(dev_cfg):
+    data = dev_cfg.model_dump()
+    data["workflow"]["launcher"] = "queue"
+    del data["workflow"]["sandbox_mode"]
+    assert EnvConfig.model_validate(data).workflow.sandbox_mode == "in_process"
