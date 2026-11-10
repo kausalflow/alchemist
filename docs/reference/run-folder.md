@@ -12,7 +12,8 @@ runs/<run-id>/
   inputs/
     <sha256>.parquet       query result snapshots, named by content hash
     queries.json           per query: SQL, datasets, source objects, rows, snapshot, result hash, card versions
-    views.json             queryable datasets pinned at approval: glob, format, plant, card version, column exposure
+    views.json             queryable datasets pinned at approval: glob, format, plant, card version, column exposure;
+                           for an uploaded file's table also `upload` (id, file, SHA-256, sheet, header row, converter)
     knowledge_index.json   structured knowledge copied for the run's plants
     knowledge/<name>.json  the structured knowledge itself
     parent_findings.json   replays and reruns only: the parent's findings to compare against
@@ -45,7 +46,8 @@ runs/<run-id>/
 | `environment` | Python, platform, package versions, `uv_lock_sha256`, image digest |
 | `model` | `planning`, `analysis` and `reviewer` specs (older runs: one `lead` for planning and analysis) and the `prompts` hash of system prompts and tool definitions (plugin tools included) |
 | `plugins` | loaded plugins with module, distribution, version and contributions; replays report `plugin_drift` against it |
-| `catalog` | `{dataset, card_version}` for each pinned view |
+| `catalog` | `{dataset, card_version}` for each pinned view (`upload:<id>` for a table from an uploaded file) |
+| `uploads` | for each table from an uploaded file: the table, upload id, file name, SHA-256, sheet, header row and converter version |
 | `knowledge` | citations and structured knowledge used |
 | `queries` | the contents of `inputs/queries.json` |
 | `cells` | id, kind and SHA-256 of every code cell |

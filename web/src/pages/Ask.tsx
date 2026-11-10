@@ -5,6 +5,7 @@ import { useSession } from "../session";
 import { useWorkspace } from "../workspace";
 import { ErrorNote, StatusChip, TopBar, day } from "../components/bits";
 import Icon from "../components/icons";
+import DataFiles from "../components/DataFiles";
 
 const DEMO = {
   question: "Why was quality low on Line 2 from 3 to 9 August 2026?",
@@ -25,6 +26,7 @@ export default function AskPage() {
   const [plants, setPlants] = useState<string[]>([]);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [uploadIds, setUploadIds] = useState<string[]>([]);
   const [similar, setSimilar] = useState<RunSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +59,7 @@ export default function AskPage() {
     if (plants.length) scope.plants = plants;
     if (from && to) scope.period = [from, to];
     try {
-      const run = await api.post<RunSummary>("/questions", { workspace, project, question, scope });
+      const run = await api.post<RunSummary>("/questions", { workspace, project, question, scope, uploads: uploadIds });
       nav(`/runs/${run.run_id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -179,7 +181,7 @@ export default function AskPage() {
                 className="mono"
                 list="projects"
                 value={project}
-                onChange={(e) => setProject(e.target.value)}
+                onChange={(e) => (setProject(e.target.value), setUploadIds([]))}
                 placeholder="line2-yield"
                 pattern="[A-Za-z0-9][A-Za-z0-9_.\-]*"
                 title="letters, digits, dot, dash and underscore"
@@ -192,6 +194,15 @@ export default function AskPage() {
               </datalist>
             </label>
           </div>
+
+          <DataFiles
+            workspace={workspace}
+            project={project}
+            plants={plantChoices}
+            me={me!.id}
+            selected={uploadIds}
+            onSelected={setUploadIds}
+          />
 
           <ErrorNote error={error} />
           <div className="row-center">
@@ -241,6 +252,7 @@ export default function AskPage() {
                 {scopePlants.length ? <span className="mono">{scopePlants.join(", ")}</span> : "the plants in scope"}, and the shared catalog
               </li>
               <li>Plant documents and reference facts for those plants</li>
+              <li>The data files you tick under Data files, as ds.up_… tables</li>
               <li>Columns marked never-to-model stay in the sandbox; pseudonymised ones reach it only as codes</li>
             </ul>
           </section>

@@ -144,6 +144,7 @@ See [Plugins](../guides/plugins.md).
 | `ALC_MAX_OUTPUT_TOKENS` | `400000` | output tokens per planning or analysis step |
 | `ALC_MAX_RUN_MINUTES` | `120` | default time limit of a run's analysis, in minutes of working time ([Time limit](../concepts/runs.md#time-limit)) |
 | `ALC_MAX_RUN_MINUTES_CAP` | `480` | the longest time limit a person may choose when approving a plan |
+| `ALC_UPLOAD_MAX_MB` | `200` | largest data file (Excel, CSV) a person may upload to a project ([Upload data files](../guides/data-files.md)) |
 
 An admin's value on the admin "Models and limits" page overrides `ALC_MAX_STEPS`, `ALC_MAX_OUTPUT_TOKENS`,
 `ALC_MAX_RUN_MINUTES` and `ALC_MAX_RUN_MINUTES_CAP` (saved in the app database, audited as `limits.update`).

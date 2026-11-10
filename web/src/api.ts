@@ -30,7 +30,32 @@ export const api = {
   get: <T,>(path: string) => request<T>("GET", path),
   post: <T,>(path: string, body: unknown = {}) => request<T>("POST", path, body),
   put: <T,>(path: string, body: unknown = {}) => request<T>("PUT", path, body),
+  /** Send a file as the request body (Excel and CSV uploads); query parameters carry its name and tags. */
+  upload: async <T,>(path: string, file: File, params: Record<string, string>): Promise<T> => {
+    const q = new URLSearchParams(params).toString();
+    const res = await fetch(`/api${path}?${q}`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const j = await res.json();
+        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      } catch {
+        /* not JSON */
+      }
+      throw new ApiError(res.status, detail);
+    }
+    return res.json() as Promise<T>;
+  },
 };
+
+/** The API path of a project's uploaded data files. */
+export const uploadsPath = (workspace: string, project: string) =>
+  `/projects/${encodeURIComponent(workspace)}/${encodeURIComponent(project)}/uploads`;
 
 export const fileUrl = (runId: string, path: string, download = false) =>
   `/api/runs/${runId}/files/${path}${download ? "?download=true" : ""}`;
@@ -189,6 +214,39 @@ export interface Query {
   card_versions: Record<string, number>;
 }
 
+export interface UploadColumn {
+  name: string;
+  original: string;
+  type: string;
+  unit?: string;
+  exposure: "model" | "pseudonymise" | "never_to_model";
+}
+
+export interface UploadTable {
+  name: string;
+  sheet: string | null;
+  header_row: number | null;
+  units_row?: number | null;
+  first_data_row?: number;
+  rows: number;
+  columns: UploadColumn[];
+  notes: string[];
+}
+
+/** A data file uploaded to a project (Excel or CSV); each sheet is a ds.up_* table runs can query. */
+export interface Upload {
+  id: string;
+  uploaded_by: string;
+  uploaded_at: string;
+  plant: string | null;
+  description: string;
+  time_zone: string;
+  file: { name: string; format: string; size: number; sha256: string };
+  tables: UploadTable[];
+  skipped: { sheet: string; reason: string }[];
+  previews?: Record<string, { rows: number; columns: string[]; head: Record<string, unknown>[] }>;
+}
+
 export interface RunDetail {
   entitled: boolean;
   run: RunSummary;
@@ -216,7 +274,16 @@ export interface RunDetail {
   conclusion_html?: string | null;
   findings?: Finding[];
   queries?: Query[];
-  datasets?: { dataset: string; card_version: number; plant: string; format: string; columns: { name: string; exposure: string }[] }[];
+  datasets?: {
+    dataset: string;
+    card_version: number | string;
+    plant: string;
+    format: string;
+    columns: { name: string; exposure: string }[];
+    upload?: { id: string; file: string; sha256: string; sheet: string | null; header_row: number | null; converter: string };
+  }[];
+  uploads?: { id: string; file: { name: string; size: number; sha256: string }; uploaded_by: string; plant: string | null;
+    tables: { name: string; sheet: string | null; rows: number; header_row: number | null; notes: string[] }[] }[];
   knowledge?: { citations: { doc: string; version: string; title: string; section: string; stale: boolean }[]; structured: { name: string }[] };
   review?: { ok: boolean; issues: { finding?: string; problem: string; suggestion?: string }[]; notes: string; model: string } | null;
   result_check?: { status: { mode: string; compared: number; mismatches: number }; findings?: unknown[] } | null;

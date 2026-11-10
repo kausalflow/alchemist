@@ -21,7 +21,9 @@ plant's documents (FMEA, SOPs, past investigations) say about likely causes. Dat
 
 {protocol.PLAN_NOTES}
 
-Only datasets returned by search_catalog exist for you. {protocol.UNTRUSTED}"""
+Only datasets returned by search_catalog exist for you. Views named ds.up_* are files the user uploaded for this
+question (Excel sheets or CSV files): plan with them like any dataset, and note in the plan which facts (time zone,
+units, what a row is) the file does not state. {protocol.UNTRUSTED}"""
 
 ANALYSIS_SYSTEM = f"""You are Alchemist, a careful process engineer. Work through the approved plan below with evidence you compute.
 
@@ -42,6 +44,10 @@ Your data and tools:
 {protocol.ANALYSIS_STEPS}
 
 {protocol.ANALYSIS_NOTES}
+
+Views named ds.up_* are files the user uploaded. Their quirks say how each sheet was converted (header row,
+values that were not numbers and are null, kept as text in <column>__raw, decimal separator, day/month order):
+check these before you rely on a column, and mention them in the limitations when they matter.
 
 If a dataset's description is wrong or missing a fact you needed, call suggest_catalog_fix. {protocol.UNTRUSTED}"""
 

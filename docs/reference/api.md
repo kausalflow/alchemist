@@ -38,7 +38,7 @@ All paths are under `/api`.
 
 | Method and path | Does | Who |
 | --- | --- | --- |
-| `POST /questions` | create a question and its first run, and start planning; body `{workspace, project, question, scope}` | workspace member, within their plants |
+| `POST /questions` | create a question and its first run, and start planning; body `{workspace, project, question, scope, uploads}` (`uploads`: ids of data files uploaded to the project; 422 for one not there, 403 for one of a plant not in scope) | workspace member, within their plants |
 | `GET /questions/similar?q=` | past questions the user may open, by word overlap | any user |
 | `GET /runs?workspace=&project=&question_id=` | runs in the user's workspaces, newest first | members |
 | `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts, `time_limit` (`{minutes, used_seconds, reached}` once approved; `reached` while paused at the limit), `review_pause` (paused with its report, waiting for the asker) | entitled viewer |
@@ -58,6 +58,18 @@ All paths are under `/api`.
 | `GET /runs/{id}/files/{path}` | one file from the run folder (`?download=true` to save it) | entitled viewer |
 | `GET /runs/{id}/bundle` | the whole run folder as a zip | entitled viewer |
 | `GET /runs/{id}/verify` | check the folder against `SEALED` | entitled viewer |
+
+### Data files
+
+See [Upload data files](../guides/data-files.md).
+
+| Method and path | Does | Who |
+| --- | --- | --- |
+| `POST /projects/{workspace}/{project}/uploads?filename=&plant=&description=&time_zone=` | upload one Excel or CSV file as the request body (`application/octet-stream`); returns the upload with its tables, columns and conversion notes. 415 for another file type, 413 above `ALC_UPLOAD_MAX_MB`, 422 for a file that cannot be read | workspace member; `plant` must be one of theirs |
+| `GET /projects/{workspace}/{project}/uploads` | the project's uploads, newest first (those tagged with a plant only for people entitled to it) | workspace member |
+| `GET /projects/{workspace}/{project}/uploads/{id}?rows=` | one upload with the first rows of each table (`previews`) | workspace member |
+| `GET /projects/{workspace}/{project}/uploads/{id}/original` | the file as uploaded | workspace member |
+| `PUT /projects/{workspace}/{project}/uploads/{id}/exposure` | `{table, column, exposure}`: whether the model sees a column (`model`, `pseudonymise`, `never_to_model`); runs approved earlier keep what they pinned | who uploaded it, admin |
 
 On S3, `files/{path}` answers with a redirect to a presigned GET URL valid for five minutes, issued only after the
 entitlement check. `GET /healthz` (and `/api/health`) answer `200` for load balancer health checks.

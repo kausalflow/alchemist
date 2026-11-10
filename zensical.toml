@@ -28,6 +28,7 @@ nav = [
     "guides/models.md",
     "guides/bedrock-local.md",
     "guides/real-questions.md",
+    "guides/data-files.md",
     "guides/catalog-admin.md",
     "guides/s3.md",
     "guides/penguineer.md",

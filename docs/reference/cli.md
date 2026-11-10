@@ -133,6 +133,7 @@ See [Data sources](../guides/data-sources.md).
 ```text
 alchemist ask QUESTION (--user USER | --claims FILE) --workspace WS --project PROJECT
               [--plants P01,P02] [--scope JSON] [--model SPEC] [--reviewer-model SPEC] [--auto-approve]
+              [--file PATH ...] [--upload UPLOAD_ID ...]
 ```
 
 Checks access, creates the question and run, runs the planning step and stops for approval.
@@ -146,6 +147,18 @@ Checks access, creates the question and run, runs the planning step and stops fo
 | `--model` | model spec (`provider:model-id`) for this step; default the planning or analysis model; `scripted` for the demo |
 | `--reviewer-model` | reviewer spec; default the reviewer model |
 | `--auto-approve` | approve the plan as proposed and continue straight into the analysis |
+| `--file` | an Excel or CSV file to upload to the project and analyse with this question; repeat for more |
+| `--upload` | the id of a file already uploaded to the project; repeat for more |
+
+## `upload`
+
+```text
+alchemist upload FILE (--user USER | --claims FILE) --workspace WS --project PROJECT
+                 [--plant P01] [--description TEXT] [--time-zone ZONE]
+```
+
+Converts an Excel or CSV file into one `ds.up_*` table per sheet in the project, and prints each table with the
+conversion notes. Pass the printed id to `ask --upload`. See [Upload data files](../guides/data-files.md).
 
 ## `approve`
 
