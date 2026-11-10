@@ -20,7 +20,7 @@ from typing import Callable
 from penguineer.agent import protocol
 from penguineer.agent.loop import Budget, Model, ScriptedText, ToolOutput, run_loop
 
-from . import penguineer_tools, prompts, steering
+from . import penguineer_tools, prompts, steering, uploads
 from .access import AccessDenied, User
 from .llm import role_model
 from .catalog import Catalog, now
@@ -32,7 +32,7 @@ from .paths import as_path, copy_tree, read_json, read_yaml, write_json, write_t
 from .plugins import get_registry
 from .report import ReportError, render
 from .sandbox import RemoteKernel, Sandbox, finding_cell, query_cell
-from .workspace import (create_question, create_run, ensure_project, seal, update_question, verify)
+from .workspace import (create_question, create_run, ensure_project, project_dir, seal, update_question, verify)
 
 log = logging.getLogger("alchemist.run")
 
@@ -163,7 +163,10 @@ class RunContext:
         self.credentials: dict = {}
         self.run = as_path(run_row["path"])
         self.qdir = self.run.parent.parent
+        self.project_dir = self.qdir.parent.parent
         self.question = read_yaml(self.qdir / "question.yaml")
+        # Data files people uploaded to the project and attached to this question (uploads.py).
+        self.uploads = [uploads.load(self.project_dir, u) for u in self.question.get("uploads") or []]
         self.plants = frozenset(json.loads(run_row["plants"]))
         self.citations: list[dict] = []
         self.plan: dict | None = self.question.get("plan")
@@ -183,6 +186,10 @@ class RunContext:
     # ---------- shared tools ----------
     def search_catalog(self, inp: dict) -> ToolOutput:
         hits = self.svc.catalog.search(inp["query"], self.plants)
+        if self.uploads:  # few, and attached on purpose: always listed
+            attached = uploads.summaries(self.uploads)
+            return ToolOutput("Files the user uploaded for this question:\n" + json.dumps(attached, indent=1, default=str)
+                              + "\n\nCatalog datasets:\n" + json.dumps(hits, indent=1, default=str))
         if not hits:
             hits = [{"dataset": d["dataset"]["id"], "view": f"ds.{d['dataset']['id']}", "description": d["card"].get("description")}
                     for d in self.svc.catalog.queryable(self.plants)]
@@ -205,6 +212,7 @@ class RunContext:
     # ---------- planning ----------
     def submit_plan(self, inp: dict) -> ToolOutput:
         datasets = {d["dataset"]["id"] for d in self.svc.catalog.queryable(self.plants)}
+        datasets |= {t["name"] for u in self.uploads for t in u["tables"]}
         unknown = sorted({ds.removeprefix("ds.") for h in inp["hypotheses"] for ds in h.get("datasets", [])} - datasets)
         if unknown:
             return ToolOutput(f"These datasets are not available to this run: {unknown}. Use search_catalog.", is_error=True)
@@ -264,6 +272,9 @@ class RunContext:
                           f"Use {{{{{fid}}}}} in the conclusion.")
 
     def suggest_catalog_fix(self, inp: dict) -> ToolOutput:
+        if inp["dataset"].removeprefix("ds.") in {t["name"] for u in self.uploads for t in u["tables"]}:
+            return ToolOutput("That table is a file the user uploaded, not a catalog dataset: state the problem in the "
+                              "report's limitations instead.")
         sid = self.svc.catalog.suggest(inp["dataset"].removeprefix("ds."), f"run:{self.row['run_id']}",
                                        inp.get("kind", "other"), inp["text"])
         return ToolOutput(f"Suggestion {sid} filed for catalog admins.")
@@ -341,6 +352,7 @@ class RunContext:
             "model": self.models,
             "plugins": get_registry().summary(),
             "catalog": [{"dataset": k, "card_version": v["card_version"]} for k, v in sorted(views.items())],
+            "uploads": [{"table": k, **v["upload"]} for k, v in sorted(views.items()) if v.get("upload")],
             "knowledge": {"citations": self.citations,
                           "structured": read_json(self.run / "inputs" / "knowledge_index.json")
                           if (self.run / "inputs" / "knowledge_index.json").exists() else []},
@@ -534,21 +546,43 @@ def interrupted(svc: Services, run_id: str, reason: str) -> str | None:
     return "failed" if end_run(svc, run_id, "failed", actor="system", reason=reason, from_status=ACTIVE) else None
 
 
-def create(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict) -> dict:
-    """Check access, create the question and run folders and index the run. Returns the run row."""
+def create(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict,
+           upload_ids: list[str] | None = None) -> dict:
+    """Check access, create the question and run folders and index the run. Returns the run row.
+
+    `upload_ids` are files uploaded to the project (uploads.py) that the question's runs may query."""
     s, acc = svc.settings, svc.access
     u = svc.access.resolve(user)
     user = u.id
     plants = acc.run_plants(u, workspace, scope.get("plants"))
+    attached = check_uploads(svc, project_dir(s.workspace_root, workspace, project), upload_ids or [], plants)
     check_capacity(svc, user)
     ensure_project(s.workspace_root, workspace, project, owner=user, plants=sorted(plants))
     qid, qdir = create_question(s.workspace_root, workspace, project, text=question, asker=user, scope=scope)
+    if attached:
+        update_question(qdir, uploads=[a["id"] for a in attached])
     rid, rdir = create_run(qdir)
     row = {"run_id": rid, "question_id": qid, "project": project, "workspace": workspace, "user_id": user,
            "path": str(rdir), "mode": "live", "status": "planning", "plants": json.dumps(sorted(plants))}
     svc.catalog.upsert_run(**row)
     svc.catalog.audit(user, "run.create", rid, {"plants": sorted(plants), "workspace": workspace})
     return svc.catalog.run(rid)
+
+
+def check_uploads(svc: Services, pdir, upload_ids: list[str], plants) -> list[dict]:
+    """The uploads a new question attaches. One tagged with a plant needs that plant in the run's scope, so only
+    people entitled to the plant see the run."""
+    out = []
+    for uid in dict.fromkeys(upload_ids):
+        try:
+            rec = uploads.load(pdir, uid)
+        except KeyError as e:
+            raise ValueError(f"no upload {uid} in this project") from e
+        if rec.get("plant") and rec["plant"] not in plants:
+            raise AccessDenied(f"upload {rec['file']['name']} holds data of plant {rec['plant']}, which is not in "
+                               "this question's scope")
+        out.append(rec)
+    return out
 
 
 def plan(svc: Services, run_id: str, *, model: Model | None = None,
@@ -580,6 +614,10 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     handlers.update(extra_handlers)
     first = (f"Question from {user}: {ctx.question['text']}\nScope given by the user: {json.dumps(ctx.question.get('scope') or {})}\n"
              f"Plants this run may read: {sorted(ctx.plants)}")
+    if ctx.uploads:
+        first += ("\nThe user uploaded data files for this question; their tables are views like catalog datasets: "
+                  + ", ".join(f"ds.{t['name']} ({u['file']['name']}" + (f", sheet {t['sheet']}" if t.get("sheet") else "")
+                              + ")" for u in ctx.uploads for t in u["tables"]))
     try:
         ended = run_loop(model, system=prompts.PLAN_SYSTEM, tools=prompts.tool_list(prompts.PLAN_TOOLS, extra_tools),
                          handlers=handlers, first_message=first, done=lambda: ctx.plan is not None, budget=budget,
@@ -607,9 +645,10 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
 
 
 def ask(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict,
-        model: Model | None = None) -> dict:
+        model: Model | None = None, upload_ids: list[str] | None = None) -> dict:
     """Create a run and plan it; it then waits for approval."""
-    row = create(svc, user=user, workspace=workspace, project=project, question=question, scope=scope)
+    row = create(svc, user=user, workspace=workspace, project=project, question=question, scope=scope,
+                 upload_ids=upload_ids)
     return plan(svc, row["run_id"], model=model)
 
 
@@ -725,6 +764,7 @@ def _record_approval(svc: Services, row: dict, user: str, plan: dict | None, min
         views[ds["id"]] = {"glob": svc.catalog.data_glob(ds), "format": ds["file_format"], "plant": ds["plant"],
                            "card_version": d["version"],
                            "columns": [{"name": c["name"], "exposure": c.get("exposure", "model")} for c in d["card"]["columns"]]}
+    views.update(uploads.views(ctx.project_dir, ctx.uploads))
     write_json(ctx.run / "inputs" / "views.json", views)
     write_json(ctx.run / "inputs" / "knowledge_index.json", svc.knowledge.copy_structured(ctx.run, ctx.plants))
     return ctx.plan

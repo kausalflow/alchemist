@@ -26,6 +26,13 @@ Type the question, narrow the line, period and plants if you like, and pick the 
 ![Ask a question](assets/ui/ask-light.png#only-light)
 ![Ask a question](assets/ui/ask-dark.png#only-dark)
 
+### Add data files
+
+Upload Excel or CSV files to the project and tick the ones the question uses. Each sheet becomes a `ds.up_…` table. The page shows how it was read (header row, units, values that were not numbers, decimal separator, day/month order), the first rows, and which columns the model may see. See [Upload data files](guides/data-files.md).
+
+![Data files on the Ask page](assets/ui/ask-data-files-light.png#only-light)
+![Data files on the Ask page](assets/ui/ask-data-files-dark.png#only-dark)
+
 ### Approve the plan
 
 The agent drafts candidate causes, each with its method and data. Untick, edit, add or reorder causes, check which datasets it will read, then approve. This is the first gate.

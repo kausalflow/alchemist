@@ -248,7 +248,7 @@ export function DataTab({ run }: { run: RunDetail }) {
     <div>
       <h3>Datasets pinned at approval</h3>
       <p className="muted small">
-        The run could query only these views, built from the catalog card version shown. Columns marked hidden never reached the model;
+        The run could query only these views, built from the catalog card version shown (or from a file uploaded with the question). Columns marked hidden never reached the model;
         pseudonymised ones were replaced by keyed hashes.
       </p>
       <table className="table">
@@ -264,9 +264,19 @@ export function DataTab({ run }: { run: RunDetail }) {
           {(run.datasets ?? []).map((d) => (
             <tr key={d.dataset}>
               <td>
-                <Link to={`/catalog/${d.dataset}`}>{d.dataset}</Link>
+                {d.upload ? <span className="mono">{d.dataset}</span> : <Link to={`/catalog/${d.dataset}`}>{d.dataset}</Link>}
               </td>
-              <td>v{d.card_version}</td>
+              <td>
+                {d.upload ? (
+                  <span className="small" title={`SHA-256 ${d.upload.sha256}`}>
+                    Uploaded file {d.upload.file}
+                    {d.upload.sheet ? `, sheet ${d.upload.sheet}` : ""}
+                    {d.upload.header_row ? `, header row ${d.upload.header_row}` : ""}
+                  </span>
+                ) : (
+                  <>v{d.card_version}</>
+                )}
+              </td>
               <td>{d.plant}</td>
               <td className="small">
                 {d.columns.map((c) => (

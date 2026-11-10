@@ -33,6 +33,7 @@ from ..paths import as_path, read_yaml
 from . import admin as admin_api
 from . import catalog as catalog_api
 from . import runs as runs_api
+from . import uploads as uploads_api
 from .deps import Me, Svc, in_workspace
 from .identity import auth_mode
 from .jobs import LocalLauncher
@@ -246,7 +247,7 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
     app.state.launcher = launcher
     app.state.plugins = []
 
-    for r in (core, runs_api.router, catalog_api.router, admin_api.router):
+    for r in (core, runs_api.router, catalog_api.router, admin_api.router, uploads_api.router):
         app.include_router(r, prefix="/api")
     for name, r in plugin_routers():
         app.include_router(r, prefix=f"/api/ext/{name}")

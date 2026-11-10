@@ -207,6 +207,45 @@ def cmd_sources(a) -> None:
         time.sleep(every)
 
 
+def _upload(svc, user, workspace: str, project: str, file: str, plant: str | None = None,
+            description: str = "", time_zone: str = "") -> dict:
+    from . import uploads
+    from .workspace import ensure_project, project_dir
+
+    u = svc.access.resolve(user)
+    plants = svc.access.run_plants(u, workspace)
+    if plant and plant not in plants:
+        raise SystemExit(f"plant {plant!r} is not one {u.id} may read in workspace {workspace!r}")
+    path = Path(file)
+    if path.stat().st_size > svc.settings.upload_max_mb * 1024 * 1024:
+        raise SystemExit(f"{file} is larger than {svc.settings.upload_max_mb} MB (ALC_UPLOAD_MAX_MB)")
+    pdir = project_dir(svc.settings.workspace_root, workspace, project)
+    ensure_project(svc.settings.workspace_root, workspace, project, owner=u.id, plants=sorted(plants))
+    try:
+        rec = uploads.save(pdir, filename=path.name, source=path, user=u.id, plant=plant, description=description,
+                           time_zone=time_zone, taken=uploads.table_names(pdir))
+    except uploads.UploadError as e:
+        raise SystemExit(str(e)) from e
+    svc.catalog.audit(u.id, "upload.create", f"{workspace}/{project}/{rec['id']}",
+                      {"file": rec["file"]["name"], "sha256": rec["file"]["sha256"], "plant": plant,
+                       "tables": [t["name"] for t in rec["tables"]]})
+    print(f"Upload {rec['id']}: {rec['file']['name']}")
+    for t in rec["tables"]:
+        where = f"sheet {t['sheet']!r}, " if t.get("sheet") else ""
+        print(f"  ds.{t['name']}: {where}{t['rows']} rows, {len(t['columns'])} columns"
+              + (f", header in row {t['header_row']}" if t.get("header_row") else ""))
+        for n in t["notes"]:
+            print(f"    - {n}")
+    for sk in rec["skipped"]:
+        print(f"  skipped sheet {sk['sheet']!r}: {sk['reason']}")
+    return rec
+
+
+def cmd_upload(a) -> None:
+    svc = _svc()
+    _upload(svc, _user(a, svc), a.workspace, a.project, a.file, a.plant, a.description or "", a.time_zone or "")
+
+
 def cmd_ask(a) -> None:
     from .run import approve, ask
 
@@ -215,8 +254,11 @@ def cmd_ask(a) -> None:
     if a.plants:
         scope["plants"] = a.plants.split(",")
     user = _user(a, svc)
+    upload_ids = list(a.upload or [])
+    for f in a.file or []:
+        upload_ids.append(_upload(svc, user, a.workspace, a.project, f)["id"])
     out = ask(svc, user=user, workspace=a.workspace, project=a.project, question=a.question, scope=scope,
-              model=_model(a.model, "plan"))
+              model=_model(a.model, "plan"), upload_ids=upload_ids)
     print(f"Run {out['run_id']}: {out['status']} ({out['ended']})")
     if out["plan"]:
         _print(out["plan"])
@@ -676,7 +718,22 @@ def main(argv=None) -> None:
                    help="provider:model-id for the lead model (e.g. anthropic:claude-opus-5-5), or 'scripted' for the offline demo; default: the planning model for planning, the analysis model for analysis")
     k.add_argument("--reviewer-model", help="provider:model-id for the independent reviewer; default: the reviewer model (ALC_REVIEWER_MODEL)")
     k.add_argument("--auto-approve", action="store_true")
+    k.add_argument("--file", action="append", metavar="PATH",
+                   help="an Excel or CSV file to upload to the project and analyse with this question (repeatable)")
+    k.add_argument("--upload", action="append", metavar="UPLOAD_ID",
+                   help="a file already uploaded to the project (alchemist upload) to use (repeatable)")
     k.set_defaults(fn=cmd_ask)
+
+    up = sub.add_parser("upload", help="upload an Excel or CSV file to a project; each sheet becomes a ds.up_* table")
+    up.add_argument("file")
+    up.add_argument("--user")
+    up.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")
+    up.add_argument("--workspace", required=True)
+    up.add_argument("--project", required=True)
+    up.add_argument("--plant", help="the plant whose data the file holds; only people entitled to it can use it")
+    up.add_argument("--description", help="what the file holds, for the agent")
+    up.add_argument("--time-zone", help="time zone of the file's timestamps, e.g. Europe/Berlin")
+    up.set_defaults(fn=cmd_upload)
 
     ap = sub.add_parser("approve", help="approve (optionally edit) a plan and run the analysis")
     ap.add_argument("run_id")

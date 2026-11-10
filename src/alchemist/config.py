@@ -68,6 +68,8 @@ class Settings:
     # Providers plant data may be sent to. Anything else is refused unless listed (or '*').
     allowed_providers: list[str] = field(default_factory=lambda: [p.strip() for p in os.environ.get("ALC_ALLOWED_PROVIDERS", "bedrock").split(",") if p.strip()])
     effort: str = field(default_factory=lambda: os.environ.get("ALC_EFFORT", "high"))
+    # Largest data file (Excel, CSV) a person may upload to a project, in MB (uploads.py).
+    upload_max_mb: int = field(default_factory=lambda: int(os.environ.get("ALC_UPLOAD_MAX_MB", "200")))
     # Budgets per run.
     max_steps: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_STEPS", "60")))
     max_output_tokens_total: int = field(default_factory=lambda: int(os.environ.get("ALC_MAX_OUTPUT_TOKENS", "400000")))

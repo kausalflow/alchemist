@@ -147,6 +147,8 @@ class AskBody(BaseModel):
     project: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$")
     question: str = Field(min_length=5, max_length=4000)
     scope: dict[str, Any] = Field(default_factory=dict)
+    # Data files uploaded to the project (POST /projects/{workspace}/{project}/uploads) that the runs may query.
+    uploads: list[str] = Field(default_factory=list, max_length=50)
 
 
 @router.post("/questions", status_code=201)
@@ -156,9 +158,11 @@ def ask(body: AskBody, svc: Svc, me: Me, request: Request) -> dict:
 
     try:
         row = create(svc, user=me.user, workspace=body.workspace, project=body.project, question=body.question,
-                     scope=body.scope)
+                     scope=body.scope, upload_ids=body.uploads)
     except AccessDenied as e:
         raise access_error(e) from e
+    except ValueError as e:  # an upload that is not in the project
+        raise HTTPException(422, str(e)) from e
     except RunLimit as e:
         raise _limit_error(e) from e
     _launch(svc, request, row["run_id"], "plan")
@@ -228,6 +232,7 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
         "run": s,
         "entitled": True,
         "question": q,
+        "uploads": _uploads(run),
         "plan": q["plan"],
         "permissions": {
             "approve": row["status"] == "awaiting_approval" and is_owner,
@@ -249,7 +254,7 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
         "plan_history": _json(run / "logs" / "plan_history.json", []),
         "queries": [{"id": k, **v, "purpose": purposes.get(k, "")} for k, v in queries.items()],
         "datasets": [{"dataset": k, "card_version": v["card_version"], "plant": v["plant"], "format": v["format"],
-                      "columns": v["columns"]} for k, v in (_json(run / "inputs" / "views.json", {}) or {}).items()],
+                      "columns": v["columns"], **({"upload": v["upload"]} if v.get("upload") else {})} for k, v in (_json(run / "inputs" / "views.json", {}) or {}).items()],
         "knowledge": {"citations": _json(run / "logs" / "citations.json", []),
                       "structured": _json(run / "inputs" / "knowledge_index.json", [])},
         "review": _json(run / "logs" / "review.json"),
@@ -263,6 +268,23 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
         "failure": _failure(svc, run_id),
         "closed": _closed(svc, run_id),
     }
+
+
+def _uploads(run) -> list[dict]:
+    """The data files attached to the run's question: name, size, hash and tables."""
+    from .. import uploads
+
+    q = read_yaml(run.parent.parent / "question.yaml")
+    out = []
+    for uid in q.get("uploads") or []:
+        try:
+            rec = uploads.load(run.parent.parent.parent.parent, uid)
+        except KeyError:
+            continue
+        out.append({"id": uid, "file": rec["file"], "uploaded_by": rec["uploaded_by"], "plant": rec.get("plant"),
+                    "tables": [{k: t.get(k) for k in ("name", "sheet", "rows", "header_row", "notes")}
+                               for t in rec["tables"]]})
+    return out
 
 
 def _query_purposes(run) -> dict:
