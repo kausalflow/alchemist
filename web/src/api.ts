@@ -151,6 +151,7 @@ export interface RunSummary {
   plants?: string[];
   entitled: boolean;
   question?: string | null;
+  review_pause?: boolean;
 }
 
 export interface Hypothesis {
@@ -170,6 +171,7 @@ export interface Plan {
   approved_by?: string;
   approved_at?: string;
   time_limit_minutes?: number;
+  review_before_sealing?: boolean;
   submitted_at?: string;
   revises?: number;
 }
@@ -181,7 +183,7 @@ export interface RunNote {
   at: string;
   author: string;
   text: string;
-  kind: "note" | "send_back";
+  kind: "note" | "send_back" | "follow_up" | "more_time";
   status?: string;
   delivered: { phase: string; step: number | null; model_call: number | null; at: string } | null;
 }
@@ -265,6 +267,8 @@ export interface RunDetail {
   queue?: { state: "queued" | "running"; step: string; attempt: number; ahead?: number; worker?: string } | null;
   // The approved run's time limit, and the analysis's working time so far (null before its first step).
   time_limit?: { minutes: number; used_seconds: number | null; reached?: boolean } | null;
+  // Paused with its report built, for the asker to read and ask for more before it is sealed.
+  review_pause?: boolean;
   plan_history?: Plan[];
   conclusion_md?: string | null;
   conclusion_html?: string | null;

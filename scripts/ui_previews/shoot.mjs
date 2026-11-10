@@ -165,6 +165,11 @@ async function open(page, path) {
   await settle(page);
 }
 
+/** Switch between the simple and the detailed view (remembered in the browser, like a person's choice). */
+async function view(page, mode) {
+  await page.evaluate((m) => localStorage.setItem("alchemist.view", m), mode);
+}
+
 /** Open a report tab and scroll it to the top, so the shot shows the tab's content. */
 async function tab(page, label) {
   const t = page.getByRole("tab", { name: label });
@@ -228,6 +233,14 @@ await shoot(eng, "running");
 // A figure under the step that made it: the data-health check.
 await eng.locator("#step-4").evaluate((el) => el.scrollIntoView({ block: "start" }));
 await shoot(eng, "running-figure");
+// The notebook as it stands, next to the activity log; then the simple view, which leaves out code and SQL.
+await open(eng, `/runs/${runId}`);
+await eng.getByRole("button", { name: /^Notebook/ }).click();
+await shoot(eng, "running-notebook");
+await view(eng, "simple");
+await open(eng, `/runs/${runId}`);
+await shoot(eng, "running-simple");
+await view(eng, "detailed");
 if (HOLD && existsSync(HOLD)) rmSync(HOLD);
 
 await until("the sealed report", async () => ["completed", "partial"].includes(await status(eng, runId)), 120_000);
@@ -243,6 +256,12 @@ await tab(eng, "Notebook");
 await shoot(eng, "report-notebook");
 await tab(eng, "Provenance");
 await shoot(eng, "report-provenance");
+await view(eng, "simple");
+await open(eng, `/runs/${runId}`);
+await shoot(eng, "report-simple");
+await tab(eng, "Notebook");
+await shoot(eng, "report-notebook-simple");
+await view(eng, "detailed");
 
 const replay = await api(eng, "POST", `/runs/${runId}:replay`, { mode: "replay" });
 const replayId = replay.run_id ?? replay.run?.run_id;
@@ -280,7 +299,6 @@ await eng.getByText("Columns and first rows").first().click();
 await settle(eng);
 await eng.getByText("Data files (optional)").evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 24));
 await shoot(eng, "ask-data-files");
-await eng.context().close();
 
 // ---------------------------------------------------------------- the admin area
 
@@ -302,6 +320,22 @@ for (const page of ["workspaces", "access", "models"]) {
   await open(admin, `/admin/${page}`);
   await shoot(admin, `admin-${page}`);
 }
+
+// ---------------------------------------------------------------- review before sealing (last: it adds a run)
+
+const asked = await api(eng, "POST", "/questions", {
+  workspace: "quality",
+  project: "line2-quality",
+  question: "Why was quality low on Line 2 from 3 to 9 August 2026?",
+  scope: { line: "L2", plants: ["P01"], period: ["2026-08-03", "2026-08-09"] },
+});
+const reviewId = asked.run_id;
+await until("the second plan", async () => (await status(eng, reviewId)) === "awaiting_approval");
+await api(eng, "POST", `/runs/${reviewId}/plan:approve`, { review_before_sealing: true });
+await until("the report to review", async () => (await status(eng, reviewId)) === "paused", 120_000);
+await open(eng, `/runs/${reviewId}`);
+await shoot(eng, "review-ready");
+await eng.context().close();
 
 await browser.close();
 console.log(`${shots.length} screens, ${shots.length * 2} images in ${OUT}`);

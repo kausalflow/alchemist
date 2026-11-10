@@ -21,6 +21,7 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minutes, setMinutes] = useState<string>("");
+  const [reviewFirst, setReviewFirst] = useState(true);
   const { data: datasets } = useApi<DatasetSummary[]>("/datasets");
   const canApprove = !!run.permissions?.approve;
   const kept = plan.hypotheses.filter((_, i) => !dropped.has(i));
@@ -66,7 +67,7 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
     setBusy(true);
     setError(null);
     try {
-      const limit = minutes.trim() ? { time_limit_minutes: Number(minutes) } : {};
+      const limit = { ...(minutes.trim() ? { time_limit_minutes: Number(minutes) } : {}), review_before_sealing: reviewFirst };
       await api.post(`/runs/${run.run.run_id}/plan:approve`, edited ? { plan: finalPlan, ...limit } : limit);
       onApproved();
     } catch (e) {
@@ -318,6 +319,17 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
                 />
                 <span className="small muted" id="time-limit-help">
                   minutes of analysis, up to {meta.budgets.max_run_minutes_cap}. When it runs out, the agent stops and reports what it found.
+                </span>
+              </span>
+            </label>
+          )}
+          {canApprove && (
+            <label className="check-row">
+              <input type="checkbox" checked={reviewFirst} onChange={(e) => setReviewFirst(e.target.checked)} />
+              <span>
+                <span>Let me review the result before it is sealed</span>
+                <span className="small muted hint">
+                  When the agent has written its report, the run waits for you: read it and the notebook, then ask for more or finish it.
                 </span>
               </span>
             </label>

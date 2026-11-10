@@ -11,6 +11,8 @@ export interface RunTab {
   label: string;
   show: (run: RunDetail) => boolean;
   render: (run: RunDetail, reload: () => void) => ReactNode;
+  /** Hidden in the simple view (code, transcripts, hashes). */
+  technical?: boolean;
 }
 
 const done = (r: RunDetail) => TERMINAL.has(r.run.status);
@@ -30,8 +32,8 @@ export const runTabs: RunTab[] = [
   { id: "notes", label: "Notes", show: (r) => done(r) && !!r.notes?.length, render: (r) => <NotesTab run={r} /> },
   { id: "notebook", label: "Notebook", show: (r) => !!r.has_notebook, render: (r) => <NotebookTab run={r} /> },
   { id: "report", label: "Full report", show: (r) => !!r.has_report, render: (r) => <ReportTab run={r} /> },
-  { id: "steps", label: "Agent steps", show: () => true, render: (r) => <StepsTab run={r} /> },
-  { id: "provenance", label: "Provenance", show: (r) => !!r.manifest, render: (r, reload) => <ProvenanceTab run={r} reload={reload} /> },
+  { id: "steps", label: "Agent steps", show: () => true, render: (r) => <StepsTab run={r} />, technical: true },
+  { id: "provenance", label: "Provenance", show: (r) => !!r.manifest, render: (r, reload) => <ProvenanceTab run={r} reload={reload} />, technical: true },
 ];
 
 export function registerRunTab(tab: RunTab, before?: string) {

@@ -14,7 +14,7 @@ export function WaitingCards({ runs }: { runs: RunSummary[] }) {
       {runs.map((r) => (
         <Link key={r.run_id} to={`/runs/${r.run_id}`} className={`wait-card ${r.status === "awaiting_approval" ? "hot" : ""}`}>
           <div className="wait-top small">
-            <span className="warn-text strong">{r.status === "awaiting_approval" ? "Approve plan" : "Paused"}</span>
+            <span className="warn-text strong">{r.status === "awaiting_approval" ? "Approve plan" : r.review_pause ? "Review the result" : "Paused"}</span>
             <span className="mono faint">{shortId(r.run_id)}</span>
           </div>
           <div className="strong-ish">{r.question ?? r.run_id}</div>

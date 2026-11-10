@@ -7,7 +7,9 @@ import Icon from "../components/icons";
 import PlanEditor from "../components/PlanEditor";
 import StepList, { isReviewing } from "../components/StepList";
 import Stepper from "../components/Stepper";
-import { SteerPanel } from "../components/Steer";
+import { AskForMore, SteerPanel } from "../components/Steer";
+import NotebookView from "../components/Notebook";
+import { ViewToggle, useSimple } from "../viewMode";
 import { FigureStrip } from "../components/Visuals";
 import { QuestionRuns, ReproducePanel, VerdictPanel, useReplay } from "../components/tabs";
 import { runTabs } from "../runTabs";
@@ -115,9 +117,12 @@ export default function RunPage() {
             {r.mode} of <Link to={`/runs/${r.parent_run}`}>run {shortId(r.parent_run)}</Link>
           </span>
         )}
-        <span className="push">
+        <span className="push row-center">
+          <ViewToggle />
           <StatusChip status={r.status}>
-            {queued
+            {run.review_pause
+              ? "Ready for your review"
+              : queued
               ? "Queued"
               : r.status === "running" && toolCount
               ? `${reviewing ? "In review" : "Running"} · step ${toolCount}`
@@ -229,8 +234,11 @@ function RunningView({
   reload: () => void;
 }) {
   const { meta } = useSession();
+  const simple = useSimple();
+  const [view, setView] = useState<"activity" | "notebook">("activity");
   const r = run.run;
   const paused = r.status === "paused";
+  const reviewPause = paused && !!run.review_pause;
   const tools = steps.filter((s) => s.type === "tool").length;
   const tokens = steps.reduce((n, s) => n + (s.usage?.output_tokens ?? 0), 0);
   const found = new Map<string, number>();
@@ -255,12 +263,12 @@ function RunningView({
   const limits = meta
     ? [
         ...(tl ? [{ name: "Minutes", used: Math.floor(usedSeconds / 60), max: tl.minutes }] : []),
-        { name: "Tool calls", used: tools, max: meta.budgets.max_steps },
-        {
-          name: "Output tokens",
-          used: tokens,
-          max: meta.budgets.max_output_tokens,
-        },
+        ...(simple
+          ? []
+          : [
+              { name: "Tool calls", used: tools, max: meta.budgets.max_steps },
+              { name: "Output tokens", used: tokens, max: meta.budgets.max_output_tokens },
+            ]),
       ]
     : [];
 
@@ -297,14 +305,15 @@ function RunningView({
       </aside>
 
       <div className="center-col stack">
-        {atLimit && run.conclusion_html && (
-          <section aria-labelledby="prelim" className="panel pad stack-sm">
+        {(atLimit || reviewPause) && run.conclusion_html && (
+          <section aria-labelledby="prelim" className={`panel pad stack-sm ${reviewPause ? "review-ready" : ""}`}>
             <h2 id="prelim" className="h-panel">
-              Preliminary conclusion
+              {reviewPause ? "Ready for your review" : "Preliminary conclusion"}
             </h2>
             <div className="small muted">
-              The run reached its time limit of {tl?.minutes} minutes and concluded with what it had found. Give it
-              more time to carry on from here, or finish it with this report.
+              {reviewPause
+                ? "The agent has finished and its findings were reviewed. Read the conclusion, the figures and the notebook, then ask for more or finish the run. Nothing is sealed until you do."
+                : `The run reached its time limit of ${tl?.minutes} minutes and concluded with what it had found. Give it more time to carry on from here, or finish it with this report.`}
             </div>
             <article className="answer-body" dangerouslySetInnerHTML={{ __html: run.conclusion_html }} />
           </section>
@@ -313,15 +322,34 @@ function RunningView({
         <section aria-labelledby="log" className="panel">
           <div className="panel-head">
             <h2 id="log" className="h-panel">
-              {paused ? "What it did before pausing" : "What it is doing"}
+              {reviewPause ? "What it did" : paused ? "What it did before pausing" : "What it is doing"}
             </h2>
-            <span className="muted small">Every query and computation becomes a notebook cell in the run folder.</span>
-            {run.has_notebook && (
+            <div className="seg seg-sm" role="group" aria-label="Show">
+              <button type="button" aria-pressed={view === "activity"} onClick={() => setView("activity")}>
+                Activity
+              </button>
+              <button type="button" aria-pressed={view === "notebook"} onClick={() => setView("notebook")}>
+                Notebook{run.has_notebook ? "" : " (empty)"}
+              </button>
+            </div>
+            {run.has_notebook && !simple && (
               <a className="push small" href={fileUrl(r.run_id, "notebook.ipynb", true)}>
                 Download the notebook so far
               </a>
             )}
           </div>
+          <p className="muted small pad-x">
+            {view === "notebook"
+              ? "The notebook as it stands, updated after every step. Seen something worth following up? Ask for more on the right."
+              : simple
+                ? "What the agent is doing and why, with figures and data previews as they are made."
+                : "Every query and computation becomes a notebook cell in the run folder."}
+          </p>
+          {view === "notebook" ? (
+            <div className="pad-x">
+              <NotebookView runId={r.run_id} refresh={steps.length} live={!paused} />
+            </div>
+          ) : (
           <StepList
             steps={steps}
             runId={r.run_id}
@@ -334,6 +362,7 @@ function RunningView({
                   : undefined
             }
           />
+          )}
         </section>
       </div>
 
@@ -342,7 +371,8 @@ function RunningView({
           <h2 id="ctl" className="h-panel">
             Controls
           </h2>
-          {paused && (
+          {reviewPause && run.permissions?.resume && <AskForMore run={run} reload={reload} />}
+          {paused && !reviewPause && (
             <p className="small muted">
               {atLimit
                 ? `Paused at its time limit of ${tl?.minutes} minutes. `
@@ -394,7 +424,7 @@ function RunningView({
               </div>
             </form>
           )}
-          {run.permissions?.resume && !atLimit && (
+          {run.permissions?.resume && !atLimit && !reviewPause && (
             <>
               <button type="button" className="primary" onClick={act("resume")}>
                 <Icon name="play" /> Resume
@@ -404,7 +434,7 @@ function RunningView({
               </div>
             </>
           )}
-          {run.permissions?.stop && (
+          {run.permissions?.stop && !reviewPause && (
             <>
               <button type="button" className={atLimit ? "outline" : "danger"} onClick={act("stop")}>
                 <Icon name="stop" /> {atLimit ? "Finish with this report" : "Stop and write a partial report"}
@@ -420,7 +450,7 @@ function RunningView({
             <p className="small muted">Only {r.user_id} or an admin can pause, stop or steer this run.</p>
           )}
         </section>
-        <SteerPanel run={run} reload={reload} />
+        {!reviewPause && <SteerPanel run={run} reload={reload} />}
         {limits.length > 0 && (
           <section aria-labelledby="lim" className="panel pad stack-sm">
             <h2 id="lim" className="h-panel">
@@ -449,7 +479,7 @@ function RunningView({
                 </div>
               );
             })}
-            <p className="faint tiny">Minutes count the analysis's working time, against the limit it was approved with; tool calls and tokens are per run step. Admins set the defaults.</p>
+            {!simple && <p className="faint tiny">Minutes count the analysis's working time, against the limit it was approved with; tool calls and tokens are per run step. Admins set the defaults.</p>}
           </section>
         )}
       </aside>
@@ -461,7 +491,8 @@ function RunningView({
 
 function RunTabs({ run, reload }: { run: RunDetail; reload: () => void }) {
   const [params, setParams] = useSearchParams();
-  const tabs = runTabs.filter((t) => t.show(run));
+  const simple = useSimple();
+  const tabs = runTabs.filter((t) => t.show(run) && !(simple && t.technical));
   if (!tabs.length) return null;
   const tab = tabs.find((t) => t.id === params.get("tab")) ?? tabs[0];
   return (
@@ -492,6 +523,7 @@ function RunTabs({ run, reload }: { run: RunDetail; reload: () => void }) {
 function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
   const r = run.run;
   const { start, busy, error } = useReplay(run, reload);
+  const simple = useSimple();
   const supported = (run.findings ?? []).filter((f) => f.verdict === "supported");
   return (
     <div className="split">
@@ -551,7 +583,7 @@ function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
         <RunTabs run={run} reload={reload} />
       </div>
       <aside className="split-side stack">
-        <ReproducePanel run={run} />
+        {!simple && <ReproducePanel run={run} />}
         <QuestionRuns run={run} />
         {r.mode === "live" && (run.permissions?.verdict || !!run.verdicts?.length) && <VerdictPanel run={run} reload={reload} />}
       </aside>

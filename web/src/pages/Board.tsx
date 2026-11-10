@@ -231,7 +231,7 @@ function footer(r: RunSummary): [string, string] {
     case "running":
       return [`${kind ? `${kind} of run ${shortId(r.parent_run ?? "")}` : "Analysing"} · started ${relTime(r.created_at)}`, "info-text"];
     case "paused":
-      return [`Paused ${since}`, "warn-text"];
+      return [r.review_pause ? `Ready for your review ${since}` : `Paused ${since}`, "warn-text"];
     case "completed":
       return [`${kind ? `${kind} · ` : ""}Sealed ${since}${plants}`, "ok-text"];
     case "partial":
