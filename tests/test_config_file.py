@@ -84,3 +84,14 @@ def test_scoped_kernels_never_inherit_alchemist_profiles(tmp_path):
     with pytest.raises(BrokerDenied):
         credential_process(kernel)
     assert kernel == {}  # the broker never resolves through the caller's own profile
+
+
+def test_double_quoted_windows_path_gets_a_hint(clean_env, tmp_path):
+    f = tmp_path / "win.yaml"
+    f.write_text('ALC_MAX_STEPS: 3\nALC_KNOWLEDGE: "C:\\Users\\L\\alchemist-home"\n')
+    with pytest.raises(ValueError, match="single quotes") as e:
+        config.apply_config_file(str(f))
+    assert "not valid YAML" in str(e.value)
+    f.write_text("ALC_KNOWLEDGE: 'C:\\Users\\L\\alchemist-home'\n")
+    config.apply_config_file(str(f))
+    assert os.environ["ALC_KNOWLEDGE"] == "C:\\Users\\L\\alchemist-home"

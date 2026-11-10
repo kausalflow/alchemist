@@ -43,12 +43,17 @@ is the simplest: only Alchemist reads it.
 
 ```yaml
 # C:\alc\alchemist.yaml
-ALC_HOME: C:\alc
+ALC_HOME: 'C:\alc'                   # single quotes: see below
 ALC_BEDROCK_PROFILE: alchemist-models
 ALC_BEDROCK_REGION: eu-central-1
 ALC_AWS_PROFILE: alchemist-data       # storage; not needed while the demo uses local files
 ALC_AWS_REGION: eu-central-1
 ```
+
+Write Windows paths in single quotes (or no quotes). Inside double quotes YAML reads a backslash as an escape, so
+`"C:\Users\..."` fails with "expected escape sequence"; Alchemist says so when it reads the file. Keep `ALC_HOME`
+short on Windows (about 65 characters or less, such as `C:\alc` or `C:\Users\<you>\alchemist-home`): run folders nest
+deeply, and Windows limits paths to 259 characters unless long paths are enabled. Alchemist warns when it is too deep.
 
 A variable set in the environment wins over the file, for a one-off change in one shell. Then sign in:
 
