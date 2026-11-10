@@ -71,6 +71,36 @@ missing values, so gaps or odd data stand out before any statistics run.
 ![Running: a figure under its step](assets/ui/running-figure-light.png#only-light)
 ![Running: a figure under its step](assets/ui/running-figure-dark.png#only-dark)
 
+### Running: the notebook as it stands
+
+Notebook, next to Activity, shows the run's notebook as it is now, cell by cell with outputs and figures, and
+updates after every step. Seen something worth following up? Steer or ask for more leaves the agent a note: it
+reads it before its next step, and if it has already written its report, it does what you asked, has the new work
+reviewed and reports again.
+
+![Running: the live notebook](assets/ui/running-notebook-light.png#only-light)
+![Running: the live notebook](assets/ui/running-notebook-dark.png#only-dark)
+
+### Simple view
+
+Simple, at the top of every run, hides code, SQL, tool names, token counts and the Agent steps and Provenance tabs,
+and keeps the story: what the agent is doing and why, figures, data previews, findings and the report. In the
+notebook each step shows its purpose and results, with the code behind Show code. Detailed shows everything. The
+choice is remembered in your browser.
+
+![Running in the simple view](assets/ui/running-simple-light.png#only-light)
+![Running in the simple view](assets/ui/running-simple-dark.png#only-dark)
+
+### Ready for your review
+
+With **Let me review the result before it is sealed** ticked at approval (the default in the app), the run pauses
+once the agent has written its report and its findings were reviewed. Read the conclusion, figures and notebook,
+then **Ask for more**: the agent continues with the same notebook and findings, and its new report comes back to you.
+Or **Finish and seal this report**. Runs waiting like this are under Waiting on you.
+
+![Ready for your review](assets/ui/review-ready-light.png#only-light)
+![Ready for your review](assets/ui/review-ready-dark.png#only-dark)
+
 ### Sealed report
 
 The answer comes first, then the findings that every number in it comes from. Beside them: how to reproduce the run, other runs of the same question, and your verdict.
@@ -105,6 +135,11 @@ Every executed cell with its outputs; download `notebook.ipynb` to run it yourse
 
 ![Report: Notebook](assets/ui/report-notebook-light.png#only-light)
 ![Report: Notebook](assets/ui/report-notebook-dark.png#only-dark)
+
+In the simple view the notebook shows each step's purpose and results, with code and raw rows folded away.
+
+![Report: Notebook in the simple view](assets/ui/report-notebook-simple-light.png#only-light)
+![Report: Notebook in the simple view](assets/ui/report-notebook-simple-dark.png#only-dark)
 
 ### Report: Provenance
 

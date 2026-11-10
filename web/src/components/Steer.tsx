@@ -9,11 +9,15 @@ export function noteState(run: RunDetail, n: RunNote): { text: string; waiting: 
   if (d) {
     if (d.phase === "planning")
       return { text: n.kind === "send_back" ? "Read while revising the plan" : "Read while planning", waiting: false };
-    return { text: d.step ? `Read after step ${d.step}` : "Read when the analysis started", waiting: false };
+    return {
+      text: d.step ? `Read after step ${d.step}` : n.kind === "follow_up" ? "Read when the analysis continued" : "Read when the analysis started",
+      waiting: false,
+    };
   }
   const s = run.run.status;
   if (TERMINAL.has(s)) return { text: "Not read: the run ended first", waiting: false };
-  if (s === "paused") return { text: "Read when the run resumes", waiting: true };
+  if (s === "paused")
+    return { text: run.review_pause ? "Read when you ask for more" : "Read when the run resumes", waiting: true };
   if (s === "awaiting_approval") return { text: "Read when the analysis starts", waiting: true };
   return { text: "Read before its next step", waiting: true };
 }
@@ -28,6 +32,8 @@ export function NoteList({ run, notes, newestFirst = false }: { run: RunDetail; 
             <span className="small">
               <span className="strong">{n.author}</span> <span className="faint">{when(n.at)}</span>
               {n.kind === "send_back" && <span className="faint"> · sent the plan back</span>}
+              {n.kind === "follow_up" && <span className="faint"> · asked for more after the report</span>}
+              {n.kind === "more_time" && <span className="faint"> · gave more time</span>}
             </span>
             <span className="note-text">{n.text}</span>
             <span className={`tiny ${st.waiting ? "warn-text" : "faint"}`}>{st.text}</span>
@@ -64,7 +70,7 @@ export function SteerPanel({ run, reload }: { run: RunDetail; reload: () => void
   return (
     <section aria-labelledby="steer" className="panel pad stack-sm">
       <h2 id="steer" className="h-panel">
-        Steer the agent
+        {status === "running" ? "Steer or ask for more" : "Steer the agent"}
       </h2>
       {run.permissions?.note && (
         <>
@@ -74,7 +80,11 @@ export function SteerPanel({ run, reload }: { run: RunDetail; reload: () => void
               rows={3}
               value={text}
               maxLength={4000}
-              placeholder="For example: the melt-flow sensor drifted in March, exclude those readings."
+              placeholder={
+                status === "running"
+                  ? "For example: also plot melt flow by resin lot, or exclude the March sensor readings."
+                  : "For example: the melt-flow sensor drifted in March, exclude those readings."
+              }
               onChange={(e) => setText(e.target.value)}
             />
           </label>
@@ -87,7 +97,7 @@ export function SteerPanel({ run, reload }: { run: RunDetail; reload: () => void
               ? "The agent reads it when the run resumes."
               : status === "planning"
                 ? "The agent reads it before its next step and drafts the plan with it."
-                : "The agent reads it before its next step and takes it into account from there."}{" "}
+                : "The agent reads it before its next step and takes it into account from there. If it has already written its report, it does what you asked and reports again."}{" "}
             Every note is kept with the run and shown in its report.
           </div>
         </>
@@ -106,6 +116,53 @@ export function NotesTab({ run }: { run: RunDetail }) {
         notebook and the agent steps show what it did after each note.
       </p>
       <NoteList run={run} notes={run.notes ?? []} />
+    </div>
+  );
+}
+
+/** A run paused with its report, for the asker to read: ask for more (the analysis continues with the note, and reports
+ * again), or finish and seal it as it is. */
+export function AskForMore({ run, reload }: { run: RunDetail; reload: () => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const go = async (finish: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (finish) await api.post(`/runs/${run.run.run_id}:stop`);
+      else await api.post(`/runs/${run.run.run_id}:resume`, { note: text });
+      setText("");
+      reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="stack-sm">
+      <label className="field">
+        <span className="field-label">What more should it do?</span>
+        <textarea
+          rows={4}
+          value={text}
+          maxLength={4000}
+          placeholder="For example: check whether the supplier change lines up with the drop, and plot it."
+          onChange={(e) => setText(e.target.value)}
+        />
+      </label>
+      <ErrorNote error={error} />
+      <button type="button" className="primary" onClick={() => go(false)} disabled={busy || !text.trim()}>
+        <Icon name="play" /> Ask for more
+      </button>
+      <div className="small muted">
+        It carries on from here with the same notebook and findings, has the new work reviewed, and writes a new report, which comes back
+        to you.
+      </div>
+      <button type="button" className="outline" onClick={() => go(true)} disabled={busy}>
+        <Icon name="check" /> Finish and seal this report
+      </button>
     </div>
   );
 }

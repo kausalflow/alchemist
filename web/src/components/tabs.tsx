@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { api, fileUrl, type NotebookCell, type RunDetail, type RunSummary, type Step } from "../api";
+import { api, fileUrl, type RunDetail, type RunSummary, type Step } from "../api";
 import { useApi, useSession } from "../session";
 import { Chip, Code, Collapsible, ErrorNote, day, fmtValue, shortId, statusLabel, when } from "./bits";
 import Icon from "./icons";
 import StepList from "./StepList";
+import NotebookView from "./Notebook";
+import { useSimple } from "../viewMode";
 
 // ------------------------------------------------------------------ answer
 
@@ -378,47 +380,18 @@ function SnapshotPreview({ runId, queryId }: { runId: string; queryId: string })
 // ------------------------------------------------------------------ notebook
 
 export function NotebookTab({ run }: { run: RunDetail }) {
-  const { data, error } = useApi<{ cells: NotebookCell[] }>(`/runs/${run.run.run_id}/notebook`);
   const [params] = useSearchParams();
-  const focus = params.get("cell");
-  useEffect(() => {
-    if (data && focus) document.getElementById(`cell-${focus}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [data, focus]);
+  const simple = useSimple();
   return (
     <div>
       <p className="muted small">
-        Every query, computation and finding the agent ran, in order, with its outputs. Download{" "}
-        <a href={fileUrl(run.run.run_id, "notebook.ipynb", true)}>notebook.ipynb</a> to open it in Jupyter; set{" "}
-        <code>run_mode = 'replay'</code> in its first cell to re-run it on the stored snapshots.
+        {simple
+          ? "Every step the agent took, in order, with what it found. Open Show code under a step to see how it was done."
+          : "Every query, computation and finding the agent ran, in order, with its outputs."}{" "}
+        Download <a href={fileUrl(run.run.run_id, "notebook.ipynb", true)}>notebook.ipynb</a> to open it in Jupyter
+        {simple ? "." : <>; set <code>run_mode = 'replay'</code> in its first cell to re-run it on the stored snapshots.</>}
       </p>
-      <ErrorNote error={error} />
-      {data?.cells.map((c, i) => {
-        const anchor = c.meta.finding_id ?? c.meta.query_id ?? c.meta.cell_id ?? `md${i}`;
-        const hl = focus && (focus === c.meta.finding_id || focus === c.meta.cell_id || focus === c.meta.query_id);
-        if (c.type === "markdown")
-          return (
-            <div key={i} className="nbmd">
-              {c.source}
-            </div>
-          );
-        return (
-          <div key={i} id={`cell-${anchor}`} className={`nbcell ${hl ? "highlight" : ""}`}>
-            <div className="nbmeta small">
-              <code>{c.meta.cell_id}</code> <Chip>{c.meta.kind ?? "code"}</Chip> {c.meta.query_id} {c.meta.finding_id} {c.meta.purpose}
-            </div>
-            <Code lang="python">{c.source}</Code>
-            {c.outputs.map((o, j) =>
-              o.type === "image" ? (
-                <img key={j} src={`data:image/png;base64,${o.png}`} alt={`output of ${c.meta.cell_id}`} />
-              ) : (
-                <pre key={j} className={`nbout ${o.type === "error" ? "err" : ""}`}>
-                  {o.text}
-                </pre>
-              ),
-            )}
-          </div>
-        );
-      })}
+      <NotebookView runId={run.run.run_id} focus={params.get("cell")} />
     </div>
   );
 }

@@ -58,6 +58,10 @@ def _summary(svc, me, row: dict) -> dict:
         out["question"] = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")["text"]
     except (FileNotFoundError, OSError, KeyError, TypeError):
         out["question"] = None
+    if row["status"] == "paused":
+        from ..run import paused_for_review
+
+        out["review_pause"] = paused_for_review(row["path"])
     return out
 
 
@@ -223,6 +227,7 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
     children = [_summary(svc, me, r) for r in svc.catalog.runs() if r["parent_run"] == run_id]
     is_owner = me.user.id == q["asker"] or me.user.is_admin
     owns = me.user.id == row["user_id"] or me.user.is_admin
+    from ..run import paused_for_review
     from ..steering import NOTE_STATUSES, record
     return {
         "run": s,
@@ -242,6 +247,7 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
         # With the run queue: whether its current step waits for a worker (and behind how many) or which one runs it.
         "queue": _queue_position(request, run_id) if row["status"] in ("planning", "running") else None,
         "time_limit": _time_limit(svc, run, q["plan"], row["status"]),
+        "review_pause": row["status"] == "paused" and paused_for_review(run),
         "conclusion_md": conclusion_md,
         "conclusion_html": markdown.markdown(conclusion_md, extensions=["tables"]) if conclusion_md else None,
         "findings": findings,
@@ -460,6 +466,8 @@ class ApproveBody(BaseModel):
     plan: dict[str, Any] | None = None  # the edited plan; omitted means approve as proposed
     # How long the analysis may work, up to the admins' cap; omitted means the default (GET /meta budgets).
     time_limit_minutes: int | None = None
+    # Pause when the report is built, so the asker can read it and ask for more before the run is sealed.
+    review_before_sealing: bool = False
 
 
 @router.post("/runs/{run_id}/plan:approve")
@@ -476,7 +484,8 @@ def approve(run_id: str, body: ApproveBody, svc: Svc, me: Me, request: Request) 
         if unknown:
             raise HTTPException(422, f"datasets not available to this run: {unknown}")
     try:
-        plan = start_approval(svc, run_id, user=me.user, plan=body.plan, time_limit_minutes=body.time_limit_minutes)
+        plan = start_approval(svc, run_id, user=me.user, plan=body.plan, time_limit_minutes=body.time_limit_minutes,
+                              review_before_sealing=body.review_before_sealing)
     except AccessDenied as e:
         raise access_error(e) from e
     except RunLimit as e:
@@ -582,18 +591,21 @@ def pause_run(run_id: str, svc: Svc, me: Me) -> dict:
 
 class ResumeBody(BaseModel):
     more_minutes: int | None = None
+    # What to do next, for the agent as it continues; needed when the run paused for review (asking for more).
+    note: str | None = Field(default=None, max_length=4000)
 
 
 @router.post("/runs/{run_id}:resume")
 def resume_run(run_id: str, svc: Svc, me: Me, request: Request, body: ResumeBody | None = None) -> dict:
     """Continue a paused run from its last step: a fresh kernel re-runs the notebook on its stored snapshots, then the
     agent carries on. `more_minutes` gives it more working time (up to the cap); a run paused at its time limit gets
-    the default if it is left out."""
+    the default if it is left out. `note` is what to do next; a run paused for review needs one."""
     from ..run import RunLimit, TimeLimitError, resume
 
     entitled_run(svc, me, run_id)
     try:
-        resume(svc, run_id, user=me.user, more_minutes=body.more_minutes if body else None)
+        resume(svc, run_id, user=me.user, more_minutes=body.more_minutes if body else None,
+               note=body.note if body else None)
     except AccessDenied as e:
         raise HTTPException(403, str(e)) from e
     except RunLimit as e:

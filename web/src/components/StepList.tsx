@@ -1,6 +1,7 @@
 import type { Step } from "../api";
 import { Code, Collapsible } from "./bits";
 import { QueryPreviewView, StepFigures } from "./Visuals";
+import { useSimple } from "../viewMode";
 
 const VERB: Record<string, string> = {
   search_catalog: "Searched the catalog",
@@ -36,14 +37,19 @@ export function describe(s: Step): string {
   const inp = s.input ?? {};
   const purpose = (inp.purpose as string) || (inp.query as string) || (inp.statement as string) || (inp.summary as string) || "";
   const h = typeof inp.hypothesis === "string" ? `${inp.hypothesis}: ` : "";
-  return `${VERB[s.tool ?? ""] ?? s.tool}${purpose ? `: ${h}${purpose}` : ""}`;
+  const verb = VERB[s.tool ?? ""] ?? (s.tool?.startsWith("penguineer_") ? `Ran a statistics check (${s.tool.slice(11).replace(/_/g, " ")})` : s.tool);
+  return `${verb}${purpose ? `: ${h}${purpose}` : ""}`;
 }
 
 /** True once the agent has handed its findings to the reviewer (or is building the report). */
 export const isReviewing = (steps: Step[]) => steps.some((s) => s.tool === "finish_analysis" || s.tool === "build_report");
 
+/** Plain words for the badges in the simple view. */
+const SIMPLE_KIND: Record<string, string> = { note: "agent", steer: "you", compute: "calculation", query: "data", tool: "step" };
+
 /** Model turns and tool calls as an activity log, newest last. Code and SQL are shown in full; outputs are what the model
- * saw. With `runId`, figures and query previews are shown under the step that made them. */
+ * saw. With `runId`, figures and query previews are shown under the step that made them. The simple view leaves out
+ * code, SQL, tool names and raw results, and keeps the story, figures and previews. */
 export default function StepList({
   steps,
   live = false,
@@ -55,6 +61,7 @@ export default function StepList({
   liveText?: string;
   runId?: string;
 }) {
+  const simple = useSimple();
   const shown = steps.filter((s) => s.type !== "model" || (s.text && s.text.trim()));
   if (!shown.length && !live) return <p className="muted pad">No steps recorded.</p>;
   let n = 0;
@@ -72,22 +79,24 @@ export default function StepList({
             className={`log-row ${s.is_error ? "err" : ""} ${kind === "note" || kind === "steer" ? kind : ""}`}
           >
             <span className="mono faint small">{s.type === "tool" ? `#${n}` : ""}</span>
-            <span className={`kind k-${kind}`}>{kind === "note" ? "model" : kind === "steer" ? "person" : kind}</span>
+            <span className={`kind k-${kind}`}>
+              {simple ? (SIMPLE_KIND[kind] ?? kind) : kind === "note" ? "model" : kind === "steer" ? "person" : kind}
+            </span>
             <div className="log-body">
               <div className={kind === "note" ? "muted" : kind === "steer" ? "steer-text" : ""}>
                 {describe(s)}
                 {s.is_error && (
                   <>
                     {" "}
-                    <span className="pill bad">error</span>
+                    <span className={`pill ${simple ? "warn" : "bad"}`}>{simple ? "did not work, retried" : "error"}</span>
                   </>
                 )}
               </div>
-              {sql && <Code lang="sql">{sql}</Code>}
-              {code && <Code lang="python">{code}</Code>}
+              {!simple && sql && <Code lang="sql">{sql}</Code>}
+              {!simple && code && <Code lang="python">{code}</Code>}
               {runId && s.meta?.preview && <QueryPreviewView p={s.meta.preview} />}
               {runId && !!s.meta?.figures?.length && <StepFigures runId={runId} figures={s.meta.figures} />}
-              {s.type === "tool" && (s.tool === "record_finding" || s.tool === "submit_plan" || s.tool === "build_report" || s.output) && (
+              {!simple && s.type === "tool" && (s.tool === "record_finding" || s.tool === "submit_plan" || s.tool === "build_report" || s.output) && (
                 <Collapsible title={<span className="small">{s.output ? "Input and result" : "Input"}</span>}>
                   {(s.tool === "record_finding" || s.tool === "submit_plan" || s.tool === "build_report") && (
                     <Code>{JSON.stringify(s.input, null, 2)}</Code>
@@ -100,7 +109,8 @@ export default function StepList({
                   )}
                 </Collapsible>
               )}
-              {s.type === "tool" && (
+              {simple && s.type === "tool" && s.at ? <div className="faint tiny">{clock(s.at)}</div> : null}
+              {!simple && s.type === "tool" && (
                 <div className="mono faint tiny">
                   {s.tool}
                   {s.seconds !== undefined && s.seconds !== null && ` · ${s.seconds}s`}

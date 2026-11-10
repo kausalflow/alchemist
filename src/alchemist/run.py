@@ -175,6 +175,7 @@ class RunContext:
         self.review_requested = False
         self.wrap_up_for: float | None = None  # the time limit (s) whose wrap-up note the agent has received
         self.wrapping_up = False  # this step told the agent to conclude with what it has
+        self.reopened = False  # a note reached the agent after it built its report: it carries on and reports again
         self.models: dict = {"prompts": prompts.prompt_version()}
         logs = self.run / "logs" / "citations.json"
         if logs.exists():
@@ -449,26 +450,44 @@ def pause(svc: Services, run_id: str, *, user: "str | User") -> None:
     svc.catalog.audit(u.id, "run.pause", run_id)
 
 
-def paused_at_time_limit(run) -> bool:
-    """Whether the run paused because it reached its time limit (then it waits for more time, or to be finished)."""
+def _analysis_ended(run) -> str:
     f = as_path(run) / "manifest.json"
     try:
-        return f.exists() and str(read_json(f).get("analysis_ended", "")).startswith(TIME_LIMIT_PAUSE)
+        return str(read_json(f).get("analysis_ended", "")) if f.exists() else ""
     except (json.JSONDecodeError, FileNotFoundError):
-        return False
+        return ""
 
 
-def resume(svc: Services, run_id: str, *, user: "str | User", more_minutes: int | None = None) -> None:
+def paused_at_time_limit(run) -> bool:
+    """Whether the run paused because it reached its time limit (then it waits for more time, or to be finished)."""
+    return _analysis_ended(run).startswith(TIME_LIMIT_PAUSE)
+
+
+def paused_for_review(run) -> bool:
+    """Whether the run paused with its report built, for a person to read it before it is sealed (then they ask for
+    more, or finish it)."""
+    return _analysis_ended(run).startswith(REVIEW_PAUSE)
+
+
+def resume(svc: Services, run_id: str, *, user: "str | User", more_minutes: int | None = None,
+           note: str | None = None) -> None:
     """Mark a paused run running again; the caller hands it to the launcher's resume(), whose analysis step picks
     up from the checkpoint.
 
     `more_minutes` gives the analysis that much more working time (up to the cap), counted from the time it has
-    used; a run paused at its time limit gets the default (`max_run_minutes`) if no one says. The agent is told."""
+    used; a run paused at its time limit gets the default (`max_run_minutes`) if no one says. The agent is told.
+
+    `note` is what to do next, given to the agent as it continues. A run paused for review needs one (it asks for
+    more work after the report); to finish that run as it is, stop it."""
     row = svc.catalog.run(run_id)
     u = _owner(svc, row, user, "resume")
     if row["status"] != "paused":
         raise ValueError(f"run {run_id} is {row['status']}, not paused")
     run = as_path(row["path"])
+    note = (note or "").strip()
+    for_review = paused_for_review(run)
+    if for_review and not note:
+        raise ValueError("say what more the agent should do; to finish the run with this report, stop it")
     if more_minutes is None and paused_at_time_limit(run):
         more_minutes = svc.settings.max_run_minutes
     more = check_time_limit(svc, more_minutes) if more_minutes is not None else None
@@ -487,6 +506,8 @@ def resume(svc: Services, run_id: str, *, user: "str | User", more_minutes: int 
                                                        "more_minutes": more})
         steering.add(svc, run_id, author=u.id, kind="more_time", phase="paused",
                      text=f"{more} more minutes (the time limit is now {after} minutes of working time)")
+    if note:
+        steering.add(svc, run_id, author=u.id, text=note, kind="follow_up" if for_review else "note", phase="paused")
     svc.catalog.audit(u.id, "run.resume", run_id)
     update_question(qdir, status="running")
 
@@ -648,6 +669,7 @@ WRAP_UP = ("Time is nearly up: about {left} of this run's {limit}-minute limit r
            "preliminary report; a person can give it more time, and you would continue from here.")
 PRELIMINARY = "Preliminary:"
 TIME_LIMIT_PAUSE = "paused: time limit"
+REVIEW_PAUSE = "paused: ready for review"
 
 
 def preliminary_note(plan: dict | None) -> str:
@@ -680,15 +702,19 @@ class TimeLimitError(ValueError):
 
 def approve(svc: Services, run_id: str, *, user: "str | User", plan: dict | None = None, model: Model | None = None,
             reviewer: Model | None = None, should_stop: Callable[[], bool] | None = None,
-            time_limit_minutes: int | None = None) -> dict:
-    start_approval(svc, run_id, user=user, plan=plan, time_limit_minutes=time_limit_minutes)
+            time_limit_minutes: int | None = None, review_before_sealing: bool = False) -> dict:
+    start_approval(svc, run_id, user=user, plan=plan, time_limit_minutes=time_limit_minutes,
+                   review_before_sealing=review_before_sealing)
     return analyse(svc, run_id, user=getattr(user, "id", user), model=model, reviewer=reviewer, should_stop=should_stop)
 
 
 def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict | None = None,
-                   time_limit_minutes: int | None = None) -> dict:
+                   time_limit_minutes: int | None = None, review_before_sealing: bool = False) -> dict:
     """Record the approval (with the user's edits, if any, and the run's time limit) and mark the run running.
-    Returns the approved plan."""
+    Returns the approved plan.
+
+    `review_before_sealing`: when the agent has built its report, the run pauses so a person can read it and ask for
+    more before it is sealed."""
     minutes = check_time_limit(svc, time_limit_minutes)
     row = svc.catalog.run(run_id)
     if row["status"] != "awaiting_approval":
@@ -702,19 +728,21 @@ def start_approval(svc: Services, run_id: str, *, user: "str | User", plan: dict
     if not svc.catalog.transition(run_id, "awaiting_approval", "running"):  # approved twice at once, or cancelled
         raise ValueError(f"run {run_id} is {svc.catalog.run(run_id)['status']}, not awaiting approval")
     try:
-        return _record_approval(svc, row, user, plan, minutes)
+        return _record_approval(svc, row, user, plan, minutes, review_before_sealing)
     except Exception as e:  # the run must not look busy when nothing will run it
         end_run(svc, run_id, "failed", actor="system", reason=f"approval failed: {type(e).__name__}: {e}",
                 from_status=("running",))
         raise
 
 
-def _record_approval(svc: Services, row: dict, user: str, plan: dict | None, minutes: int) -> dict:
+def _record_approval(svc: Services, row: dict, user: str, plan: dict | None, minutes: int,
+                     review_before_sealing: bool = False) -> dict:
     run_id = row["run_id"]
     ctx = RunContext(svc, row, user=user)
     if plan is not None:  # the user edited the plan
         ctx.plan = {**plan, "version": (ctx.plan or {}).get("version", 1) + 1}
-    ctx.plan = {**ctx.plan, "approved_by": user, "approved_at": now(), "time_limit_minutes": minutes}
+    ctx.plan = {**ctx.plan, "approved_by": user, "approved_at": now(), "time_limit_minutes": minutes,
+                "review_before_sealing": bool(review_before_sealing)}
     update_question(ctx.qdir, plan=ctx.plan, status="running")
     svc.catalog.audit(user, "plan.approve", run_id)
 
@@ -781,6 +809,7 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     ctx.models.update(planned_models(ctx.run), analysis=model.name, reviewer=reviewer.name)
     budget = RunBudget(s.max_steps, s.max_output_tokens_total, max_seconds=time_limit(svc, ctx.plan) * 60)
     saved = checkpoint_of(ctx.run)
+    from_review = bool(saved) and paused_for_review(ctx.run)  # resumed after a person read the report
     # Notes are delivered once: a resumed step starts from its checkpoint's list (a note given in a turn that never
     # completed is given again), a new one from the notes the planning step delivered.
     delivered = saved.get("steering", steering.delivered_in(ctx.run)) if saved else [
@@ -793,6 +822,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
             ctx.credentials = sb.kernel.credentials
         if saved:
             replay_errors = _restore(ctx, sb, budget, model, saved)
+            if from_review:  # what the person asks for gets its own review before the next report
+                ctx.review_requested = False
             svc.catalog.audit("system", "run.resumed", run_id, {"cells": saved["notebook"]["cells"],
                                                                  "steps": budget.steps, "cell_errors": replay_errors})
         else:
@@ -814,9 +845,10 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
         methods = get_registry().method_docs()
         if methods:
             first += f"\nAnalysis methods available in the kernel as alc.methods.<name>(...): {json.dumps(methods)}"
+        model_calls_at_start = budget.model_calls
         try:
             ended = run_loop(model, system=prompts.ANALYSIS_SYSTEM, tools=prompts.tool_list(prompts.ANALYSIS_TOOLS, extra_tools),
-                             handlers=handlers, first_message=first, done=lambda: ctx.report_out is not None,
+                             handlers=handlers, first_message=first, done=lambda: _done(ctx),
                              budget=budget, transcript=as_path(ctx.run / "logs" / "transcript.jsonl"), write_text=write_text, should_stop=should_stop,
                              checkpoint=lambda state: _save_checkpoint(ctx, sb, budget, state), resume=saved,
                              steer=lambda: _steer(ctx, budget))
@@ -830,6 +862,16 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
         out_of_time = ended.startswith("budget: time limit") or (ended == "done" and ctx.wrapping_up)
         if out_of_time and not stopping and checkpoint_of(ctx.run):
             ended = f"{TIME_LIMIT_PAUSE} of {time_limit(svc, ctx.plan)} minutes reached"
+        elif ended == "done" and not stopping and ctx.plan.get("review_before_sealing") and checkpoint_of(ctx.run):
+            ended = f"{REVIEW_PAUSE}: the report is built and waits for a person to read it before it is sealed"
+        if from_review and ended.startswith("stopped") and budget.model_calls == model_calls_at_start:
+            # Stopped at review without asking for more: the reviewed report stands, as the agent built it.
+            try:
+                ctx.review_requested = True
+                if ctx.build_report(read_json(ctx.run / "logs" / "report_input.json")).is_error is False:
+                    ended = "done"
+            except Exception:
+                log.exception("rebuilding the reviewed report of run %s failed", run_id)
         try:
             if ctx.report_out is None and ctx._findings() and not ended.startswith("paused") \
                     or ended.startswith(TIME_LIMIT_PAUSE) and ctx.report_out is None and ctx._findings():
@@ -842,9 +884,23 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
     return _finish(svc, ctx, status, usage=budget.as_dict(), extra={"analysis_ended": ended})
 
 
+def _done(ctx: RunContext) -> bool:
+    """The analysis is done once the report is built, unless a note arrived that the agent has not read: then it
+    carries on (and is told to review and report again), so asking for more as it finishes is not lost. Near the
+    time limit the note waits for the person to give it more time."""
+    if ctx.report_out is None:
+        return False
+    if ctx.wrapping_up or not ctx.steering or not ctx.steering.pending():
+        return True
+    ctx.report_out, ctx.review_requested, ctx.reopened = None, False, True
+    return False
+
+
 def _steer(ctx: RunContext, budget: "RunBudget") -> dict | None:
     """Notes from people following the run, and once per time limit, near its end, the note to conclude."""
-    note = ctx.steering() if ctx.steering else None
+    note = ctx.steering(after_report=ctx.reopened) if ctx.steering else None
+    if note:
+        ctx.reopened = False
     limit = budget.max_seconds
     if not limit or ctx.wrap_up_for == limit or budget.seconds < limit - wrap_up_seconds(limit):
         return note

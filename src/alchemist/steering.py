@@ -3,7 +3,8 @@
 A note is an audit event (`run.note`) in the database, so the API can add one whichever process runs the step.
 Before every model call the step checks for new notes (as it checks for pause and stop) and appends them to the
 conversation; the agent takes them into account from its next turn. Sending a plan back for revision is a note of
-kind "send_back" that also returns the run to planning.
+kind "send_back" that also returns the run to planning. A note that arrives after the agent built its report
+reopens the analysis, and a run paused for review continues with a note of kind "follow_up".
 
 Each delivery is written to the run folder (logs/steering.json) and kept in the step's checkpoint, so a note is
 delivered once even across pauses and crashes, and the sealed run records every note, who wrote it, and the step
@@ -56,10 +57,21 @@ def record(svc, run_id: str, run) -> list[dict]:
              if n["id"] in got else None} for n in notes(svc, run_id)]
 
 
-def for_model(notes_: list[dict]) -> str:
+AFTER_REPORT = ("Do what was asked, record any new findings, then call finish_analysis and build_report again; the new "
+                "report replaces the earlier one.")
+
+
+def for_model(notes_: list[dict], *, after_report: bool = False) -> str:
+    """The text the agent reads. `after_report`: the agent had already built its report when the notes reached it
+    (it is asked to carry on, and to review and report again)."""
     parts = []
     for n in notes_:
-        if n["kind"] == "send_back":
+        if n["kind"] == "follow_up":
+            parts.append(f"{n['author']} read your report and asked for more ({n['at']}):\n{n['text']}\n{AFTER_REPORT}")
+        elif after_report and n["kind"] == "note":
+            parts.append(f"Note from {n['author']} ({n['at']}), who is following this run, which reached you after you had "
+                         f"built the report:\n{n['text']}\n{AFTER_REPORT}")
+        elif n["kind"] == "send_back":
             parts.append(f"{n['author']} sent the plan back for revision ({n['at']}):\n{n['text']}\n"
                          "Revise the plan accordingly and call submit_plan again.")
         elif n["kind"] == "more_time":
@@ -84,9 +96,13 @@ class Steering:
         if delivered is not None and delivered != delivered_in(self.run):
             self.save()  # a note given in a turn that never completed is not delivered: it is given again
 
-    def __call__(self) -> dict | None:
+    def pending(self) -> list[dict]:
+        """Notes the agent has not received yet (without delivering them)."""
         seen = {d["note"] for d in self.delivered}
-        new = [n for n in notes(self.svc, self.run_id) if n["id"] not in seen]
+        return [n for n in notes(self.svc, self.run_id) if n["id"] not in seen]
+
+    def __call__(self, *, after_report: bool = False) -> dict | None:
+        new = self.pending()
         if not new:
             return None
         b = self.budget
@@ -95,7 +111,7 @@ class Steering:
                                    "text": n["text"], "written_at": n["at"], "phase": self.phase, "at": now(),
                                    "step": b.steps if b else None, "model_call": b.model_calls + 1 if b else None})
         self.save()
-        return {"text": for_model(new), "notes": [{k: n[k] for k in ("n", "author", "kind", "text", "at")} for n in new]}
+        return {"text": for_model(new, after_report=after_report), "notes": [{k: n[k] for k in ("n", "author", "kind", "text", "at")} for n in new]}
 
     def save(self) -> None:
         write_json(self.run / FILE, {"schema": "alchemist.steering/v1", "delivered": self.delivered})
