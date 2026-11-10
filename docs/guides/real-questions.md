@@ -8,8 +8,8 @@ register datasets first with the [catalog admin guide](catalog-admin.md).
 === "Bedrock (default)"
 
     ```bash
-    export AWS_REGION=eu-central-1          # only AWS_REGION sets the region, not your profile's
-    export AWS_PROFILE=my-profile           # or any credentials the AWS credential chain can find
+    export ALC_AWS_REGION=eu-central-1      # Alchemist's own region; your profile's region is not used
+    export ALC_AWS_PROFILE=my-profile       # Alchemist's own AWS profile (ALC_BEDROCK_PROFILE: models only)
     export ALC_PLANNING_MODEL=bedrock:anthropic.claude-opus-5-5
     export ALC_ANALYSIS_MODEL=bedrock:anthropic.claude-sonnet-5-5
     export ALC_REVIEWER_MODEL=bedrock:anthropic.claude-opus-5-5

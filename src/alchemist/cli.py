@@ -529,9 +529,9 @@ def cmd_broker(a) -> None:
 BEDROCK_HINTS = [
     (("unable to locate credentials", "nocredentials"),
      "no AWS credentials found: run `aws sso login --profile <name>` (or `aws configure`) and set ALC_BEDROCK_PROFILE "
-     "(models only) or AWS_PROFILE"),
+     "(models only) or ALC_AWS_PROFILE"),
     (("security token included in the request is invalid", "unrecognizedclient", "invalidclienttokenid"),
-     "AWS rejected the credentials: check ALC_BEDROCK_PROFILE / AWS_PROFILE, or clear stale AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / "
+     "AWS rejected the credentials: check ALC_BEDROCK_PROFILE / ALC_AWS_PROFILE, or clear stale AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / "
      "AWS_SESSION_TOKEN variables that override the profile"),
     (("expiredtoken", "token has expired", "sso session", "token is expired"),
      "the AWS session expired: run `aws sso login --profile <name>` again"),
@@ -564,12 +564,21 @@ def cmd_models(a) -> None:
     settings = dataclasses.replace(svc.settings, model_retry_seconds=min(svc.settings.model_retry_seconds, 20))
     roles = [a.role] if a.role else list(ROLES)
     specs = {r: getattr(settings, ROLES[r].field) for r in roles}
+    from .config import applied_config
+
+    cfg = applied_config()
+    if cfg["path"]:
+        print(f"Settings file: {cfg['path']} (set {', '.join(cfg['keys']) or 'nothing; all already in the environment'})")
     if any(split_spec(s)[0] == "bedrock" for s in specs.values()):
-        region_from = "ALC_BEDROCK_REGION" if os.environ.get("ALC_BEDROCK_REGION") else "AWS_REGION"
+        region_from = next((k for k in ("ALC_BEDROCK_REGION", "ALC_AWS_REGION", "AWS_REGION") if os.environ.get(k)),
+                           "default")
         if settings.bedrock_profile:
             profile = f"{settings.bedrock_profile} (ALC_BEDROCK_PROFILE)"
+        elif os.environ.get("AWS_PROFILE"):
+            src = "ALC_AWS_PROFILE" if os.environ.get("ALC_AWS_PROFILE") else "AWS_PROFILE"
+            profile = f"{os.environ['AWS_PROFILE']} ({src})"
         else:
-            profile = f"{os.environ['AWS_PROFILE']} (AWS_PROFILE)" if os.environ.get("AWS_PROFILE") else "(default credential chain)"
+            profile = "(default credential chain)"
         print(f"Bedrock region: {settings.bedrock_region} ({region_from}); Bedrock AWS profile: {profile}")
     failed = 0
     for role, spec in specs.items():
@@ -591,8 +600,31 @@ def cmd_models(a) -> None:
         sys.exit(f"{failed} of {len(specs)} models did not answer")
 
 
+def _config_arg(argv: list[str]) -> str | None:
+    """--config PATH before the command; read before the parser is built, because plugins add commands from it."""
+    for i, arg in enumerate(argv):
+        if arg == "--config" and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith("--config="):
+            return arg.split("=", 1)[1]
+        if not arg.startswith("-"):
+            break  # the command; later --config belongs to it
+    return None
+
+
 def main(argv=None) -> None:
+    from .config import apply_alchemist_aws_env, apply_config_file, find_config_file
+
+    argv = sys.argv[1:] if argv is None else list(argv)
+    try:
+        apply_config_file(find_config_file(_config_arg(argv)))
+        apply_alchemist_aws_env()
+    except (OSError, ValueError) as e:
+        sys.exit(f"alchemist: {e}")
     p = argparse.ArgumentParser(prog="alchemist", description="AI research system for process questions")
+    p.add_argument("--config", metavar="FILE", help="settings file (YAML, keys named like the environment variables); "
+                                                    "default ALC_CONFIG, else ./alchemist.yaml if present. "
+                                                    "Variables set in the environment win over the file")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("demo", help="synthetic plant data and an offline end-to-end run")

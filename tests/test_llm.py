@@ -96,7 +96,7 @@ def test_models_check_reports_each_role_and_hints_at_bedrock_fixes(monkeypatch, 
     out = capsys.readouterr().out
     assert "2 of 4 models did not answer" in str(e.value)
     assert "small     eu.anthropic.claude-haiku-5-5: answered 'OK'" in out
-    assert "inference profile id" in out and "Bedrock region: eu-central-1 (AWS_REGION)" in out
+    assert "inference profile id" in out and "Bedrock region: eu-central-1 (default)" in out
 
     cli.main(["models", "--role", "analysis"])
     assert "analysis  bedrock:anthropic.claude-sonnet-5-5" in capsys.readouterr().out

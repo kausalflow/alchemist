@@ -30,7 +30,7 @@ On Bedrock the deployment's IAM role must also be allowed to call the chosen mod
 
 | Provider | Example spec | Credentials |
 | --- | --- | --- |
-| Amazon Bedrock (default) | `bedrock:anthropic.claude-opus-5-5`, an inference profile id (`eu.anthropic.claude-opus-5-5`) or ARN | AWS credential chain (`AWS_PROFILE`, SSO, keys, roles), `AWS_REGION`; or `ALC_BEDROCK_PROFILE` / `ALC_BEDROCK_REGION` for model calls only ([try it locally](bedrock-local.md)) |
+| Amazon Bedrock (default) | `bedrock:anthropic.claude-opus-5-5`, an inference profile id (`eu.anthropic.claude-opus-5-5`) or ARN | AWS credential chain; `ALC_AWS_PROFILE` / `ALC_AWS_REGION`, or `ALC_BEDROCK_PROFILE` / `ALC_BEDROCK_REGION` for model calls only ([try it locally](bedrock-local.md)) |
 | Anthropic API | `anthropic:claude-opus-5-5` | `ANTHROPIC_API_KEY` |
 | Google Gemini | `google:gemini-3-pro` (Vertex AI: `google-cloud:gemini-3-pro`) | `GOOGLE_API_KEY`; Vertex uses Google Cloud credentials |
 | OpenAI | `openai:gpt-5` | `OPENAI_API_KEY` |
