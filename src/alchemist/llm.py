@@ -86,6 +86,27 @@ class PydanticAIModel(agent_models.PydanticAIModel):
         self.spec = check_allowed(spec or settings.analysis_model, settings.allowed_providers)
         super().__init__(build_model(self.spec, settings), name=self.spec, effort=effort or settings.effort,
                          max_tokens=max_tokens, retry_seconds=settings.model_retry_seconds)
+        self.max_tokens = room_for_thinking(self.spec, self.thinking, self.max_tokens)
+
+
+# Room left for the answer above a fixed thinking budget.
+ANSWER_TOKENS = 4096
+
+
+def room_for_thinking(spec: str, thinking: str | None, max_tokens: int) -> int:
+    """max_tokens large enough for the thinking budget on Claude models that take one.
+
+    Older Claude models (Sonnet 4.5, Haiku 4.5, ...) get effort as a fixed `thinking.budget_tokens`
+    (Pydantic AI's ANTHROPIC_THINKING_BUDGET_MAP: low 2048, high 16384, ...) and reject a request whose
+    max_tokens is not above it. Newer models think adaptively, where a higher max_tokens is only a cap.
+    """
+    provider = spec.split(":", 1)[0]
+    if not thinking or provider not in ("bedrock", "anthropic"):
+        return max_tokens
+    from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+
+    budget = ANTHROPIC_THINKING_BUDGET_MAP.get(thinking)
+    return max(max_tokens, budget + ANSWER_TOKENS) if budget else max_tokens
 
 
 def role_model(settings, role: str) -> PydanticAIModel:

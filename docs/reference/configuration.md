@@ -8,7 +8,7 @@ The same settings can live in a YAML file, keyed by the variable names, so one s
 
 ```yaml
 # alchemist.yaml
-ALC_HOME: C:\alc
+ALC_HOME: 'C:\alc'                       # Windows paths in single quotes
 ALC_AWS_PROFILE: alchemist-data          # storage (S3) and other AWS clients
 ALC_AWS_REGION: eu-central-1
 ALC_BEDROCK_PROFILE: alchemist-models    # model calls only
@@ -19,7 +19,8 @@ ALC_ALLOWED_PROVIDERS: [bedrock]         # lists become comma-separated values
 Alchemist reads `--config FILE` (before the command: `alchemist --config bedrock.yaml models check`), else the file
 named by `ALC_CONFIG`, else `alchemist.yaml` in the current folder if there is one. A variable set in the environment
 wins over the file, so a shared file can be overridden in one shell. `alchemist models` prints which file was read and
-which settings it supplied. Keep secrets such as API keys and database passwords out of files you share.
+which settings it supplied. Write Windows paths in single quotes or without quotes: in double quotes YAML reads
+a backslash as an escape (`"C:\Users"` is an error). Keep secrets such as API keys and database passwords out of files you share.
 
 ## AWS profile and region
 

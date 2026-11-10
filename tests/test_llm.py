@@ -136,3 +136,20 @@ def test_bedrock_can_use_its_own_profile_and_region(monkeypatch, tmp_path):
     monkeypatch.setenv("ALC_BEDROCK_REGION", "eu-central-1")
     assert creds(llm.build_model("eu.anthropic.claude-sonnet-5-5", Settings())) == ("AKIAMODELS", "eu-central-1")
     assert Settings().aws_region == "eu-west-1"  # storage and run credentials keep AWS_REGION
+
+
+@pytest.mark.parametrize("effort,given,expected", [("low", 2000, 2048 + 4096), ("high", 16000, 16384 + 4096),
+                                                   ("medium", 16000, 16000), (None, 2000, 2000)])
+def test_max_tokens_leaves_room_above_a_thinking_budget(effort, given, expected):
+    """Sonnet 4.5 on Bedrock rejects max_tokens <= thinking.budget_tokens (seen in a real check)."""
+    s = Settings()
+    s.effort = "off"
+    m = llm.PydanticAIModel(s, "eu.anthropic.claude-sonnet-4-5-20250929-v1:0", effort=effort or "off", max_tokens=given)
+    assert m.max_tokens == expected
+
+
+def test_other_providers_keep_their_max_tokens(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    s = Settings()
+    s.allowed_providers = ["openai"]
+    assert llm.PydanticAIModel(s, "openai:gpt-5", effort="high", max_tokens=2000).max_tokens == 2000

@@ -129,7 +129,15 @@ def apply_config_file(path: str | None) -> list[str]:
     p = Path(path).expanduser()
     if not p.is_file():
         raise FileNotFoundError(f"settings file not found: {p}")
-    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    text = p.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        hint = ""
+        if "\\" in text and "escape" in str(e):
+            hint = ("\nIn double quotes YAML reads a backslash as an escape (\\U, \\a, ...). Write Windows paths in single "
+                    "quotes or without quotes: ALC_HOME: 'C:\\alc'")
+        raise ValueError(f"{p}: not valid YAML: {e}{hint}") from None
     if not isinstance(data, dict):
         raise ValueError(f"{p}: expected a mapping of setting names to values, e.g. ALC_HOME: C:\\alc")
     applied = []
