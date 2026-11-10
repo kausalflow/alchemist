@@ -213,16 +213,17 @@ class QueueWorkers(_Model):
 
 
 class Workflow(_Model):
-    # in_process (default): the analyse task runs the kernel itself, assumes the run role (ALC_RUN_ROLE_ARN) for data
-    #   access, and builds the report and seals the run.
-    # separate: the kernel runs in a sandbox task (`alchemist sandbox serve`) that gets data credentials only from the
-    #   broker Lambda, refreshed as they expire, and has no route to Bedrock; Report and Seal are their own steps.
-    sandbox_mode: Literal["in_process", "separate"] = "in_process"
+    # separate (default): the kernel runs in a sandbox task (`alchemist sandbox serve`) that gets data credentials only
+    #   from the broker Lambda, refreshed as they expire, and has no route to Bedrock; Report and Seal are their own
+    #   steps. The model-written code never runs next to the database login or the model's credentials.
+    # in_process: the analyse task runs the kernel itself, assumes the run role (ALC_RUN_ROLE_ARN) for data access,
+    #   and builds the report and seals the run. The queue launcher needs it, and uses it when sandbox_mode is not set.
+    sandbox_mode: Literal["in_process", "separate"] = "separate"
     # step_functions (default): every step of a run is its own Fargate task, started by the run's Step Functions
     #   execution; nothing runs while no run does.
     # queue: an ECS service of workers takes steps from the run queue in Aurora (`alchemist worker`). Warm workers start
     #   a step in seconds; the service scales between workers.min_count and max_count on the queue's backlog. Needs
-    #   sandbox_mode in_process.
+    #   sandbox_mode in_process (the default with this launcher).
     launcher: Literal["step_functions", "queue"] = "step_functions"
     workers: QueueWorkers = QueueWorkers()
     approval_timeout_days: int = 14
@@ -231,6 +232,12 @@ class Workflow(_Model):
     analysis_retries: int = 2
     # Nightly catalog re-index and knowledge ingestion (UTC cron, EventBridge syntax).
     index_schedule: str = "cron(0 2 * * ? *)"
+
+    @model_validator(mode="after")
+    def _queue_defaults_to_in_process(self):
+        if self.launcher == "queue" and "sandbox_mode" not in self.model_fields_set:
+            self.sandbox_mode = "in_process"
+        return self
 
 
 class Operations(_Model):
@@ -272,7 +279,8 @@ class EnvConfig(_Model):
     @model_validator(mode="after")
     def _queue_runs_kernels_in_process(self):
         if self.workflow.launcher == "queue" and self.workflow.sandbox_mode != "in_process":
-            raise ValueError("workflow.launcher queue needs workflow.sandbox_mode in_process")
+            raise ValueError("workflow.launcher queue runs kernels inside its workers: set workflow.sandbox_mode: "
+                             "in_process, or leave it out")
         if self.workflow.workers.min_count > self.workflow.workers.max_count:
             raise ValueError("workflow.workers.min_count is above max_count")
         return self

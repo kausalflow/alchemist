@@ -30,10 +30,17 @@ def resources(template) -> dict:
 
 
 @pytest.fixture(scope="session")
-def separate_resources(dev_cfg) -> dict:
-    """The target design: a separate sandbox task with broker credentials."""
+def separate_resources(dev_cfg, resources) -> dict:
+    """The default: a separate sandbox task with broker credentials."""
+    assert dev_cfg.workflow.sandbox_mode == "separate"
+    return resources
+
+
+@pytest.fixture(scope="session")
+def in_process_resources(dev_cfg) -> dict:
+    """The kernel inside the analyse task, with the run role."""
     data = dev_cfg.model_dump()
-    data["workflow"]["sandbox_mode"] = "separate"
+    data["workflow"]["sandbox_mode"] = "in_process"
     from alchemist_infra.config import EnvConfig
 
     return synth(EnvConfig.model_validate(data)).to_json()["Resources"]
@@ -44,6 +51,7 @@ def queue_resources(dev_cfg) -> dict:
     """Workers taking steps from the run queue instead of a Step Functions execution per run."""
     data = dev_cfg.model_dump()
     data["workflow"]["launcher"] = "queue"
+    del data["workflow"]["sandbox_mode"]  # the queue launcher keeps the kernel in its workers unless told otherwise
     data["workflow"]["workers"] = {"min_count": 1, "max_count": 3, "concurrency": 2}
     from alchemist_infra.config import EnvConfig
 

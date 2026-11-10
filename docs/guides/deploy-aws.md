@@ -34,10 +34,10 @@ With `workflow.launcher: queue`, the API puts each step in the run queue in Auro
 and an ECS service of workers (`alchemist worker`, the analyse task's role, image and size) takes them. Warm workers
 start a step in seconds. The API sends the queue's backlog to CloudWatch every 30 seconds and the service runs one
 worker per `workflow.workers.concurrency` waiting or running steps, between `workflow.workers.min_count` (0 is allowed:
-the first step then waits about a minute for a task) and `max_count`. It needs `sandbox_mode: in_process`. See
+the first step then waits about a minute for a task) and `max_count`. It runs kernels inside its workers, so it needs `sandbox_mode: in_process`; leave `sandbox_mode` out and the queue launcher uses it. See
 [Running many runs](../concepts/runs.md#running-many-runs-in-the-background).
 
-With `workflow.sandbox_mode: separate`, the analyse task drives a sandbox task in the sandbox subnets instead, and only
+By default (`workflow.sandbox_mode: separate`), the analyse task drives a sandbox task in the sandbox subnets, and only
 the sandbox gets data credentials, from the broker Lambda (refreshed as they expire). See
 [Deployment contract](../reference/deployment.md#two-sandbox-modes).
 
@@ -193,8 +193,9 @@ passes in staging (technical design, Operations). Pin the image by digest (`imag
 
 ## Known gaps
 
-- The default deployment keeps the kernel inside the analyse task; `sandbox_mode: separate` is built but has not run
-  in an AWS account yet, so try it in dev first. `knowledge ingest` is not a command yet, so that nightly schedule fails until it is.
+- The default `sandbox_mode: separate` has not run in an AWS account yet. The first dev trial should include an analysis
+  longer than an hour, to check that the kernel's broker credentials refresh. `sandbox_mode: in_process` is the fallback.
+- `knowledge ingest` is not a command yet, so that nightly schedule fails until it is.
 - The broker token travels in the execution input and the sandbox task's environment, so people who can read
   execution history or describe ECS tasks (the orchestrator role can) can see it. Only the sandbox role may invoke the
   broker, and the token is bound to one run and expires with the grant.
