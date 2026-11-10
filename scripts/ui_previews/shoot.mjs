@@ -262,6 +262,24 @@ await settle(eng);
 await shoot(eng, "dataset");
 await open(eng, "/about");
 await shoot(eng, "about");
+
+// Last, so no other screen shows its project: a data file uploaded on the Ask page, with its columns opened.
+const lims = ["LIMS export, Line 2", "", "Lot;Sampled;Viscosity (mPa s);MFI [g/10min];Crew"];
+for (let i = 0; i < 14; i++) {
+  const v = i === 4 ? "<0.1" : String(1180 + ((i * 37) % 60)).replace(/(\d)$/, ",$1");
+  lims.push(`L2-${String(i + 1).padStart(3, "0")};0${1 + (i % 9)}.08.2026 0${6 + (i % 3)}:00;${v};3,${4 + (i % 5)};${"ABC"[i % 3]}`);
+}
+await open(eng, "/ask");
+await eng.getByLabel("Project").fill("lab-results");
+await settle(eng);
+await eng.getByLabel("Upload Excel or CSV files").setInputFiles({
+  name: "LIMS export line 2.csv", mimeType: "text/csv", buffer: Buffer.from(lims.join("\n") + "\n"),
+});
+await eng.getByText("ds.up_lims_export_line_2").first().waitFor();
+await eng.getByText("Columns and first rows").first().click();
+await settle(eng);
+await eng.getByText("Data files (optional)").evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 24));
+await shoot(eng, "ask-data-files");
 await eng.context().close();
 
 // ---------------------------------------------------------------- the admin area
