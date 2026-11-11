@@ -1,0 +1,21 @@
+# Use an AWS profile from this machine for Bedrock (and S3), for a trial on a laptop:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.aws-profile.yml up -d
+#
+# Mounts your AWS folder (~/.aws, or ALC_AWS_DIR in .env) read-only into the containers that call AWS: the API, the
+# workers and the source sync. Name the profile in .env with ALC_BEDROCK_PROFILE (models) and ALC_AWS_PROFILE (S3).
+# The sandbox never gets it: the analysis code cannot use your AWS sign-in. When the sign-in expires, sign in again on
+# this machine (aws sso login, or your company's tool); the containers read the refreshed files.
+#
+# On a server in AWS, leave this file out and give the machine an IAM role instead.
+
+x-aws-profile: &aws-profile
+  volumes:
+    - ./config:/config:ro
+    - alchemist-home:/data
+    - ${ALC_AWS_DIR:-~/.aws}:/home/alchemist/.aws:ro
+
+services:
+  api: *aws-profile
+  worker: *aws-profile
+  sync: *aws-profile
