@@ -14,7 +14,8 @@ import logging
 import zipfile
 from typing import Any, Literal
 
-import markdown
+import re
+
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field
 from ..access import AccessDenied
 from ..catalog import now
 from ..paths import as_path, is_cloud, read_json, read_yaml
+from ..safehtml import markdown_html
 from ..workspace import verify
 from .deps import Me, Svc, access_error, entitled, entitled_run, in_workspace, run_or_404
 
@@ -224,6 +226,9 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
     q = _question(row)
     conclusion = (run / "report" / "conclusion.md")
     conclusion_md = conclusion.read_text() if conclusion.exists() else None
+    from ..run import pinned_inputs
+
+    pinned = pinned_inputs(svc, run_id, run)
     findings = (_json(run / "findings.json") or {}).get("findings", [])
     manifest = _json(run / "manifest.json")
     queries = _json(run / "inputs" / "queries.json", {})
@@ -254,15 +259,15 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
         "time_limit": _time_limit(svc, run, q["plan"], row["status"]),
         "review_pause": row["status"] == "paused" and paused_for_review(run),
         "conclusion_md": conclusion_md,
-        "conclusion_html": markdown.markdown(conclusion_md, extensions=["tables"]) if conclusion_md else None,
+        "conclusion_html": markdown_html(conclusion_md, extensions=["tables"]) if conclusion_md else None,
         "findings": findings,
         "notes": record(svc, run_id, run),
         "plan_history": _json(run / "logs" / "plan_history.json", []),
         "queries": [{"id": k, **v, "purpose": purposes.get(k, "")} for k, v in queries.items()],
         "datasets": [{"dataset": k, "card_version": v["card_version"], "plant": v["plant"], "format": v["format"],
-                      "columns": v["columns"], **({"upload": v["upload"]} if v.get("upload") else {})} for k, v in (_json(run / "inputs" / "views.json", {}) or {}).items()],
+                      "columns": v["columns"], **({"upload": v["upload"]} if v.get("upload") else {})} for k, v in pinned["views"].items()],
         "knowledge": {"citations": _json(run / "logs" / "citations.json", []),
-                      "structured": _json(run / "inputs" / "knowledge_index.json", [])},
+                      "structured": pinned["knowledge_index"]},
         "review": _json(run / "logs" / "review.json"),
         "result_check": _json(run / "work" / "result_check.json"),
         "manifest": manifest,
@@ -371,6 +376,8 @@ def snapshot(run_id: str, query_id: str, svc: Svc, me: Me, limit: int = Query(50
     q = (_json(run / "inputs" / "queries.json", {}) or {}).get(query_id)
     if not q:
         raise HTTPException(404, f"no query {query_id}")
+    if not SNAPSHOT.fullmatch(str(q.get("snapshot", ""))):  # queries.json is written by the run's own code
+        raise HTTPException(400, "bad snapshot path")
     f = run / q["snapshot"]
     df = pd.read_parquet(f if not is_cloud(f) else io.BytesIO(f.read_bytes()))
     head = df.head(limit)
@@ -378,6 +385,7 @@ def snapshot(run_id: str, query_id: str, svc: Svc, me: Me, limit: int = Query(50
             "head": json.loads(head.to_json(orient="values", date_format="iso"))}
 
 
+SNAPSHOT = re.compile(r"inputs/[0-9a-f]{64}\.parquet")
 SERVABLE = {".html": "text/html", ".png": "image/png", ".json": "application/json", ".md": "text/markdown",
             ".ipynb": "application/x-ipynb+json", ".jsonl": "application/jsonl", ".parquet": "application/vnd.apache.parquet",
             ".csv": "text/csv", ".yaml": "text/yaml", "": "text/plain"}
@@ -400,6 +408,9 @@ def run_file(run_id: str, path: str, svc: Svc, me: Me, download: bool = False):
     if suffix == ".html":
         # Reports are generated from model text: no scripts, and only same-origin images.
         headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
+    if is_cloud(f) and suffix == ".html":
+        # Pages are served from here, so they keep the policy above (a presigned S3 URL would drop it).
+        return Response(f.read_bytes(), media_type=media, headers=headers)
     if is_cloud(f):
         # S3: a short-lived presigned GET, issued only after the entitlement check above.
         params = {"Bucket": f.bucket, "Key": f.key, "ResponseContentType": media}

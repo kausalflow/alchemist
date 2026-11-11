@@ -94,6 +94,10 @@ def _minimal(prefixes: set[str]) -> list[str]:
     return out
 
 
+# Files in a run's inputs/ written at approval (or when a replay is created), never by the run itself.
+PINNED_INPUT_FILES = ("views.json", "knowledge_index.json", "parent_findings.json")
+
+
 def run_policy(run_dir: str, read_globs: list[str]) -> dict:
     """IAM session policy for one run. Only s3:// locations are included; local paths need no policy."""
     reads: dict[str, set[str]] = {}
@@ -116,8 +120,11 @@ def run_policy(run_dir: str, read_globs: list[str]) -> dict:
              "Resource": f"arn:aws:s3:::{bucket}/{key}/*"},
             {"Sid": "ListRunFolder", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": f"arn:aws:s3:::{bucket}",
              "Condition": {"StringLike": {"s3:prefix": [key, f"{key}/*"]}}},
+            # A run never writes or removes its own seal, nor the inputs pinned when its plan was approved
+            # (Catalog.pin_run_inputs keeps the record that counts; these are the copies its kernel reads).
             {"Sid": "NeverSeal", "Effect": "Deny", "Action": ["s3:PutObject", "s3:DeleteObject"],
-             "Resource": f"arn:aws:s3:::{bucket}/{key}/SEALED"},
+             "Resource": [f"arn:aws:s3:::{bucket}/{key}/SEALED",
+                          *(f"arn:aws:s3:::{bucket}/{key}/inputs/{name}" for name in PINNED_INPUT_FILES)]},
         ]
     return {"Version": "2012-10-17", "Statement": statements}
 

@@ -142,12 +142,12 @@ class StepFunctionsLauncher:
 
     def _write_grant(self, run_id: str, token_sha: str, *, views: bool, hours: float) -> None:
         from .credentials import make_grant
-        from .paths import as_path, read_json
+        from .run import pinned_inputs
 
         svc = self.services()
         row = svc.catalog.run(run_id)
-        views_file = as_path(row["path"]) / "inputs" / "views.json"
-        globs = [v["glob"] for v in read_json(views_file).values()] if views and views_file.exists() else []
+        # From the record made at approval, not the run folder's views.json, which the run's own code can write.
+        globs = [v["glob"] for v in pinned_inputs(svc, run_id, row["path"])["views"].values()] if views else []
         if row.get("mode") == "replay":
             globs = []  # a replay reads only the snapshots in its own folder
         grant = make_grant(run_id=run_id, user=row["user_id"], plants=json.loads(row["plants"]), run_dir=row["path"],

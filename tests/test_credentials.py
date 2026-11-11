@@ -20,7 +20,10 @@ def test_policy_reads_only_registered_prefixes_and_writes_only_run_folder():
     assert st["ListData1"]["Condition"]["StringLike"]["s3:prefix"][0] == "plant=P01/historian/line2"
     key = "workspaces/quality/projects/line2/questions/Q1/runs/R1"
     assert st["RunFolder"]["Resource"] == f"arn:aws:s3:::alchemist-workspace/{key}/*"
-    assert st["NeverSeal"]["Effect"] == "Deny" and st["NeverSeal"]["Resource"].endswith(f"{key}/SEALED")
+    assert st["NeverSeal"]["Effect"] == "Deny"
+    assert st["NeverSeal"]["Resource"] == [f"arn:aws:s3:::alchemist-workspace/{key}/{f}" for f in
+                                           ("SEALED", "inputs/views.json", "inputs/knowledge_index.json",
+                                            "inputs/parent_findings.json")]
     assert not any("local" in str(s) for s in st.values())
 
 

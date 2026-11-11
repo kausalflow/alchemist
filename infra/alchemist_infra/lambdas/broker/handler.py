@@ -24,6 +24,8 @@ import os
 import re
 
 GRANT_SCHEMA = "alchemist.grant/v1"
+# Files of the run folder its own credentials may not write (alchemist.credentials.PINNED_INPUT_FILES, and the seal).
+PROTECTED_RUN_FILES = ("SEALED", "inputs/views.json", "inputs/knowledge_index.json", "inputs/parent_findings.json")
 MAX_POLICY_CHARS = 2048  # STS limit on a session policy (packed size is checked by STS as well)
 _TAG_SAFE = re.compile(r"[^\w .:/=+\-@]")
 
@@ -90,9 +92,10 @@ def session_policy(grant: dict) -> dict:
         {"Effect": "Allow", "Action": "s3:GetObject", "Resource": sorted(set(get_arns))},
         {"Effect": "Allow", "Action": ["s3:PutObject", "s3:PutObjectTagging", "s3:AbortMultipartUpload"],
          "Resource": f"arn:aws:s3:::{run_bucket}/{run_key}*"},
-        # Same rule as alchemist.credentials.run_policy: a run never writes or removes its own seal.
+        # Same rule as alchemist.credentials.run_policy: a run never writes or removes its own seal, nor the inputs
+        # pinned when its plan was approved.
         {"Effect": "Deny", "Action": ["s3:PutObject", "s3:DeleteObject"],
-         "Resource": f"arn:aws:s3:::{run_bucket}/{run_key}SEALED"},
+         "Resource": [f"arn:aws:s3:::{run_bucket}/{run_key}{name}" for name in PROTECTED_RUN_FILES]},
     ]
     for b, prefixes in sorted(list_by_bucket.items()):
         statements.append({"Effect": "Allow", "Action": "s3:ListBucket", "Resource": f"arn:aws:s3:::{b}",

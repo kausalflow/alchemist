@@ -9,7 +9,7 @@ src/alchemist/
   catalog.py    registry, catalog cards (drafted by a model or a heuristic), search, suggestions, run index, audit
   sqlguard.py   read-only SQL guard on DuckDB's parser
   nb.py         helpers used inside the kernel as `alc` (query, finding, penguineer, align, effect, check_results)
-  sandbox.py    one Jupyter kernel per run (local, or a separate sandbox's); every call becomes a notebook cell
+  sandbox.py    one Jupyter kernel per run (local, or a separate sandbox's); every call becomes a notebook cell; the kernel's allow-listed environment
   sandbox_server.py  `alchemist sandbox serve`: the kernels' HTTP API (a sandbox task per run, or one sandbox service)
   fsjail.py          Landlock: a kernel confines itself to its run's datasets and folder
   llm.py        which providers may see plant data (allow-list) and the models built for them; calls go through penguineer.agent
@@ -18,6 +18,7 @@ src/alchemist/
   penguineer_tools.py  penguineer's commands as analysis tools, schemas from its Params models
   run.py        ask / approve / replay lifecycle and the tool handlers
   report.py     conclusion card and HTML report, placeholders filled by penguineer.agent
+  safehtml.py   model Markdown to sanitised HTML (nh3): no scripts, handlers or images
   workspace.py  S3 (or local) folder layout, sealing and verification
   sources.py    data sources (AVEVA PI, lake tables) synced into the lake with penguineer's connectors, registered and drafted
   knowledge.py  plant documents and structured knowledge; which plants a run may read (search is penguineer's)

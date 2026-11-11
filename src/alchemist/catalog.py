@@ -190,6 +190,20 @@ class Catalog:
                             list(row.values()))
         self.db.commit()
 
+    def pin_run_inputs(self, run_id: str, views: dict, knowledge_index: list) -> None:
+        """Record what a run may read: its dataset views (globs, card versions, column exposures) and structured
+        knowledge. Credentials, grants, manifests and replays are built from this record, never from the copies in
+        the run folder, which the run's own code can write."""
+        self.db.execute("delete from run_inputs where run_id = ?", (run_id,))
+        self.db.execute("insert into run_inputs(run_id, views, knowledge_index, pinned_at) values (?, ?, ?, ?)",
+                        (run_id, json.dumps(views, sort_keys=True), json.dumps(knowledge_index), now()))
+        self.db.commit()
+
+    def run_inputs(self, run_id: str) -> dict | None:
+        """{"views": ..., "knowledge_index": ...} pinned for a run, or None (not approved yet)."""
+        r = self.db.execute("select views, knowledge_index from run_inputs where run_id = ?", (run_id,)).fetchone()
+        return None if r is None else {"views": json.loads(r["views"]), "knowledge_index": json.loads(r["knowledge_index"])}
+
     def run(self, run_id: str) -> dict:
         r = self.db.execute("select * from runs where run_id = ?", (run_id,)).fetchone()
         if r is None:

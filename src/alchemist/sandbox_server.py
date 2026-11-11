@@ -22,8 +22,8 @@ AWS profile reads them from a file only that kernel can open, and the sandbox ne
 ALC_SANDBOX_REQUIRE_SCOPED=1 refuses kernels without them.
 
 One kernel per run folder. `run_dir` may be left out of /execute and /stop while one kernel runs (the one-run task).
-The kernel's environment is built here, not by the caller: this process's own variables (the pseudonym key, plugin
-settings, storage credentials) and, when ALC_BROKER_FUNCTION is set, an AWS profile whose credential_process is
+The kernel's environment is built here, not by the caller: the allowed part of this process's own variables
+(sandbox.KERNEL_ENV_NAMES: the pseudonym key, plugin settings, storage credentials; never this service's token) and, when ALC_BROKER_FUNCTION is set, an AWS profile whose credential_process is
 `alchemist broker credentials`, so S3 access is whatever the broker grants this run and is refreshed as it expires.
 Without ALC_BROKER_FUNCTION the kernel uses the ambient credentials.
 """
@@ -42,11 +42,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import fsjail
 from .credentials import AMBIENT_AWS_VARS, process_profile_env, write_credentials
-from .sandbox import LocalKernel, kernel_env
+from .sandbox import LocalKernel, kernel_env, kernel_jail
 
 MAX_BODY = 16 * 1024 * 1024
-# Variables the kernel never gets: the orchestrator's settings, and the token that drives this service.
-KERNEL_DROPS = ("ALC_DB", "ALC_LEAD", "ALC_SUB", "ALC_BEDROCK", "ALC_SANDBOX_TOKEN")
 
 
 class Busy(RuntimeError):
@@ -113,15 +111,7 @@ class KernelHost:
 
     def jail(self, run_dir: str, read_paths: list[str] | None, extra_read: list[str]) -> dict | None:
         """The paths a run's kernel may use, or None to leave it unrestricted (no Landlock, or ALC_KERNEL_JAIL=off)."""
-        mode = self.jail_mode()
-        if mode == "off":
-            return None
-        if not fsjail.available():
-            if mode == "required":
-                raise PermissionError("ALC_KERNEL_JAIL=required, but this machine has no Landlock (Linux 5.13+)")
-            return None
-        local = [p for p in (read_paths or []) if "://" not in p]
-        return {"read": [*local, *extra_read], "write": [] if "://" in run_dir else [run_dir]}
+        return kernel_jail(run_dir, read_paths, extra_read, mode=self.jail_mode())
 
     def pushed_credentials_env(self, credentials: dict) -> tuple[dict, dict, str]:
         """The run's own scoped keys, sent by the API, in a file only this run's kernel reads."""
@@ -149,7 +139,6 @@ class KernelHost:
                 extra, record, folder = self.pushed_credentials_env(credentials)
             else:
                 extra, record = self.credentials_env()
-            extra.update({k: None for k in self.env if k.startswith(KERNEL_DROPS)})
             jail = self.jail(key, read_paths, [folder] if folder else [])
             record = {**record, "filesystem": f"landlock v{fsjail.abi()}" if jail is not None else "shared"}
             kernel = LocalKernel(kernel_env(key, extra, base=self.env), jail=jail)

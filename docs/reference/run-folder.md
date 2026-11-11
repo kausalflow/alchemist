@@ -12,7 +12,8 @@ runs/<run-id>/
   inputs/
     <sha256>.parquet       query result snapshots, named by content hash
     queries.json           per query: SQL, datasets, source objects, rows, snapshot, result hash, card versions
-    views.json             queryable datasets pinned at approval: glob, format, plant, card version, column exposure;
+    views.json             queryable datasets pinned at approval (a copy of the database record, which is what counts):
+                           glob, format, plant, card version, column exposure;
                            for an uploaded file's table also `upload` (id, file, SHA-256, sheet, header row, converter)
     knowledge_index.json   structured knowledge copied for the run's plants
     knowledge/<name>.json  the structured knowledge itself

@@ -136,14 +136,18 @@ def test_read_prefixes_drop_covered_prefixes():
 
 
 class _Svc:
-    def __init__(self, rows, workspace="s3://ws-bucket", grant_hours=8):
+    def __init__(self, rows, workspace="s3://ws-bucket", grant_hours=8, inputs=None):
         self.rows = rows
+        self.inputs = inputs or {}
         self.settings = dataclasses.make_dataclass("S", ["workspace_root", "grant_hours"])(workspace, grant_hours)
         self.catalog = self
         self.db = self
 
     def run(self, run_id):
         return self.rows[run_id]
+
+    def run_inputs(self, run_id):
+        return self.inputs.get(run_id)
 
     def audit(self, *args):
         pass
@@ -172,6 +176,24 @@ def test_launcher_writes_grants_and_passes_the_token_only_in_the_execution(tmp_p
     grant = json.loads(s3.objects[("ws-bucket", "_grants/R1.json")])
     assert grant["read_prefixes"] == ["s3://lake/plant=P01/lots/"] and grant["token_sha256"] == token_sha256(token)
     assert grant["expires_at"] > (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_grant_comes_from_the_inputs_pinned_at_approval(tmp_path):
+    """The run's own code can write views.json; the grant (and so the broker's credentials) must not follow it."""
+    from alchemist.sfn_launcher import StepFunctionsLauncher
+
+    run = tmp_path / "runs" / "R3"
+    (run / "inputs").mkdir(parents=True)
+    (run / "inputs" / "views.json").write_text(json.dumps({"lots": {"glob": "s3://lake/plant=P01/lots/*.parquet"},
+                                                           "p02": {"glob": "s3://lake/plant=P02/lots/*.parquet"}}))
+    rows = {"R3": {"run_id": "R3", "user_id": "eng_p1", "plants": '["P01"]', "path": str(run), "mode": "live"}}
+    pinned = {"R3": {"views": {"lots": {"glob": "s3://lake/plant=P01/lots/*.parquet"}}, "knowledge_index": []}}
+    s3 = FakeS3()
+    l = StepFunctionsLauncher(lambda: _Svc(rows, inputs=pinned), state_machine_arn="arn:sm",
+                              approvals="s3://ws-bucket/_approvals/", sfn=FakeSfn(), s3=s3, sandbox_mode="separate")
+    l.plan("R3")
+    l.analyse("R3", "eng_p1")
+    assert json.loads(s3.objects[("ws-bucket", "_grants/R3.json")])["read_prefixes"] == ["s3://lake/plant=P01/lots/"]
 
 
 def test_in_process_launcher_writes_no_grant():

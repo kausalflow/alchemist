@@ -286,3 +286,38 @@ def test_pause_and_resume_through_the_api(client, svc):
     r = client.post(f"/api/runs/{rid}:resume", headers=h)  # the inline launcher finishes it here
     assert r.status_code == 200, r.text
     assert client.get(f"/api/runs/{rid}", headers=h).json()["run"]["status"] == "completed"
+
+
+def test_pages_carry_a_content_security_policy(client, finished):
+    r = client.get("/api/me", headers=as_user("eng_p1"))
+    assert "script-src 'self'" in r.headers["content-security-policy"]
+    assert r.headers["x-content-type-options"] == "nosniff"
+    r = client.get(f"/api/runs/{finished}/files/report/report.html", headers=as_user("eng_p1"))
+    assert r.headers["content-security-policy"].startswith("default-src 'none'")  # the stricter one stays
+
+
+def test_conclusion_html_drops_scripts(client, svc, finished):
+    from pathlib import Path
+
+    f = Path(svc.catalog.run(finished)["path"]) / "report" / "conclusion.md"
+    before = f.read_text()
+    try:
+        f.write_text(before + "\n\n<script>fetch('/api/admin')</script><img src=x onerror=alert(1)>")
+        html = client.get(f"/api/runs/{finished}", headers=as_user("eng_p1")).json()["conclusion_html"]
+        assert "<script" not in html and "onerror" not in html and "<img" not in html
+    finally:
+        f.write_text(before)
+
+
+def test_snapshot_paths_stay_in_the_run(client, svc, finished):
+    from pathlib import Path
+
+    f = Path(svc.catalog.run(finished)["path"]) / "inputs" / "queries.json"
+    before = f.read_text()
+    try:
+        q = json.loads(before)
+        q["q1"]["snapshot"] = "../../../other/runs/R/inputs/" + "0" * 64 + ".parquet"
+        f.write_text(json.dumps(q))
+        assert client.get(f"/api/runs/{finished}/snapshots/q1", headers=as_user("eng_p1")).status_code == 400
+    finally:
+        f.write_text(before)

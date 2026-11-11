@@ -199,7 +199,8 @@ Runs share the sandbox, but not each other's files:
   folders of the datasets its run was given and its own run folder, write only its run folder and a private
   temporary folder, and read the system and Python files it needs. Another plant's lake files, another run's
   folder, and another kernel's connection key and sockets are out of reach, and a kernel cannot trace or read the
-  memory of processes outside its confinement. Landlock needs Linux 5.13 or later on the host (Ubuntu 22.04+,
+  memory of processes outside its confinement, nor read the sandbox's own environment in `/proc` (the sandbox makes itself non-dumpable).
+  Kernels also get an allow-listed environment ([the analysis kernel](../reference/configuration.md#the-analysis-kernel)). Landlock needs Linux 5.13 or later on the host (Ubuntu 22.04+,
   Debian 12+, RHEL 9+) and Docker 23 or later; it needs no privileges. With `ALC_KERNEL_JAIL=auto` (the default;
   Helm: `sandbox.kernelJail`) kernels are confined where the host supports it, and each run's manifest records
   `filesystem: landlock v<N>` or `shared`; `required` refuses runs on hosts without it. Check a host with

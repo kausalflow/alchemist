@@ -171,6 +171,17 @@ create table if not exists limit_choices (
   name text primary key, value bigint not null, updated_by text, updated_at text
 );
 """),
+    (8, "run inputs: what each run may read, pinned when its plan is approved (the run's files are not trusted)",
+     """
+create table if not exists run_inputs (
+  run_id text primary key, views text not null, knowledge_index text not null, pinned_at text
+);
+""",
+     """
+create table if not exists run_inputs (
+  run_id text primary key, views text not null, knowledge_index text not null, pinned_at text
+);
+"""),
 ]
 
 LATEST = MIGRATIONS[-1][0]

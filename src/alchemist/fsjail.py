@@ -3,7 +3,9 @@
 `python -m alchemist.fsjail <ipykernel arguments>` restricts the process to the paths in ALC_JAIL_READ (read and
 execute) and ALC_JAIL_WRITE (anything), both separated by os.pathsep, then starts the Jupyter kernel. The rules hold
 for the kernel and everything it starts, and cannot be lifted: code in the kernel cannot open another run's folder or
-a dataset its run was not given, and cannot ptrace or read the memory of processes outside its domain. Landlock
+a dataset its run was not given, and cannot ptrace or read the memory of processes outside its domain. The process
+that starts a kernel makes itself non-dumpable (`protect_process`) and the kernel drops any root capabilities, so
+the kernel cannot read the starter's environment in /proc either. Landlock
 needs no privileges, only Linux 5.13 or later with Landlock enabled (Ubuntu 22.04+, Debian 12+, RHEL 9+), and a
 container runtime that allows its system calls (Docker 23+).
 
@@ -22,6 +24,8 @@ SYS_CREATE_RULESET, SYS_ADD_RULE, SYS_RESTRICT_SELF = 444, 445, 446  # the same 
 CREATE_RULESET_VERSION = 1
 RULE_PATH_BENEATH = 1
 PR_SET_NO_NEW_PRIVS = 38
+PR_SET_DUMPABLE = 4
+PR_CAPBSET_DROP = 24
 
 EXECUTE, WRITE_FILE, READ_FILE, READ_DIR = 1 << 0, 1 << 1, 1 << 2, 1 << 3
 READ = EXECUTE | READ_FILE | READ_DIR
@@ -104,6 +108,28 @@ def restrict(read: list[str], write: list[str]) -> int:
     return version
 
 
+def protect_process() -> bool:
+    """Make this process non-dumpable, so processes it starts (a kernel running the model's code) cannot read its
+    environment in /proc/<pid>/environ, or its memory, though they run as the same user. Landlock alone does not stop
+    that read. Linux only; returns whether it was done."""
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        return _libc().prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) == 0
+    except (OSError, AttributeError):
+        return False
+
+
+def drop_capabilities() -> None:
+    """Running as root (a dev container), give up every capability for this process and what it starts, so
+    CAP_SYS_PTRACE cannot read a non-dumpable parent's /proc files either. Nothing to do for other users."""
+    if not hasattr(os, "getuid") or os.getuid() != 0:
+        return
+    libc = _libc()
+    for cap in range(64):
+        libc.prctl(PR_CAPBSET_DROP, cap, 0, 0, 0)  # EINVAL past the last capability this kernel knows
+
+
 def split(value: str | None) -> list[str]:
     return [p for p in (value or "").split(os.pathsep) if p]
 
@@ -112,6 +138,7 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     # DuckDB's extensions ship in the image under the home folder (see the Dockerfile).
     read = [*SYSTEM_READ, *python_paths(), os.path.expanduser("~/.duckdb"), *split(os.environ.get("ALC_JAIL_READ"))]
+    drop_capabilities()
     restrict(read, [*SYSTEM_WRITE, *split(os.environ.get("ALC_JAIL_WRITE"))])
     os.execv(sys.executable, [sys.executable, "-m", "ipykernel_launcher", *argv])
 
