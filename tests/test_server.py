@@ -300,20 +300,23 @@ def test_conclusion_html_drops_scripts(client, svc, finished):
     from pathlib import Path
 
     f = Path(svc.catalog.run(finished)["path"]) / "report" / "conclusion.md"
-    before = f.read_text()
+    before, mode = f.read_text(), f.stat().st_mode
+    f.chmod(0o644)  # sealed runs are read-only
     try:
         f.write_text(before + "\n\n<script>fetch('/api/admin')</script><img src=x onerror=alert(1)>")
         html = client.get(f"/api/runs/{finished}", headers=as_user("eng_p1")).json()["conclusion_html"]
         assert "<script" not in html and "onerror" not in html and "<img" not in html
     finally:
         f.write_text(before)
+        f.chmod(mode)
 
 
 def test_snapshot_paths_stay_in_the_run(client, svc, finished):
     from pathlib import Path
 
     f = Path(svc.catalog.run(finished)["path"]) / "inputs" / "queries.json"
-    before = f.read_text()
+    before, mode = f.read_text(), f.stat().st_mode
+    f.chmod(0o644)  # sealed runs are read-only
     try:
         q = json.loads(before)
         q["q1"]["snapshot"] = "../../../other/runs/R/inputs/" + "0" * 64 + ".parquet"
@@ -321,3 +324,4 @@ def test_snapshot_paths_stay_in_the_run(client, svc, finished):
         assert client.get(f"/api/runs/{finished}/snapshots/q1", headers=as_user("eng_p1")).status_code == 400
     finally:
         f.write_text(before)
+        f.chmod(mode)
