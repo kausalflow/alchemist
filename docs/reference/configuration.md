@@ -48,7 +48,10 @@ never sees these profile names.
 | `ALC_DB` | `$ALC_HOME/alchemist.db` | app database (catalog, run index, audit): a SQLite file, or a `postgresql://` URL |
 | `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME`, `ALC_DB_USER` | unset, `5432`, `alchemist`, `alchemist` | PostgreSQL connection when `ALC_DB` is unset (the AWS stack sets these) |
 | `ALC_DB_PASSWORD` | unset | PostgreSQL password, added at connect time so it never appears in `ALC_DB` or logs |
-| `ALC_DB_SSLMODE` | `require` | libpq `sslmode` for the URL built from `ALC_DB_HOST` |
+| `ALC_DB_SSLMODE` | `verify-full` | libpq `sslmode` for the URL built from `ALC_DB_HOST`. `verify-full` checks that a trusted CA signed the server's certificate and that it names the host; anything weaker to a host other than localhost logs a warning |
+| `ALC_DB_SSLROOTCERT` | unset (`system` when verifying) | CA file (PEM) for the server's certificate, for any PostgreSQL URL that does not name its own `sslrootcert`. Unset, a verifying connection uses the system trust store. The image ships the Amazon RDS bundle at `/etc/alchemist/certs/aws-rds-global-bundle.pem` |
+| `ALC_DB_APP_USER`, `ALC_DB_APP_PASSWORD` | unset | `alchemist db migrate`: the app login to create or update with row access only (same as `--app-user`), and its password |
+| `ALC_DB_OWNER_PASSWORD` | unset | `alchemist db migrate --owner-user NAME`: the owner's password; `ALC_DB_USER`/`ALC_DB_PASSWORD` then name the app login it sets up |
 | `ALC_DB_POOL_SIZE` | `10` | PostgreSQL connections per process |
 | `ALC_ACCESS` | `$ALC_HOME/access.yaml` | plants, workspaces, identity-provider group mapping, optional local users ([Access model](../concepts/access.md)) |
 | `ALC_KNOWLEDGE` | `$ALC_HOME/knowledge` | documents (`*.md`) and structured knowledge (`structured/*.yaml`) |

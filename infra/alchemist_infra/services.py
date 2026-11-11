@@ -30,16 +30,20 @@ from aws_cdk import aws_iam as iam
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_secretsmanager as sm
+from aws_cdk import triggers
 from constructs import Construct
 
 from .bedrock import BedrockSetup
 from .config import EnvConfig, TaskSize
-from .database import DB_NAME, Database
+from .database import DB_NAME, OWNER_USER, Database
 from .network import Network
 from .storage import APPROVALS_PREFIX, GRANTS_PREFIX, RUNS_PATTERN, SEALED_PATTERN, Storage
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BROKER_CODE = Path(__file__).resolve().parent / "lambdas" / "broker"
+MIGRATE_CODE = Path(__file__).resolve().parent / "lambdas" / "migrate"
+# Where the Dockerfile puts the RDS CA bundle (deploy/certs/); the app checks the database certificate against it.
+RDS_CA_BUNDLE = "/etc/alchemist/certs/aws-rds-global-bundle.pem"
 ORIGIN_HEADER = "X-Alchemist-Origin-Verify"
 QUEUE_METRICS_NAMESPACE = "Alchemist"
 IMAGE_EXCLUDES = [".git", ".venv", "**/.venv", "alchemist-home", "infra", "site", "web/node_modules", "**/__pycache__",
@@ -209,11 +213,14 @@ class Services(Construct):
             "ALC_DB_HOST": db.cluster_endpoint.hostname,
             "ALC_DB_PORT": Token.as_string(db.cluster_endpoint.port),
             "ALC_DB_NAME": DB_NAME,
+            "ALC_DB_SSLMODE": "verify-full",
+            "ALC_DB_SSLROOTCERT": RDS_CA_BUNDLE,
         }
         self.common_env["ALC_ACCESS"] = f"s3://{ws.bucket_name}/{cfg.storage.access_file_key}"
+        # The app login (row access only). The owner login goes to the migrate task alone, see _add_migrate_trigger.
         self.db_secrets = {
-            "ALC_DB_USER": ecs.Secret.from_secrets_manager(database.secret, "username"),
-            "ALC_DB_PASSWORD": ecs.Secret.from_secrets_manager(database.secret, "password"),
+            "ALC_DB_USER": ecs.Secret.from_secrets_manager(database.app_secret, "username"),
+            "ALC_DB_PASSWORD": ecs.Secret.from_secrets_manager(database.app_secret, "password"),
         }
         self.model_env = {
             "ALC_LEAD_MODEL": cfg.bedrock.lead_model,
@@ -332,6 +339,8 @@ class Services(Construct):
         self.target_group = tg
         self.api_container.add_environment("ALC_ALB_ARN", self.alb.load_balancer_arn)  # expected OIDC header signer
 
+        self._add_migrate_trigger(database, [self.api_service, self.worker_service])
+
         # ---------------------------------------------------------------- scheduled indexers
         schedules = (("CatalogIndex", cfg.commands.catalog_index),
                      ("KnowledgeIngest", cfg.commands.knowledge_ingest)) if cfg.modules.indexers else ()
@@ -343,6 +352,45 @@ class Services(Construct):
                             subnet_selection=network.app_subnets, security_groups=[network.indexer_sg],
                             container_overrides=[targets.ContainerOverride(container_name="indexer",
                                                                            command=command)])])
+
+    def _add_migrate_trigger(self, database: Database, services: list) -> None:
+        """Migrations and the app login, applied by the owner login in a one-off task on each deploy that may change
+        them, before the services that connect as the app login are updated (CloudFormation waits for it)."""
+        role = iam.Role(self, "MigrateRole", description="Alchemist migrate task: no AWS access, only the database",
+                        assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"))
+        self.migrate_task, self.migrate_container = self.add_task(
+            "Migrate", "migrate", TaskSize(cpu=256, memory_mib=512), role, ["db", "migrate", "--owner-user", OWNER_USER],
+            {**self.common_env, **self.db_env},
+            # ALC_DB_USER/PASSWORD name the app login it sets up; it connects as the owner.
+            {**self.db_secrets, "ALC_DB_OWNER_PASSWORD": ecs.Secret.from_secrets_manager(database.secret, "password")})
+        sel = self.network.app_subnets
+        subnets = self.network.vpc.select_subnets(subnets=sel.subnets, subnet_group_name=sel.subnet_group_name,
+                                                  subnet_type=sel.subnet_type).subnet_ids
+        fn = triggers.TriggerFunction(
+            self, "MigrateTrigger", runtime=lambda_.Runtime.PYTHON_3_12, handler="handler.handler",
+            code=lambda_.Code.from_asset(str(MIGRATE_CODE), exclude=["__pycache__"]),
+            timeout=Duration.minutes(15), memory_size=256,
+            description="Alchemist deploy step: run the database migrate task and wait for it",
+            log_group=logs.LogGroup(self, "MigrateTriggerLogs",
+                                    retention=_retention(self.cfg.operations.log_retention_days)),
+            environment={"CLUSTER": self.cluster.cluster_arn, "TASK_DEFINITION": self.migrate_task.task_definition_arn,
+                         "CONTAINER": "migrate", "SUBNETS": ",".join(subnets),
+                         "SECURITY_GROUPS": self.network.indexer_sg.security_group_id,
+                         "LOG_GROUP": f"/{self.cfg.prefix}/migrate",
+                         # Changes when the migrations or the image do, so the trigger runs again (a new function
+                         # version); a deploy that changes neither skips it.
+                         "SCHEMA_FINGERPRINT": _schema_fingerprint(self.cfg.image.digest)},
+            execute_after=[database.cluster], execute_before=[s for s in services if s is not None],
+            execute_on_handler_change=True)
+        fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["ecs:RunTask"], resources=[self.migrate_task.task_definition_arn],
+            conditions={"ArnEquals": {"ecs:cluster": self.cluster.cluster_arn}}))
+        fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["ecs:DescribeTasks"], resources=["*"],
+            conditions={"ArnEquals": {"ecs:cluster": self.cluster.cluster_arn}}))
+        fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["iam:PassRole"], resources=[role.role_arn, self.execution_role.role_arn]))
+        self.migrate_trigger = fn
 
     @property
     def origin_header_value(self) -> str:
@@ -365,6 +413,16 @@ class Services(Construct):
             readonly_root_filesystem=False, user="alchemist",
             port_mappings=[ecs.PortMapping(container_port=port)] if port else None)
         return td, c
+
+
+def _schema_fingerprint(image_digest: str | None) -> str:
+    """The image digest (prebuilt image), else a hash of the app's database module (image built from this checkout),
+    which holds the migrations and the app login's grants."""
+    import hashlib
+
+    if image_digest:
+        return image_digest
+    return hashlib.sha256((REPO_ROOT / "src" / "alchemist" / "db.py").read_bytes()).hexdigest()[:16]
 
 
 _RETENTION = {30: logs.RetentionDays.ONE_MONTH, 60: logs.RetentionDays.TWO_MONTHS,

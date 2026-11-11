@@ -134,12 +134,45 @@ After the first deployment:
 2. **Catalog.** Register and index the pilot datasets with the indexer task
    (`aws ecs run-task --cluster <ClusterName> --task-definition <IndexerTaskDefinition> --launch-type FARGATE
    --network-configuration ... --overrides '{"containerOverrides":[{"name":"indexer","command":["catalog","index"]}]}'`).
-   When the app moves to Postgres, run `db migrate` the same way first.
+   The schema is already migrated: every deploy that changes the image or the migrations runs the migrate task
+   before the services update (see "Database logins" below).
 3. **DNS.** Without `domain.hosted_zone_id`, create `domain.name` as an alias to `DistributionDomain` and
    `domain.api_origin_name` as an alias to `AlbDns`.
 4. **Alarms.** Confirm the SNS e-mail subscription if `operations.alarm_email` is set.
 5. **Gate for phase 1.** Start a run as a user of plant A only and check at S3 (CloudTrail data events) that its
    sandbox is denied when reading a plant-B prefix.
+
+
+## Database logins
+
+Aurora has two logins, so the running app cannot change the schema or other roles (PA-22):
+
+| Login | Secret | Used by | May |
+| --- | --- | --- | --- |
+| `alchemist_admin` (owner) | `<prefix>/db` | the migrate task only | everything: apply migrations, create the app login |
+| `alchemist_app` | `<prefix>/db-app` | API, orchestrator, worker, sealer, indexer | read and write rows of Alchemist's tables; read the schema version |
+
+A deploy trigger (`Services/MigrateTrigger`) runs the migrate task (`alchemist db migrate --owner-user alchemist_admin`)
+after the database exists and before the API and worker services update, and fails the deploy if it does not exit 0;
+its output is in the `/<prefix>/migrate` log group. It runs again when the image digest (`image.digest`) or, for an
+image built from the checkout, `src/alchemist/db.py` changes. The task applies pending migrations, creates
+`alchemist_app` if it is missing, sets its password from `<prefix>/db-app` (as a SCRAM verifier, so the password never
+reaches the database's logs) and grants it `select, insert, update, delete` on the tables and `usage, select` on the
+sequences, also for tables later migrations add. It refuses an app login that is a superuser or may create roles or
+databases. If a task finds the schema behind (a migration the trigger has not applied), it stops with a message
+naming the command to run instead of trying with the app login.
+
+After rotating `<prefix>/db-app`, run the migrate task once by hand (or invoke the trigger function) so the new
+password is set before tasks restart:
+
+```bash
+aws ecs run-task --cluster <ClusterName> --task-definition <prefix>-migrate --launch-type FARGATE \
+  --network-configuration 'awsvpcConfiguration={subnets=[<app subnet>],securityGroups=[<IndexerSg>]}'
+```
+
+Every connection uses TLS with `sslmode=verify-full`: the server's certificate must be signed by an RDS CA from the
+bundle in the image (`deploy/certs/aws-rds-global-bundle.pem`, at `/etc/alchemist/certs/` in the image) and name the
+cluster endpoint. The cluster also refuses connections without TLS (`rds.force_ssl = 1`).
 
 ## Extend the deployment
 
@@ -202,8 +235,7 @@ passes in staging (technical design, Operations). Pin the image by digest (`imag
 - The sandbox's kernel API has no authentication of its own; only the orchestrator's security group reaches it.
 - WAF on CloudFront, Bedrock Guardrails being passed on each model call, S3 Access Grants (for lakes not split by
   plant prefix), cross-region replication, and an alarm for writes to sealed prefixes are not in this stack yet.
-- The app connects to Aurora as the cluster's admin user with a password, over TLS (`sslmode=require`, without
-  verifying the RDS certificate). A least-privilege app role, IAM database authentication and `verify-full` with the
-  RDS CA bundle are not in this stack yet.
+- The app login authenticates with a password from Secrets Manager; IAM database authentication is not used yet, and
+  neither secret rotates on its own (see "Database logins").
 - The NAT gives the API task general HTTPS egress, not only to the ALB key endpoint. An egress proxy or AWS Network
   Firewall with a domain allow-list would narrow it to `public-keys.auth.elb.<region>.amazonaws.com`.

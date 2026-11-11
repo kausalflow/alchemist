@@ -536,15 +536,38 @@ def _worker_step(a, svc) -> None:
 
 
 def cmd_db(a) -> None:
-    from .db import LATEST, connect
+    """Apply migrations; with --app-user (PostgreSQL) also set up the app login with row access only.
+
+    Two ways to name the logins, so the same image works on AWS and in Kubernetes: connect as ALC_DB_USER and give the
+    app login with --app-user (password ALC_DB_APP_PASSWORD), or connect as --owner-user (password
+    ALC_DB_OWNER_PASSWORD) and set up the app's own ALC_DB_USER / ALC_DB_PASSWORD as the app login."""
+    import os
+
+    from .db import LATEST, connect, grant_app_login, with_login
 
     s = load_settings()
-    db = connect(s.db_path)  # opening applies any pending migrations
+    target, app_user, app_password = s.db_path, a.app_user or os.environ.get("ALC_DB_APP_USER"), None
+    if (app_user or a.owner_user) and not is_postgres(target):
+        raise SystemExit("--app-user and --owner-user are for PostgreSQL; a SQLite file has no logins")
+    if a.owner_user:
+        from psycopg.conninfo import conninfo_to_dict
+
+        if not os.environ.get("ALC_DB_OWNER_PASSWORD"):
+            raise SystemExit("--owner-user needs the owner's password in ALC_DB_OWNER_PASSWORD")
+        params = conninfo_to_dict(target)
+        app_user = app_user or params.get("user")
+        app_password = params.get("password") or os.environ.get("ALC_DB_PASSWORD")
+        target = with_login(target, a.owner_user, os.environ["ALC_DB_OWNER_PASSWORD"])
+    app_password = os.environ.get("ALC_DB_APP_PASSWORD") or app_password
+    db = connect(target)  # opening applies any pending migrations
     try:
         version = db.execute("select max(version) as v from schema_migrations").fetchone()["v"]
+        print(f"{db.dialect} database at schema version {version} (latest {LATEST})")
+        if app_user:
+            for line in grant_app_login(db.conn, app_user, app_password):
+                print(line)
     finally:
         db.close()
-    print(f"{db.dialect} database at schema version {version} (latest {LATEST})")
 
 
 def cmd_sandbox(a) -> None:
@@ -806,7 +829,12 @@ def main(argv=None) -> None:
 
     dbp = sub.add_parser("db", help="the app database (SQLite file or PostgreSQL)")
     dbsub = dbp.add_subparsers(dest="db_cmd", required=True)
-    dbsub.add_parser("migrate", help="apply pending schema migrations and print the schema version").set_defaults(fn=cmd_db)
+    dbm = dbsub.add_parser("migrate", help="apply pending schema migrations and print the schema version")
+    dbm.add_argument("--app-user", help="PostgreSQL: also create or update this login for the app, with row access only "
+                     "(password from ALC_DB_APP_PASSWORD); default ALC_DB_APP_USER, or ALC_DB_USER with --owner-user")
+    dbm.add_argument("--owner-user", help="PostgreSQL: migrate as this login (password from ALC_DB_OWNER_PASSWORD) "
+                     "instead of ALC_DB_USER, which then becomes the app login (password ALC_DB_PASSWORD)")
+    dbm.set_defaults(fn=cmd_db)
 
     sb = sub.add_parser("sandbox", help="the analysis kernel as its own service (separate sandbox mode)")
     sbsub = sb.add_subparsers(dest="sandbox_cmd", required=True)

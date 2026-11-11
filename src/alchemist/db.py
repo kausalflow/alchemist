@@ -4,6 +4,15 @@
 `ALC_DB_NAME`, `ALC_DB_USER` and `ALC_DB_PASSWORD` (from Secrets Manager) instead, and `database_url()` builds the
 URL from them without the password, so the setting can be logged; `connect()` adds the password.
 
+Two logins (PostgreSQL): the owner login applies migrations (`alchemist db migrate --app-user NAME`, run once per
+deploy) and sets up the app login, which may only read and write rows (`grant_app_login`). Every long-running process
+connects as the app login, so a bug or an injected query in the app cannot change the schema or other roles. A
+process only tries to migrate when the schema is behind; with the app login that fails with a message saying so.
+
+TLS: the URL built from `ALC_DB_HOST` asks for `sslmode=verify-full` (encrypted, and the server's certificate must be
+signed by a trusted CA and name the host). The CA is `ALC_DB_SSLROOTCERT` (a PEM file, e.g. the RDS bundle the image
+ships) or else the system's trust store.
+
 Both backends are reached through `Database.execute(sql, params)` with `?` placeholders, rows that behave like
 dicts (`row["col"]`, `dict(row)`), `rowcount`, `commit()`, `transaction()` and `close()`. Schema changes are
 numbered migrations, applied once per database (under an advisory lock on PostgreSQL, so tasks starting together
@@ -13,6 +22,10 @@ do not race).
 from __future__ import annotations
 
 import atexit
+import base64
+import hashlib
+import hmac
+import logging
 import os
 import sqlite3
 import threading
@@ -20,6 +33,12 @@ from contextlib import contextmanager
 from urllib.parse import quote
 
 POSTGRES_SCHEMES = ("postgresql://", "postgres://")
+VERIFIED_SSLMODES = ("verify-ca", "verify-full")
+LOCAL_HOSTS = ("", "localhost", "127.0.0.1", "::1")
+# The RDS CA bundle in the image (Dockerfile); the AWS stack points ALC_DB_SSLROOTCERT here.
+RDS_CA_BUNDLE = "/etc/alchemist/certs/aws-rds-global-bundle.pem"
+
+log = logging.getLogger(__name__)
 
 
 def is_postgres(target: str) -> bool:
@@ -36,7 +55,7 @@ def database_url() -> str | None:
     user = quote(os.environ.get("ALC_DB_USER", "alchemist"), safe="")
     port = os.environ.get("ALC_DB_PORT", "5432")
     name = os.environ.get("ALC_DB_NAME", "alchemist")
-    sslmode = os.environ.get("ALC_DB_SSLMODE", "require")
+    sslmode = os.environ.get("ALC_DB_SSLMODE", "verify-full")
     return f"postgresql://{user}@{host}:{port}/{name}?sslmode={sslmode}"
 
 
@@ -273,6 +292,17 @@ def _conninfo(url: str) -> str:
     if "password" not in params and os.environ.get("ALC_DB_PASSWORD"):
         params["password"] = os.environ["ALC_DB_PASSWORD"]
     params.setdefault("application_name", "alchemist")
+    # The CA that signs the server's certificate: ALC_DB_SSLROOTCERT, else (when verifying) the system trust store.
+    # Added here rather than to the URL, so a Windows path needs no URL quoting.
+    if "sslrootcert" not in params:
+        if os.environ.get("ALC_DB_SSLROOTCERT"):
+            params["sslrootcert"] = os.environ["ALC_DB_SSLROOTCERT"]
+        elif params.get("sslmode") in VERIFIED_SSLMODES:
+            params["sslrootcert"] = "system"
+    host = params.get("host", "")
+    if params.get("sslmode") not in VERIFIED_SSLMODES and host not in LOCAL_HOSTS and not host.startswith("/"):
+        log.warning("database %s: sslmode=%s does not check the server's certificate; use verify-full (with "
+                    "ALC_DB_SSLROOTCERT) outside a laptop or test setup", host, params.get("sslmode", "prefer"))
     return make_conninfo(**params)
 
 
@@ -319,7 +349,9 @@ class PostgresDatabase(Database):
         conn = self.pool.getconn()
         try:
             if url not in _migrated:
-                migrate_postgres(conn)
+                # Only take the migration lock when something is pending: the app login may not create tables.
+                if (schema_version(conn) or 0) < LATEST:
+                    migrate_postgres(conn)
                 _migrated.add(url)
         except BaseException:
             self.pool.putconn(conn)
@@ -350,8 +382,32 @@ class PostgresDatabase(Database):
             pass
 
 
+def schema_version(conn) -> int | None:
+    """The highest migration applied, 0 for an empty table, None when the database has never been migrated."""
+    if conn.execute("select to_regclass('schema_migrations') is not null as present").fetchone()["present"]:
+        return conn.execute("select coalesce(max(version), 0) as v from schema_migrations").fetchone()["v"]
+    return None
+
+
+class SchemaBehind(RuntimeError):
+    """The schema needs migrations this login may not apply (the app login is not the owner)."""
+
+
 def migrate_postgres(conn) -> list[int]:
     """Apply pending migrations; safe to call from many tasks at once. Returns the versions applied."""
+    from psycopg import errors
+
+    try:
+        return _migrate_postgres(conn)
+    except errors.InsufficientPrivilege as e:
+        user = conn.info.user
+        raise SchemaBehind(
+            f"the database schema is at version {schema_version(conn)} and this build needs {LATEST}, but login "
+            f"{user!r} may not change the schema. Run `alchemist db migrate --app-user {user}` with the owner login "
+            f"(the AWS stack does this on every deploy). ({e.sqlstate}: {e})") from e
+
+
+def _migrate_postgres(conn) -> list[int]:
     applied = []
     with conn.transaction():
         conn.execute("select pg_advisory_xact_lock(%s)", (MIGRATION_LOCK,))
@@ -365,6 +421,89 @@ def migrate_postgres(conn) -> list[int]:
             conn.execute("insert into schema_migrations(version, name) values (%s, %s)", (version, name))
             applied.append(version)
     return applied
+
+
+# ---------------------------------------------------------------- the app login
+
+def with_login(url: str, user: str, password: str) -> str:
+    """The same PostgreSQL URL with another user and password (for `alchemist db migrate --owner-user`)."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = parts.netloc.rpartition("@")[2]
+    return parts._replace(netloc=f"{quote(user, safe='')}:{quote(password, safe='')}@{host}").geturl()
+
+
+APP_TABLE_PRIVILEGES = "select, insert, update, delete"
+
+
+def scram_verifier(password: str, *, iterations: int = 4096, salt: bytes | None = None) -> str:
+    """The SCRAM-SHA-256 verifier PostgreSQL stores for a password (RFC 5802/7677). Setting a role's password to the
+    verifier means the password itself never reaches the server, its statement log or pg_stat_statements."""
+    salt = salt if salt is not None else os.urandom(16)
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    stored = hashlib.sha256(hmac.new(salted, b"Client Key", "sha256").digest()).digest()
+    server = hmac.new(salted, b"Server Key", "sha256").digest()
+    salt64, stored64, server64 = (base64.b64encode(b).decode("ascii") for b in (salt, stored, server))
+    return f"SCRAM-SHA-256${iterations}:{salt64}${stored64}:{server64}"
+
+
+def grant_app_login(conn, app_user: str, password: str | None = None) -> list[str]:
+    """Create or update the app login: it may log in and read and write rows of Alchemist's tables, nothing more.
+
+    Run as the owner login (the one that applies migrations), after migrating. Creates the role if missing; sets its
+    password when one is given (so a rotated secret takes effect on the next deploy); grants row access on every
+    table and sequence in `public`, now and for tables later migrations add; leaves `schema_migrations` read-only.
+    Refuses a login that is the owner itself, a member of it, or holds any of superuser, createrole, createdb,
+    replication or bypassrls, rather than quietly working with a stronger login. Returns what it did, for the log.
+    """
+    from psycopg import sql
+
+    me = conn.execute("select current_user as u, current_database() as d").fetchone()
+    if app_user == me["u"]:
+        raise ValueError(f"the app login must not be the owner login {app_user!r}; pick another name")
+    role, owner, database = sql.Identifier(app_user), sql.Identifier(me["u"]), sql.Identifier(me["d"])
+    done = []
+    with conn.transaction():
+        conn.execute("select pg_advisory_xact_lock(%s)", (MIGRATION_LOCK,))
+        existing = conn.execute("select rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls,"
+                                " pg_has_role(oid, current_user, 'member') as owner_member"
+                                " from pg_roles where rolname = %s", (app_user,)).fetchone()
+        if existing is None:
+            conn.execute(sql.SQL("create role {} login").format(role))
+            done.append(f"created login {app_user}")
+        else:
+            strong = [k.removeprefix("rol") for k, v in existing.items() if v and k != "owner_member"]
+            if strong or existing["owner_member"]:
+                raise ValueError(f"login {app_user!r} is too powerful for the app: "
+                                 + ", ".join(strong + (["member of the owner"] if existing["owner_member"] else []))
+                                 + ". Remove that by hand or pick another name.")
+            conn.execute(sql.SQL("alter role {} login").format(role))
+        if password:
+            conn.execute(sql.SQL("alter role {} password {}").format(role, sql.Literal(scram_verifier(password))))
+            done.append(f"set the password of {app_user}")
+        for stmt in (
+            "grant connect on database {db} to {app}",
+            "grant usage on schema public to {app}",
+            "grant " + APP_TABLE_PRIVILEGES + " on all tables in schema public to {app}",
+            "grant usage, select on all sequences in schema public to {app}",
+            # Tables and sequences later migrations create (as this owner) get the same grants.
+            "alter default privileges for role {owner} in schema public grant " + APP_TABLE_PRIVILEGES
+            + " on tables to {app}",
+            "alter default privileges for role {owner} in schema public grant usage, select on sequences to {app}",
+            # The app reads the schema version; only migrations write it.
+            "revoke insert, update, delete, truncate on schema_migrations from {app}",
+        ):
+            conn.execute(sql.SQL(stmt).format(db=database, app=role, owner=owner))
+        done.append(f"granted {app_user} row access to the tables in public")
+        # PostgreSQL before 15 lets every role create tables in public; take that away for the whole database.
+        if conn.execute("select has_schema_privilege(%s, 'public', 'CREATE') as c", (app_user,)).fetchone()["c"]:
+            conn.execute("revoke create on schema public from public")
+            done.append("revoked create on schema public from public")
+            if conn.execute("select has_schema_privilege(%s, 'public', 'CREATE') as c",
+                            (app_user,)).fetchone()["c"]:
+                raise ValueError(f"login {app_user!r} can still create tables in schema public; revoke that by hand")
+    return done
 
 
 def connect(target: str) -> Database:

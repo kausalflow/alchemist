@@ -29,6 +29,9 @@ COPY . /tmp/build-context
 RUN if [ -n "$EXTRA_PACKAGES" ]; then cd /tmp/build-context && uv pip install --python /app/.venv/bin/python $EXTRA_PACKAGES; fi \
     && rm -rf /tmp/build-context
 COPY --from=web /web/dist /app/web/dist
+# CAs that sign Amazon RDS / Aurora server certificates; the AWS stack sets ALC_DB_SSLROOTCERT to this file so the app
+# connects with sslmode=verify-full (see deploy/certs/README.md to refresh it).
+COPY deploy/certs/aws-rds-global-bundle.pem /etc/alchemist/certs/aws-rds-global-bundle.pem
 ENV PATH="/app/.venv/bin:$PATH" ALC_HOME=/data ALC_WEB_DIST=/app/web/dist
 USER 10001
 # The sandbox has no internet, so DuckDB's S3 extensions ship in the image (aws: credential_process credentials).

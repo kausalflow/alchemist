@@ -17,7 +17,8 @@ serviceAccount:
 # A Secret with every credential, as environment variables, created by the customer (or an external-secrets
 # operator). Keys the chart expects, all optional except ALC_PSEUDONYM_KEY and the database password:
 #   ALC_PSEUDONYM_KEY     keyed hash for pseudonymised columns
-#   ALC_DB_PASSWORD       PostgreSQL password
+#   ALC_DB_PASSWORD       PostgreSQL password of database.user (the app login)
+#   ALC_DB_OWNER_PASSWORD PostgreSQL password of database.ownerUser, when set (only the migrate init container uses it)
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   object store keys, when not using workload identity
 #   PI_WEBAPI_PASSWORD / PI_WEBAPI_TOKEN        PI Web API basic or bearer sign-in
 #   ALC_LOCAL_LLM_API_KEY, ANTHROPIC_API_KEY, ...   model keys
@@ -28,8 +29,18 @@ database:
   host: ""         # required
   port: 5432
   name: alchemist
-  user: alchemist
-  sslmode: require
+  user: alchemist  # the login the API, workers and jobs use
+  # Recommended: a separate owner login for migrations. The migrate init container connects as ownerUser (password
+  # ALC_DB_OWNER_PASSWORD), applies migrations and creates or updates `user` with row access only (password
+  # ALC_DB_PASSWORD), so the running app cannot change the schema. Empty: one login does both and must own the schema.
+  ownerUser: ""
+  # verify-full: encrypted, and the server's certificate must be signed by a trusted CA and match `host`.
+  sslmode: verify-full
+  # The CA that signs the server's certificate: "system" (the image's trust store, fine for public CAs), a file path
+  # in the image (e.g. /etc/alchemist/certs/aws-rds-global-bundle.pem for Amazon RDS), or set caConfigMap.
+  sslrootcert: system
+  # A ConfigMap with your private CA under the key ca.crt; mounted and used instead of sslrootcert.
+  caConfigMap: ""
 
 # Object storage with the S3 API (AWS S3, MinIO, Ceph, StorageGRID, GCS's XML API with HMAC keys).
 storage:

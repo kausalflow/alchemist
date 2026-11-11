@@ -30,7 +30,12 @@ spec:
       initContainers:
         - name: migrate
           {{- include "alchemist.container" . | nindent 10 }}
+          {{- if .Values.database.ownerUser }}
+          # Connects as the owner (ALC_DB_OWNER_PASSWORD) and gives database.user row access only.
+          args: ["db", "migrate", "--owner-user", {{ .Values.database.ownerUser | quote }}]
+          {{- else }}
           args: ["db", "migrate"]
+          {{- end }}
       containers:
         - name: api
           {{- include "alchemist.container" . | nindent 10 }}

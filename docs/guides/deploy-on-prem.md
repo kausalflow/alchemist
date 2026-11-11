@@ -88,6 +88,7 @@ kubectl create namespace alchemist
 kubectl -n alchemist create secret generic alchemist \
   --from-literal=ALC_PSEUDONYM_KEY="$(openssl rand -hex 32)" \
   --from-literal=ALC_DB_PASSWORD=... \
+  --from-literal=ALC_DB_OWNER_PASSWORD=... \
   --from-literal=PI_WEBAPI_PASSWORD=...          # and AWS_* keys if the pods have no workload identity
 helm install alchemist deploy/helm/alchemist -n alchemist -f my-values.yaml
 ```
@@ -95,7 +96,10 @@ helm install alchemist deploy/helm/alchemist -n alchemist -f my-values.yaml
 ```yaml
 # my-values.yaml
 image: {tag: "0.1.0"}               # pin a release or digest
-database: {host: alchemist.postgres.plant.internal}
+database:
+  host: alchemist.postgres.plant.internal
+  ownerUser: alchemist_owner          # migrates; `user` (alchemist) gets row access only
+  caConfigMap: plant-db-ca            # your CA under key ca.crt; or leave empty for the system trust store
 storage:
   workspace: s3://plant-alchemist-workspace
   lake: s3://plant-alchemist-lake
@@ -135,7 +139,8 @@ ingress:
 The chart runs:
 
 - the **API** (`api.replicas`, default 1): the web app and the REST API; a `db migrate` init container applies
-  schema migrations first;
+  schema migrations first (as `database.ownerUser` when set, which also gives `database.user` row access only and
+  nothing else, so the app cannot change the schema);
 - the **workers** (`workers.replicas`, default 2, each running `workers.concurrency` steps at once), which run the
   steps the API queues. With [KEDA](https://keda.sh) installed, `workers.autoscaling.enabled: true` scales them on the
   queue's length instead, one replica per `workers.concurrency` waiting or running steps, between `minReplicas` and

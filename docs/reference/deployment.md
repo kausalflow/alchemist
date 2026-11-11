@@ -29,7 +29,8 @@ All tasks run the one image built from the repository `Dockerfile` (entry point 
 | worker (service, `workflow.launcher: queue` only) | `worker --concurrency <workflow.workers.concurrency>` | app | the orchestrator's role, in-process (assumes the run role) |
 | sandbox (separate only) | `sandbox serve --port 8888` | sandbox | invoke the broker, nothing else |
 | sealer (separate only) | `worker seal --run-id <id>` | app | read run folders, write `SEALED` |
-| indexer | `catalog index` and `knowledge ingest` (nightly), `db migrate` (by hand) | app | read the lake and knowledge buckets; invoke the sub and embedding models |
+| indexer | `catalog index` and `knowledge ingest` (nightly) | app | read the lake and knowledge buckets; invoke the sub and embedding models |
+| migrate (deploy trigger) | `db migrate --owner-user alchemist_admin` | app (indexer security group) | nothing in AWS; the only task with the database owner login |
 
 In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandbox`), because it runs the kernel.
 
@@ -52,7 +53,9 @@ In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandb
 | `ALC_PLUGIN_MODULES` | all | `plugins.modules`, comma-separated |
 | `ALC_EXTRA_PACKAGES` | all | `plugins.packages` installed into the image, for the manifest |
 | (any) | all | `plugins.env` |
-| `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME`, `ALC_DB_USER`, `ALC_DB_PASSWORD` | api, orchestrator, sealer, indexer | Aurora PostgreSQL, the app database (user and password from the cluster's generated secret); the app applies its migrations on first connect |
+| `ALC_DB_HOST`, `ALC_DB_PORT`, `ALC_DB_NAME`, `ALC_DB_USER`, `ALC_DB_PASSWORD` | api, orchestrator, worker, sealer, indexer, migrate | Aurora PostgreSQL, the app database, as the app login `alchemist_app` (row access only; secret `<prefix>/db-app`) |
+| `ALC_DB_SSLMODE`, `ALC_DB_SSLROOTCERT` | the same | `verify-full` against the RDS CA bundle in the image, `/etc/alchemist/certs/aws-rds-global-bundle.pem` |
+| `ALC_DB_OWNER_PASSWORD` | migrate | the owner login `alchemist_admin` (the cluster's generated secret `<prefix>/db`), used to migrate and to set up the app login |
 | `ALC_LEAD_MODEL`, `ALC_SUB_MODEL`, `ALC_EMBEDDING_MODEL` | api, orchestrator, indexer | from `bedrock:`; lead covers planning and analysis, sub the reviewer and small jobs, unless `plugins.env` sets the per-role `ALC_*_MODEL` variables |
 | `ALC_BEDROCK_GUARDRAIL_ID`, `ALC_BEDROCK_GUARDRAIL_VERSION` | api, orchestrator, indexer | when `bedrock.guardrail` is on |
 | `ALC_AUTH` | api | `alb-oidc`: verify the ALB's signed `x-amzn-oidc-data` header |

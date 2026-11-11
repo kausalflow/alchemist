@@ -78,6 +78,12 @@ jobs:
             --set sandbox.kernelJail=required > /dev/null
           helm template t deploy/helm/alchemist $args --set workers.autoscaling.enabled=true --set api.replicas=2 > /dev/null
           helm template t deploy/helm/alchemist $args --set workers.enabled=false > /dev/null
+          # Owner login for migrations and a private database CA (PA-22).
+          out=$(helm template t deploy/helm/alchemist $args --set database.ownerUser=alchemist_owner \
+            --set database.caConfigMap=db-ca)
+          grep -q -- '"--owner-user", "alchemist_owner"' <<<"$out"
+          grep -q 'ALC_DB_SSLROOTCERT: "/etc/alchemist/db-ca/ca.crt"' <<<"$out"
+          grep -q 'ALC_DB_SSLMODE: "verify-full"' <<<"$(helm template t deploy/helm/alchemist $args)"
           # Required values are enforced.
           if helm template t deploy/helm/alchemist --set auth.oidc.issuer=x --set auth.oidc.audience=y 2>/dev/null; then
             echo "::error::helm template accepted a release without database.host"; exit 1

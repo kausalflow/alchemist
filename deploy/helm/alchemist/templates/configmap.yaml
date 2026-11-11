@@ -31,6 +31,7 @@ data:
   ALC_DB_NAME: {{ .Values.database.name | quote }}
   ALC_DB_USER: {{ .Values.database.user | quote }}
   ALC_DB_SSLMODE: {{ .Values.database.sslmode | quote }}
+  ALC_DB_SSLROOTCERT: {{ ternary "/etc/alchemist/db-ca/ca.crt" .Values.database.sslrootcert (not (empty .Values.database.caConfigMap)) | quote }}
   ALC_PLANNING_MODEL: {{ .Values.models.planning | quote }}
   ALC_ANALYSIS_MODEL: {{ .Values.models.analysis | quote }}
   ALC_REVIEWER_MODEL: {{ .Values.models.reviewer | quote }}

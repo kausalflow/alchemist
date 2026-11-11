@@ -59,6 +59,9 @@ volumeMounts:
   {{- if .Values.knowledge.existingConfigMap }}
   - {name: knowledge, mountPath: /knowledge, readOnly: true}
   {{- end }}
+  {{- if .Values.database.caConfigMap }}
+  - {name: db-ca, mountPath: /etc/alchemist/db-ca, readOnly: true}
+  {{- end }}
 {{- end -}}
 
 {{/* Call with (dict "root" $ "persistent" true|false). */}}
@@ -77,5 +80,10 @@ volumeMounts:
 - name: knowledge
   configMap:
     name: {{ .root.Values.knowledge.existingConfigMap }}
+{{- end }}
+{{- if .root.Values.database.caConfigMap }}
+- name: db-ca
+  configMap:
+    name: {{ .root.Values.database.caConfigMap }}
 {{- end }}
 {{- end -}}
