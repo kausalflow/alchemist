@@ -41,6 +41,8 @@ class Settings:
     # compose and the Helm chart), which holds no database, model or PI credentials and has no network but storage;
     # the worker still reports and seals. Unset: the kernel is a child of the worker.
     sandbox_url: str | None = field(default_factory=lambda: os.environ.get("ALC_SANDBOX_URL") or None)
+    # In-process kernels: confine each to its run's files with Linux Landlock (auto: where available; required; off).
+    kernel_jail: str = field(default_factory=lambda: os.environ.get("ALC_KERNEL_JAIL", "auto"))
     # How long a run's broker grant stays valid after approval (separate mode): the analysis timeout plus slack.
     grant_hours: int = field(default_factory=lambda: int(os.environ.get("ALC_GRANT_HOURS", "8")))
     # Which registered access provider supplies users, plant groups and workspaces ("yaml" reads access_file).

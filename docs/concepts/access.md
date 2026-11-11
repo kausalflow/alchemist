@@ -104,6 +104,9 @@ and a query naming `ds.historian_line5` is rejected.
 | Who is in which group | identity-provider groups mapped by `access.yaml`; local users as a fallback |
 | Which plants a run reads | the tool layer and SQL guard, and, with `ALC_RUN_ROLE_ARN` set, the run's own STS session policy, enforced by S3 ([per-run credentials](../guides/s3.md#per-run-credentials)) |
 | Who can open a run | checked on replay; the API checks it before issuing presigned URLs |
+| What a run's code can reach | the kernel gets an allow-listed environment (no database URL, model keys or tokens) and, on Linux with Landlock, reads only its run's datasets and writes only its run folder; see [the analysis kernel](../reference/configuration.md#the-analysis-kernel) |
+| What a run may read, later | pinned in the database at approval; credentials, grants and replays never read it back from the run folder |
+| Model text shown as HTML | the conclusion is sanitised (no scripts, event handlers or images), and every page carries a Content-Security-Policy |
 | Audit | `audit_events` table; with per-run credentials, CloudTrail shows each run's session, user and tags |
 
 The rules are the same everywhere; per-run credentials move enforcement of data access from application code to AWS,

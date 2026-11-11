@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import markdown
 from jinja2 import Environment, select_autoescape
 
 from penguineer.agent.findings import ReportError, fill, fmt  # noqa: F401  (ReportError is part of this API)
 
 from .paths import write_text
+from .safehtml import markdown_html
 
 TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>{{ title }}</title>
@@ -86,7 +86,7 @@ def render(run_dir, *, ctx: dict, report_input: dict, findings: list[dict], quer
     env = Environment(autoescape=select_autoescape(["html"]))
     env.globals["fmt"] = fmt
     html = env.from_string(TEMPLATE).render(
-        title=report_input["title"], conclusion_html=markdown.markdown(conclusion), top_causes=top,
+        title=report_input["title"], conclusion_html=markdown_html(conclusion), top_causes=top,
         ruled_out=report_input.get("ruled_out", []), next_check=report_input.get("next_check", ""),
         method_notes=report_input.get("method_notes", ""), limitations=report_input.get("limitations", []),
         findings=findings, queries=queries, figures=figures, **ctx)

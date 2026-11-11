@@ -61,12 +61,75 @@ class CellResult:
         return text.strip()
 
 
+# What a run's kernel may inherit from the process that starts it. Everything else (the database URL and password,
+# model API keys, the sandbox token, OIDC and plugin secrets) stays out: the kernel runs code the model wrote.
+KERNEL_ENV_NAMES = frozenset({
+    # the system, on Linux, macOS and Windows
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TERM", "TMPDIR", "TEMP", "TMP",
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "USERNAME", "HOMEDRIVE", "HOMEPATH",
+    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "ALLUSERSPROFILE", "COMPUTERNAME",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS",
+    # this Python
+    "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONUTF8", "PYTHONIOENCODING",
+    # certificates and proxies, to reach the object store
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+    # what alchemist.nb and its storage backends read; the broker's run token (separate sandbox only)
+    "ALC_PSEUDONYM_KEY", "ALC_S3_CREDENTIALS", "ALC_PLUGINS", "ALC_PLUGIN_MODULES",
+    "ALC_RUN_ID", "ALC_BROKER_TOKEN", "ALC_BROKER_FUNCTION",
+})
+# Object store access (in ambient mode the kernel uses the process's own AWS identity), locale and cache settings.
+KERNEL_ENV_PREFIXES = ("AWS_", "LC_", "CLOUDPATHLIB_")
+# Never, even with a prefix above: a Bedrock API key is for model calls, which the kernel does not make.
+KERNEL_ENV_NEVER = frozenset({"AWS_BEARER_TOKEN_BEDROCK"})
+
+
+def kernel_env_allowed(name: str, extra: tuple[str, ...] = ()) -> bool:
+    """Whether a run's kernel may inherit this variable. `extra`: names, or prefixes ending in `*`, an operator
+    allowed with ALC_KERNEL_ENV (a plugin's storage setting, say)."""
+    key = name.upper()  # Windows names are case-insensitive
+    if key in KERNEL_ENV_NEVER:
+        return False
+    if key in KERNEL_ENV_NAMES or key.startswith(KERNEL_ENV_PREFIXES):
+        return True
+    return any(key.startswith(e[:-1].upper()) if e.endswith("*") else key == e.upper() for e in extra)
+
+
+def kernel_base_env(base: dict) -> dict[str, str]:
+    """The variables of `base` a run's kernel inherits (see KERNEL_ENV_NAMES)."""
+    extra = tuple(e.strip() for e in (base.get("ALC_KERNEL_ENV") or "").split(",") if e.strip())
+    return {k: v for k, v in base.items() if kernel_env_allowed(k, extra)}
+
+
 def kernel_env(run_dir: str, extra_env: dict | None = None, base: dict | None = None) -> dict[str, str]:
-    """Environment of a run's kernel; None in extra_env removes a variable."""
-    env = {**(os.environ if base is None else base), "ALC_RUN_DIR": str(run_dir),
+    """Environment of a run's kernel: the allowed part of `base` (this process's environment), the run's settings,
+    and `extra_env`; None in extra_env removes a variable."""
+    env = {**kernel_base_env(os.environ if base is None else base), "ALC_RUN_DIR": str(run_dir),
            "MPLBACKEND": "module://matplotlib_inline.backend_inline", "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1",
            "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", **(extra_env or {})}
     return {k: v for k, v in env.items() if v is not None}
+
+
+def kernel_jail(run_dir: str, read_paths: list[str] | None, extra_read: list[str] | None = None, *,
+                mode: str = "auto") -> dict | None:
+    """The paths a run's kernel may use ({"read": [...], "write": [...]}), or None to leave it unrestricted.
+
+    mode (ALC_KERNEL_JAIL): auto confines the kernel where Linux Landlock is available (fsjail.py) and leaves it
+    unrestricted elsewhere (Windows, macOS, a container runtime that blocks Landlock); required refuses to start a
+    kernel without it; off never confines it. The kernel reads the local datasets its run was given and writes only
+    its run folder."""
+    from . import fsjail
+
+    if mode not in ("auto", "required", "off"):
+        raise ValueError(f"ALC_KERNEL_JAIL is {mode!r}; use auto, required or off")
+    if mode == "off":
+        return None
+    if not fsjail.available():
+        if mode == "required":
+            raise PermissionError("ALC_KERNEL_JAIL=required, but this machine has no Landlock (Linux 5.13+)")
+        return None
+    local = [p for p in (read_paths or []) if "://" not in p]
+    return {"read": [*local, *(extra_read or [])], "write": [] if "://" in str(run_dir) else [str(run_dir)]}
 
 
 def kernel_transport(platform: str = sys.platform) -> dict[str, str]:
@@ -104,6 +167,10 @@ class LocalKernel:
                      "connection_file": str(self.private / "connection.json")}
 
     def start(self) -> None:
+        from . import fsjail
+
+        # The kernel runs as this process's user: keep it from reading this process's environment and memory.
+        fsjail.protect_process()
         env, transport = self.env, kernel_transport()
         if self.jail is not None:
             env, transport = self._jailed_env()

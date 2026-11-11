@@ -43,6 +43,11 @@ with an edited plan file. Approval pins what the run may read:
   of every column.
 - `inputs/knowledge_index.json` and `inputs/knowledge/*.json` hold the structured knowledge for the run's plants.
 
+The views and the knowledge index are also recorded in the database (`run_inputs`). The run's credentials, its
+sandbox grant, its manifest and any replay of it are built from that record, not from the files: the run's own code
+can write its folder, and must not be able to widen what it may read. Where the run folder is on S3, the run's
+credentials may not write these files either.
+
 ## 3. Analyse
 
 A fresh Jupyter kernel starts in the run folder. Its first cells set the run mode and seed and initialise the `alc`

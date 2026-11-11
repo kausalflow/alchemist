@@ -65,7 +65,8 @@ def test_session_policy_is_limited_to_the_grant():
                      "arn:aws:s3:::ws": [f"workspaces/quality/projects/p/questions/q/runs/{RUN}/*"]}
     assert "plant=P02" not in text and "lake-b" not in text
     deny = next(s for s in p["Statement"] if s["Effect"] == "Deny")
-    assert deny["Resource"].endswith(f"/runs/{RUN}/SEALED")
+    assert deny["Resource"][0].endswith(f"/runs/{RUN}/SEALED")
+    assert any(r.endswith(f"/runs/{RUN}/inputs/views.json") for r in deny["Resource"])
 
 
 def test_too_many_prefixes_is_an_error():

@@ -20,7 +20,7 @@ from typing import Callable
 from penguineer.agent import protocol
 from penguineer.agent.loop import Budget, Model, ScriptedText, ToolOutput, run_loop
 
-from . import penguineer_tools, prompts, steering, uploads
+from . import fsjail, penguineer_tools, prompts, steering, uploads
 from .access import AccessDenied, User
 from .llm import role_model
 from .catalog import Catalog, now
@@ -31,7 +31,7 @@ from .model_roles import with_choices
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json, write_text
 from .plugins import get_registry
 from .report import ReportError, render
-from .sandbox import RemoteKernel, Sandbox, finding_cell, query_cell
+from .sandbox import LocalKernel, RemoteKernel, Sandbox, finding_cell, kernel_env, kernel_jail, query_cell
 from .workspace import (create_question, create_run, ensure_project, project_dir, seal, update_question, verify)
 
 log = logging.getLogger("alchemist.run")
@@ -121,7 +121,13 @@ class Services:
         if self.settings.sandbox_mode == "separate":
             raise ValueError("ALC_SANDBOX_MODE=separate: give the sandbox's address (--sandbox-task-arn or --sandbox-url)")
         env, refresher = self.sandbox_env(ctx, views)
-        sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, extra_env=env)
+        # The kernel runs code the model wrote: it gets an allow-listed environment (sandbox.kernel_env), and where
+        # Linux Landlock is available it reads only its run's local datasets and writes only its run folder.
+        jail = kernel_jail(str(ctx.run), local_read_paths(views), [str(refresher.dir)] if refresher else [],
+                           mode=self.settings.kernel_jail)
+        ctx.credentials = {**ctx.credentials, "filesystem": f"landlock v{fsjail.abi()}" if jail is not None else "shared"}
+        kernel = LocalKernel(kernel_env(str(ctx.run), env), jail=jail)
+        sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)
         if refresher:
             sb.on_stop.append(refresher.start().stop)
         return sb
@@ -329,8 +335,8 @@ class RunContext:
                 "steering": steering.record(self.svc, self.row["run_id"], self.run)}
 
     def write_manifest(self, status: str, usage: dict | None = None, extra: dict | None = None) -> dict:
-        views_file = self.run / "inputs" / "views.json"
-        views = read_json(views_file) if views_file.exists() else {}
+        pinned = pinned_inputs(self.svc, self.row["run_id"], self.run)
+        views = pinned["views"]
         nb_file = self.run / "notebook.ipynb"
         cells = []
         if nb_file.exists():
@@ -354,9 +360,7 @@ class RunContext:
             "plugins": get_registry().summary(),
             "catalog": [{"dataset": k, "card_version": v["card_version"]} for k, v in sorted(views.items())],
             "uploads": [{"table": k, **v["upload"]} for k, v in sorted(views.items()) if v.get("upload")],
-            "knowledge": {"citations": self.citations,
-                          "structured": read_json(self.run / "inputs" / "knowledge_index.json")
-                          if (self.run / "inputs" / "knowledge_index.json").exists() else []},
+            "knowledge": {"citations": self.citations, "structured": pinned["knowledge_index"]},
             "queries": self._queries(),
             "cells": cells,
             "findings": "findings.json",
@@ -793,9 +797,27 @@ def _record_approval(svc: Services, row: dict, user: str, plan: dict | None, min
                            "card_version": d["version"],
                            "columns": [{"name": c["name"], "exposure": c.get("exposure", "model")} for c in d["card"]["columns"]]}
     views.update(uploads.views(ctx.project_dir, ctx.uploads))
+    knowledge_index = svc.knowledge.copy_structured(ctx.run, ctx.plants)
+    svc.catalog.pin_run_inputs(run_id, views, knowledge_index)
+    # The kernel reads these copies (alc.init); what the run may read is decided from the record above.
     write_json(ctx.run / "inputs" / "views.json", views)
-    write_json(ctx.run / "inputs" / "knowledge_index.json", svc.knowledge.copy_structured(ctx.run, ctx.plants))
+    write_json(ctx.run / "inputs" / "knowledge_index.json", knowledge_index)
     return ctx.plan
+
+
+def pinned_inputs(svc: "Services", run_id: str, run_dir) -> dict:
+    """What a run may read, as pinned when its plan was approved: {"views": ..., "knowledge_index": ...}.
+
+    Credentials, grants, the manifest and replays are built from the database record, never from inputs/views.json:
+    the run's own code can write its folder, and must not widen its own scope. A run approved before the record
+    existed falls back to the folder's copies."""
+    rec = svc.catalog.run_inputs(run_id)
+    if rec is not None:
+        return rec
+    run = as_path(run_dir)
+    views_f, index_f = run / "inputs" / "views.json", run / "inputs" / "knowledge_index.json"
+    return {"views": read_json(views_f) if views_f.exists() else {},
+            "knowledge_index": read_json(index_f) if index_f.exists() else []}
 
 
 CHECKPOINT = "logs/checkpoint.json"
@@ -843,7 +865,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
         raise ValueError(f"run {run_id} is {row['status']}, not approved and running")
     ctx = RunContext(svc, row, user=user)
     question = ctx.question
-    views = read_json(ctx.run / "inputs" / "views.json")
+    pinned = pinned_inputs(svc, run_id, ctx.run)
+    views = pinned["views"]
     model = model or role_model(s, "analysis")
     reviewer = reviewer or role_model(s, "reviewer")
     ctx.models.update(planned_models(ctx.run), analysis=model.name, reviewer=reviewer.name)
@@ -881,7 +904,7 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
         handlers.update(extra_handlers)
         first = (f"Question: {question['text']}\n\nApproved plan:\n{json.dumps(ctx.plan, indent=1)}\n\n"
                  f"Datasets you may query: {sorted(views)}. Structured knowledge available via alc.knowledge(name): "
-                 f"{[k['name'] for k in read_json(ctx.run / 'inputs' / 'knowledge_index.json')]}.")
+                 f"{[k['name'] for k in pinned['knowledge_index']]}.")
         methods = get_registry().method_docs()
         if methods:
             first += f"\nAnalysis methods available in the kernel as alc.methods.<name>(...): {json.dumps(methods)}"
@@ -1103,6 +1126,11 @@ def start_replay(svc: Services, run_id: str, *, user: "str | User", mode: str = 
     qdir = prun.parent.parent
     rid, rdir = create_run(qdir)
     copy_tree(prun / "inputs", rdir / "inputs")
+    # The replay may read what its parent was given when its plan was approved, not what the parent's folder says.
+    pinned = pinned_inputs(svc, run_id, prun)
+    svc.catalog.pin_run_inputs(rid, pinned["views"], pinned["knowledge_index"])
+    write_json(rdir / "inputs" / "views.json", pinned["views"])
+    write_json(rdir / "inputs" / "knowledge_index.json", pinned["knowledge_index"])
     write_json(rdir / "inputs" / "parent_findings.json", read_json(prun / "findings.json"))
     row = {"run_id": rid, "question_id": parent["question_id"], "project": parent["project"],
            "workspace": parent["workspace"], "user_id": user, "path": str(rdir), "mode": mode,
@@ -1123,7 +1151,7 @@ def execute_replay(svc: Services, run_id: str, *, sandbox_url: str | None = None
 
     cells = [c for c in json.loads((prun / "notebook.ipynb").read_text())["cells"] if c["cell_type"] == "code"]
     errors = []
-    views = read_json(rdir / "inputs" / "views.json") if (rdir / "inputs" / "views.json").exists() else {}
+    views = pinned_inputs(svc, run_id, rdir)["views"]
     if mode == "replay":
         views = {}  # a replay reads only the snapshots in its own folder, never the lake
     result_check = None

@@ -20,6 +20,12 @@ from .config import EnvConfig
 from .services import ORIGIN_HEADER, REPO_ROOT, Services
 from .storage import Storage
 
+# The same policy the API sends (src/alchemist/api/app.py CONTENT_SECURITY_POLICY): the SPA's own scripts only.
+CONTENT_SECURITY_POLICY = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' "
+                           "https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                           "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; "
+                           "form-action 'self'; frame-ancestors 'self'")
+
 SPA_REWRITE = """
 function handler(event) {
   var r = event.request;
@@ -52,7 +58,18 @@ class Edge(Construct):
                 origin=origins.S3BucketOrigin.with_origin_access_control(storage.web),
                 viewer_protocol_policy=cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 cache_policy=cf.CachePolicy.CACHING_OPTIMIZED,
-                response_headers_policy=cf.ResponseHeadersPolicy.SECURITY_HEADERS,
+                response_headers_policy=cf.ResponseHeadersPolicy(
+                    self, "SpaHeaders", comment=f"{cfg.prefix} web app security headers",
+                    security_headers_behavior=cf.ResponseSecurityHeadersBehavior(
+                        content_security_policy=cf.ResponseHeadersContentSecurityPolicy(
+                            content_security_policy=CONTENT_SECURITY_POLICY, override=True),
+                        content_type_options=cf.ResponseHeadersContentTypeOptions(override=True),
+                        frame_options=cf.ResponseHeadersFrameOptions(
+                            frame_option=cf.HeadersFrameOption.SAMEORIGIN, override=True),
+                        referrer_policy=cf.ResponseHeadersReferrerPolicy(
+                            referrer_policy=cf.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override=True),
+                        strict_transport_security=cf.ResponseHeadersStrictTransportSecurity(
+                            access_control_max_age=Duration.days(365), include_subdomains=True, override=True))),
                 function_associations=[cf.FunctionAssociation(
                     event_type=cf.FunctionEventType.VIEWER_REQUEST,
                     function=cf.Function(self, "SpaRewrite", code=cf.FunctionCode.from_inline(SPA_REWRITE),

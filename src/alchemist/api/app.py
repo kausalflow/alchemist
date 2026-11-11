@@ -242,6 +242,7 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
     app = FastAPI(title="Alchemist", version=__version__, lifespan=lifespan,
                   description="AI research system for chemical engineering process questions.",
                   openapi_url="/api/openapi.json", docs_url="/api/docs", redoc_url=None)
+    app.add_middleware(SecurityHeaders)
     app.state.settings = settings
     app.state.services_factory = services_factory
     app.state.launcher = launcher
@@ -275,6 +276,39 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
                 return FileResponse(f)
             return FileResponse(index)  # client-side routes
     return app
+
+
+# The web app's own scripts and styles, Google Fonts, and images from here: a script that gets into a page (model text
+# shown as HTML, say) neither runs nor sends anything elsewhere. CloudFront sends the same policy (infra edge.py).
+CONTENT_SECURITY_POLICY = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' "
+                           "https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+                           "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; "
+                           "form-action 'self'; frame-ancestors 'self'")
+
+
+class SecurityHeaders:
+    """ASGI middleware: a Content-Security-Policy on every response that has none (run files set a stricter one),
+    and nosniff. /api/docs keeps its own (it loads Swagger UI from a CDN)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path", "").startswith("/api/docs"):
+            return await self.app(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                names = {k.lower() for k, _ in headers}
+                if b"content-security-policy" not in names:
+                    headers.append((b"content-security-policy", CONTENT_SECURITY_POLICY.encode()))
+                if b"x-content-type-options" not in names:
+                    headers.append((b"x-content-type-options", b"nosniff"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 def __getattr__(name: str):

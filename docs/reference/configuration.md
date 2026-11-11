@@ -71,7 +71,7 @@ never sees these profile names.
 | `ALC_SANDBOX_TOKEN` | unset | on both: the bearer token the API sends and the sandbox requires. Never passed to kernels |
 | `ALC_SANDBOX_MAX_KERNELS` | `4` | on the sandbox: kernels running at once; a run that finds none free fails to start its analysis |
 | `ALC_SANDBOX_IDLE_SECONDS` | `14400` | on the sandbox: a kernel unused this long is stopped when another run needs room |
-| `ALC_KERNEL_JAIL` | `auto` | on the sandbox: confine each kernel with Linux Landlock to its run's datasets and folder where the host supports it; `required` refuses runs where it does not; `off` |
+| `ALC_KERNEL_JAIL` | `auto` | on the sandbox (and the worker, for in-process kernels): see [the analysis kernel](#the-analysis-kernel) |
 | `ALC_SANDBOX_REQUIRE_SCOPED` | `0` | on the sandbox: `1` starts kernels only with the run's own scoped session, which the API sends when `ALC_RUN_ROLE_ARN` is set |
 
 See [Deploy on-prem or in your cloud](../guides/deploy-on-prem.md#the-analysis-sandbox).
@@ -179,6 +179,24 @@ An admin's value on the admin "Models and limits" page overrides `ALC_MAX_STEPS`
 | `ALC_WEB_DIST` | `web/dist` | built web app to serve at `/`; the API alone runs if it is missing |
 
 See [Web app](../guides/web-app.md) and [REST API](api.md).
+
+## The analysis kernel
+
+The kernel runs Python the model wrote, so it gets only what it needs, whether it is a child of the worker (the
+default on a laptop and in-process deployments) or runs in the sandbox service.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ALC_KERNEL_JAIL` | `auto` | confine each kernel with Linux Landlock: it reads its run's local datasets and the system and Python files, and writes only its run folder. `auto` where the machine supports it (not Windows or macOS), `required` refuses runs elsewhere, `off` never. The manifest records `filesystem: landlock v<N>` or `shared` |
+| `ALC_KERNEL_ENV` | unset | extra variables the kernel may inherit, comma-separated names or prefixes ending in `*` (a plugin's storage setting, say) |
+
+The kernel inherits only system variables (`PATH`, `HOME`, locale, temp folders, the Windows system variables),
+certificate and proxy settings, `AWS_*` (except `AWS_BEARER_TOKEN_BEDROCK`; with a run role these are replaced by the
+run's own session), `CLOUDPATHLIB_*`, `ALC_PSEUDONYM_KEY`, `ALC_PLUGINS`, `ALC_PLUGIN_MODULES` and the broker's run
+variables. The database URL and password, model API keys, Bedrock profile, OIDC settings and the sandbox token never
+reach it, and on Linux the process that starts the kernel makes itself non-dumpable, so the kernel cannot read that
+process's environment in `/proc` either. On Windows and macOS there is no Landlock, so a kernel there can still read the files of the user running
+Alchemist: fine for a demo on your own data, not for shared plant data.
 
 ## Security and provenance
 
