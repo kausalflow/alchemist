@@ -24,6 +24,8 @@ nav = [
     "concepts/knowledge.md",
   ] },
   { "Guides" = [
+    "guides/pilot.md",
+    "guides/docker-laptop.md",
     "guides/web-app.md",
     "guides/models.md",
     "guides/bedrock-local.md",

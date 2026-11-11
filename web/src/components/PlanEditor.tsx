@@ -4,12 +4,14 @@ import { useApi, useSession } from "../session";
 import { Chip, Collapsible, ErrorNote, day, when } from "./bits";
 import Icon from "./icons";
 import StepList, { clock, describe } from "./StepList";
+import { useSimple } from "../viewMode";
 
 const EXPIRY_DAYS = 14;
 const dsName = (d: string) => d.replace(/^ds\./, "");
 
 /** The approval gate: strike, add, edit or reorder candidate causes, then approve. Nothing reads data before this. */
 export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDetail; onApproved: () => void; onCancel?: () => Promise<void> }) {
+  const simple = useSimple();
   const { meta } = useSession();
   const original = run.plan as Plan;
   const [plan, setPlan] = useState<Plan>(() => structuredClone(original));
@@ -337,7 +339,9 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
           {canApprove && (
             <p className="muted small">
               Approving lets the agent read the {reads.length} data {reads.length === 1 ? "source" : "sources"} listed
-              {meta
+              {meta && simple
+                ? `, for up to ${minutes.trim() || meta.budgets.max_run_minutes} minutes`
+                : meta
                 ? `, for up to ${minutes.trim() || meta.budgets.max_run_minutes} minutes, ${meta.budgets.max_steps} tool calls and ${meta.budgets.max_output_tokens.toLocaleString()} output tokens`
                 : ""}
               . You can pause or stop it at any step.
@@ -354,13 +358,20 @@ export default function PlanEditor({ run, onApproved, onCancel }: { run: RunDeta
           {reads.length === 0 && <p className="muted small pad-row">No data source is named in the plan.</p>}
           {reads.map((d) => {
             const s = datasets?.find((x) => x.dataset === d);
+            const up = (run.uploads ?? []).find((u) => u.tables.some((t) => t.name === d));
+            const sheet = up?.tables.find((t) => t.name === d);
             return (
               <div key={d} className="ds-row">
                 <div className="spread">
                   <span className="mono accent-text">{d}</span>
-                  {s && <span className="faint small">card v{s.card_version}</span>}
+                  {s && !simple && <span className="faint small">card v{s.card_version}</span>}
                 </div>
-                {s ? (
+                {up && sheet ? (
+                  <div className="small muted">
+                    Your file {up.file.name}
+                    {sheet.sheet ? `, sheet ${sheet.sheet}` : ""} · {sheet.rows.toLocaleString()} rows
+                  </div>
+                ) : s ? (
                   <>
                     {s.description && <div className="small muted">{s.description}</div>}
                     <div className="small faint">

@@ -41,6 +41,12 @@ export function describe(s: Step): string {
   return `${verb}${purpose ? `: ${h}${purpose}` : ""}`;
 }
 
+/** How a note names the step it is about, so the agent knows which query, calculation or figure is meant. */
+const stepRef = (n: number, s: Step) => {
+  const what = describe(s);
+  return `About step #${n} (${what.length > 90 ? `${what.slice(0, 87)}...` : what}): `;
+};
+
 /** True once the agent has handed its findings to the reviewer (or is building the report). */
 export const isReviewing = (steps: Step[]) => steps.some((s) => s.tool === "finish_analysis" || s.tool === "build_report");
 
@@ -55,11 +61,14 @@ export default function StepList({
   live = false,
   liveText,
   runId,
+  onComment,
 }: {
   steps: Step[];
   live?: boolean;
   liveText?: string;
   runId?: string;
+  /** Offered on each step while the run takes notes: start a note to the agent about this step. */
+  onComment?: (ref: string) => void;
 }) {
   const simple = useSimple();
   const shown = steps.filter((s) => s.type !== "model" || (s.text && s.text.trim()));
@@ -70,6 +79,7 @@ export default function StepList({
       {shown.map((s, i) => {
         const kind = kindOf(s);
         if (s.type === "tool") n += 1;
+        const num = n;
         const sql = typeof s.input?.sql === "string" ? (s.input.sql as string).trim() : null;
         const code = typeof s.input?.code === "string" ? (s.input.code as string) : null;
         return (
@@ -110,6 +120,11 @@ export default function StepList({
                 </Collapsible>
               )}
               {simple && s.type === "tool" && s.at ? <div className="faint tiny">{clock(s.at)}</div> : null}
+              {onComment && s.type === "tool" && (
+                <button type="button" className="link small step-comment" onClick={() => onComment(stepRef(num, s))}>
+                  Comment on this step
+                </button>
+              )}
               {!simple && s.type === "tool" && (
                 <div className="mono faint tiny">
                   {s.tool}

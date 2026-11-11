@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, TERMINAL, type RunDetail, type RunNote } from "../api";
 import { ErrorNote, when } from "./bits";
 import Icon from "./icons";
@@ -44,11 +44,41 @@ export function NoteList({ run, notes, newestFirst = false }: { run: RunDetail; 
   );
 }
 
+// "Comment on this step" in the activity log starts a note in whichever note box is on the page (the steer box while
+// the agent works, the ask-for-more box when its report waits for review).
+const quoteListeners = new Set<(ref: string) => void>();
+
+export function commentOnStep(ref: string) {
+  quoteListeners.forEach((l) => l(ref));
+}
+
+function useStepComments(setText: (f: (t: string) => string) => void) {
+  const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const l = (ref: string) => {
+      setText((t) => (t.trim() ? `${t.trimEnd()}\n${ref}` : ref));
+      setTimeout(() => {
+        const el = box.current;
+        if (!el) return;
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }, 0);
+    };
+    quoteListeners.add(l);
+    return () => {
+      quoteListeners.delete(l);
+    };
+  }, [setText]);
+  return box;
+}
+
 /** A box for leaving the agent a note while it plans or analyses, or while the run is paused. */
 export function SteerPanel({ run, reload }: { run: RunDetail; reload: () => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const box = useStepComments(setText);
   const notes = run.notes ?? [];
   const status = run.run.status;
   if (!run.permissions?.note && !notes.length) return null;
@@ -77,6 +107,7 @@ export function SteerPanel({ run, reload }: { run: RunDetail; reload: () => void
           <label className="field">
             <span className="field-label">Note for the agent</span>
             <textarea
+              ref={box}
               rows={3}
               value={text}
               maxLength={4000}
@@ -92,6 +123,7 @@ export function SteerPanel({ run, reload }: { run: RunDetail; reload: () => void
           <button type="button" className="outline" onClick={send} disabled={busy || !text.trim()}>
             <Icon name="note" /> {busy ? "Sending…" : "Send note"}
           </button>
+          {status === "running" && <div className="small muted">To point at one query, calculation or figure, use Comment on this step under it.</div>}
           <div className="small muted">
             {status === "paused"
               ? "The agent reads it when the run resumes."
@@ -126,6 +158,7 @@ export function AskForMore({ run, reload }: { run: RunDetail; reload: () => void
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const box = useStepComments(setText);
   const go = async (finish: boolean) => {
     setBusy(true);
     setError(null);
@@ -145,6 +178,7 @@ export function AskForMore({ run, reload }: { run: RunDetail; reload: () => void
       <label className="field">
         <span className="field-label">What more should it do?</span>
         <textarea
+          ref={box}
           rows={4}
           value={text}
           maxLength={4000}

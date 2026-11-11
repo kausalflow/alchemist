@@ -15,6 +15,10 @@ const DEMO = {
   to: "2026-08-09",
 };
 
+/** People type project names like "Line 2 yield"; a project name is a folder name, so spaces become dashes and other
+ * characters a folder name cannot have are dropped as they type. */
+const projectName = (v: string) => v.replace(/\s+/g, "-").replace(/[^A-Za-z0-9_.-]/g, "").replace(/^[^A-Za-z0-9]+/, "");
+
 export default function AskPage() {
   const { me, meta } = useSession();
   const { workspaces, current } = useWorkspace();
@@ -181,7 +185,7 @@ export default function AskPage() {
                 className="mono"
                 list="projects"
                 value={project}
-                onChange={(e) => (setProject(e.target.value), setUploadIds([]))}
+                onChange={(e) => (setProject(projectName(e.target.value)), setUploadIds([]))}
                 placeholder="line2-yield"
                 pattern="[A-Za-z0-9][A-Za-z0-9_.\-]*"
                 title="letters, digits, dot, dash and underscore"

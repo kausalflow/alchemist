@@ -73,7 +73,7 @@ export default function DataFiles({
         <span className="mono">ds.up_…</span>; the file is kept unchanged with the run's provenance.
       </p>
       {!ready ? (
-        <p className="faint small">Name the project below first: files belong to a project, so later questions can use them too.</p>
+        <p className="faint small">Name the project above first: files belong to a project, so later questions in it can use them too.</p>
       ) : (
         <>
           <div className="grid3">

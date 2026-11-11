@@ -1,5 +1,6 @@
 // Simple or detailed view, remembered in this browser. Simple hides code, SQL, tool names and the technical panels,
-// for people who want the story, figures, tables and findings; detailed shows everything as before.
+// for people who want the story, figures, tables and findings; detailed shows everything. Simple is the default, since
+// most people asking questions are engineers rather than coders; the choice is remembered once someone switches.
 
 import { useSyncExternalStore } from "react";
 
@@ -10,9 +11,9 @@ const listeners = new Set<() => void>();
 
 function read(): ViewMode {
   try {
-    return localStorage.getItem(KEY) === "simple" ? "simple" : "detailed";
+    return localStorage.getItem(KEY) === "detailed" ? "detailed" : "simple";
   } catch {
-    return "detailed";
+    return "simple";
   }
 }
 

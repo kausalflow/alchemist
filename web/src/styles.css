@@ -681,3 +681,7 @@ iframe.report { width: 100%; height: 75vh; border: 1px solid var(--line); border
 .nb-simple .nbcell .collapsible { margin: 2px 0 6px; }
 .nbmd p { margin: 6px 0; }
 .nb-h { font-size: 17px; margin: 14px 0 6px; }
+
+/* "Comment on this step" under each step of the activity log, while the agent takes notes. */
+.log-body .step-comment { display: block; margin-top: 4px; color: var(--muted); }
+.log-body .step-comment:hover:not(:disabled) { color: var(--accent-text); }

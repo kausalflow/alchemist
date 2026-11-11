@@ -34,6 +34,8 @@ flowchart LR
 
 Everything is in [`deploy/compose`](https://github.com/kausalflow/alchemist/tree/main/deploy/compose).
 
+To try it on a laptop with Bedrock and your own AWS profile first, see [Try the Docker setup on your laptop](docker-laptop.md).
+
 ```bash
 git clone https://github.com/kausalflow/alchemist && cd alchemist/deploy/compose
 cp .env.example .env        # set POSTGRES_PASSWORD, ALC_PSEUDONYM_KEY, ALC_SANDBOX_TOKEN, the models and sign-in
