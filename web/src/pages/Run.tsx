@@ -7,7 +7,7 @@ import Icon from "../components/icons";
 import PlanEditor from "../components/PlanEditor";
 import StepList, { isReviewing } from "../components/StepList";
 import Stepper from "../components/Stepper";
-import { AskForMore, SteerPanel } from "../components/Steer";
+import { AskForMore, SteerPanel, commentOnStep } from "../components/Steer";
 import NotebookView from "../components/Notebook";
 import { ViewToggle, useSimple } from "../viewMode";
 import { FigureStrip } from "../components/Visuals";
@@ -17,6 +17,7 @@ import { runTabs } from "../runTabs";
 export default function RunPage() {
   const { runId } = useParams();
   const nav = useNavigate();
+  const simple = useSimple();
   const { data: run, error, reload } = useApi<RunDetail>(`/runs/${runId}`);
   const [live, setLive] = useState<Step[]>([]);
   const status = run?.run.status;
@@ -74,7 +75,7 @@ export default function RunPage() {
       <span className="crumb">
         {r.workspace} / <span className="mono">{r.project}</span>
       </span>
-      <span className="mono faint small">run {r.run_id}</span>
+      {!simple && <span className="mono faint small">run {r.run_id}</span>}
     </>
   );
 
@@ -354,6 +355,7 @@ function RunningView({
             steps={steps}
             runId={r.run_id}
             live={!paused}
+            onComment={(reviewPause ? run.permissions?.resume : run.permissions?.note) ? commentOnStep : undefined}
             liveText={
               r.mode !== "live"
                 ? "Re-executing the original notebook cells in a fresh kernel…"

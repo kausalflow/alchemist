@@ -116,6 +116,10 @@ async function session(user) {
   if (user) await ctx.addCookies([{ name: "alc_user", value: user, url: BASE }]);
   await ctx.route((url) => !url.href.startsWith(BASE), offline);
   await ctx.route(`${BASE}/api/**`, steadyRoute);
+  // The app opens in the simple view; the shots show the detailed view unless a step switches to simple.
+  await ctx.addInitScript(() => {
+    if (!localStorage.getItem("alchemist.view")) localStorage.setItem("alchemist.view", "detailed");
+  });
   const page = await ctx.newPage();
   await page.clock.setFixedTime(FIXED + 10 * 60_000);
   page.on("pageerror", (e) => console.error(`page error: ${e.message}`));

@@ -83,7 +83,8 @@ missing values, so gaps or odd data stand out before any statistics run.
 Notebook, next to Activity, shows the run's notebook as it is now, cell by cell with outputs and figures, and
 updates after every step. Seen something worth following up? Steer or ask for more leaves the agent a note: it
 reads it before its next step, and if it has already written its report, it does what you asked, has the new work
-reviewed and reports again.
+reviewed and reports again. To point at one query, calculation or figure, click Comment on this step under it in the
+activity log: the note box starts with "About step #6 (...)", so the agent knows which step you mean.
 
 ![Running: the live notebook](assets/ui/running-notebook-light.png#only-light)
 ![Running: the live notebook](assets/ui/running-notebook-dark.png#only-dark)
@@ -92,8 +93,8 @@ reviewed and reports again.
 
 Simple, at the top of every run, hides code, SQL, tool names, token counts and the Agent steps and Provenance tabs,
 and keeps the story: what the agent is doing and why, figures, data previews, findings and the report. In the
-notebook each step shows its purpose and results, with the code behind Show code. Detailed shows everything. The
-choice is remembered in your browser.
+notebook each step shows its purpose and results, with the code behind Show code. Detailed shows everything. Runs
+open in Simple until you switch; the choice is remembered in your browser.
 
 ![Running in the simple view](assets/ui/running-simple-light.png#only-light)
 ![Running in the simple view](assets/ui/running-simple-dark.png#only-dark)
