@@ -187,16 +187,18 @@ default on a laptop and in-process deployments) or runs in the sandbox service.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ALC_KERNEL_JAIL` | `auto` | confine each kernel with Linux Landlock: it reads its run's local datasets and the system and Python files, and writes only its run folder. `auto` where the machine supports it (not Windows or macOS), `required` refuses runs elsewhere, `off` never. The manifest records `filesystem: landlock v<N>` or `shared` |
+| `ALC_KERNEL_JAIL` | `auto` | confine each kernel with Linux Landlock: it reads its run folder and the system and Python files, and writes only its run folder; the query step is confined the same way to the run's local datasets and its run folder. `auto` where the machine supports it (not Windows or macOS), `required` refuses runs elsewhere, `off` never. The manifest records `filesystem: landlock v<N>` or `shared` |
 | `ALC_KERNEL_ENV` | unset | extra variables the kernel may inherit, comma-separated names or prefixes ending in `*` (a plugin's storage setting, say) |
 
 The kernel inherits only system variables (`PATH`, `HOME`, locale, temp folders, the Windows system variables),
 certificate and proxy settings, `AWS_*` (except `AWS_BEARER_TOKEN_BEDROCK`; with a run role these are replaced by the
-run's own session), `CLOUDPATHLIB_*`, `ALC_PSEUDONYM_KEY`, `ALC_PLUGINS`, `ALC_PLUGIN_MODULES` and the broker's run
-variables. The database URL and password, model API keys, Bedrock profile, OIDC settings and the sandbox token never
-reach it, and on Linux the process that starts the kernel makes itself non-dumpable, so the kernel cannot read that
+run's own kernel session), `CLOUDPATHLIB_*`, `ALC_PLUGINS`, `ALC_PLUGIN_MODULES`, `ALC_RUN_ID` and
+`ALC_BROKER_FUNCTION`. The database URL and password, model API keys, Bedrock profile, OIDC settings, the sandbox
+token, the pseudonym key and the run's broker token never reach it (not even through `ALC_KERNEL_ENV`): the kernel
+reads no dataset, its queries run in the query step ([querying through views](../concepts/data-catalog.md#querying-through-views)).
+Without a run role and with a local workspace (a laptop), the kernel gets no AWS identity at all. On Linux the process that starts the kernel makes itself non-dumpable, so the kernel cannot read that
 process's environment in `/proc` either. On Windows and macOS there is no Landlock, so a kernel there can still read the files of the user running
-Alchemist: fine for a demo on your own data, not for shared plant data.
+Alchemist, local dataset files included: fine for a demo on your own data, not for shared plant data.
 
 ## Security and provenance
 
@@ -207,5 +209,5 @@ Alchemist: fine for a demo on your own data, not for shared plant data.
 
 !!! warning
 
-    Change `ALC_PSEUDONYM_KEY` before using real data. The same key must be used for a replay to reproduce
-    pseudonymised values.
+    Change `ALC_PSEUDONYM_KEY` before using real data. The same key must be used for a rerun to reproduce
+    pseudonymised values. Only the query step holds it, never the kernel.

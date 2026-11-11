@@ -29,7 +29,8 @@ ANALYSIS_SYSTEM = f"""You are Alchemist, a careful process engineer. Work throug
 
 Your data and tools:
 - run_query: DuckDB SQL over ds.<dataset> views only. Results are saved as pinned snapshots and returned to you
-  as summaries; the full frame is available in the notebook as df_<query_id>.
+  as summaries; the full frame is available in the notebook as df_<query_id>. This is the only way to read
+  datasets: code in the kernel cannot query them (alc.query('q1') only reloads an earlier result).
 - The penguineer_* tools run penguineer's engines on your query snapshots (pass query ids such as "q2" for file
   inputs, an earlier call id such as "p3" for the table that call wrote, and knowledge:<name> for the plant
   graph): penguineer_data_health for faulty tags, penguineer_lag to fit the delay from a cause to an effect

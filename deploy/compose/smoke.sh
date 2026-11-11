@@ -20,7 +20,7 @@ docker compose exec -T -e ALC_ACCESS=/data/access.yaml -e ALC_KNOWLEDGE=/data/kn
   sh -c "alchemist demo setup && alchemist demo run" | tee /tmp/alc-demo.txt
 grep -q "Verify original: True" /tmp/alc-demo.txt
 # The kernels ran in the sandbox, which answers only with the token and reaches neither the database nor the internet.
-docker compose logs sandbox | grep -q '"POST /start HTTP/1.1" 200'
+docker compose logs sandbox | grep '"POST /start HTTP/1.1" 200' >/dev/null  # reads all the logs: grep -q would close the pipe early, and under pipefail the logs command's broken pipe fails the script
 # Each kernel confined itself to its run (Landlock), and the run's manifest says so.
 docker compose exec -T api sh -c "grep -rl '\"filesystem\": \"landlock' /data/workspace --include manifest.json" | grep -q .
 test "$(docker compose exec -T api python -c "import urllib.request,urllib.error
@@ -51,7 +51,7 @@ wait_for "$rid" awaiting_approval
 curl -fsS -X POST -H "X-Alchemist-User: engineer" -H "Content-Type: application/json" -d '{}' \
   "$api/runs/$rid/plan:approve" >/dev/null
 wait_for "$rid" completed
-docker compose logs worker | grep -q "analyse step of run $rid"
+docker compose logs worker | grep "analyse step of run $rid" >/dev/null
 
 docker compose cp ../../tests/fake_piwebapi.py api:/tmp/fake_piwebapi.py
 docker compose exec -d -T api python -c "

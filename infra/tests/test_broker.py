@@ -20,18 +20,33 @@ def grant(**over):
     g = {"schema": "alchemist.grant/v1", "run_id": RUN, "user": "eng_p1", "plants": ["P01"],
          "read_prefixes": ["s3://lake-a/plant=P01/"], "knowledge_prefixes": ["s3://kn/P01/"],
          "run_prefix": f"s3://ws/workspaces/quality/projects/p/questions/q/runs/{RUN}/",
-         "token_sha256": hashlib.sha256(b"secret").hexdigest(), "expires_at": "2026-10-15T09:00:00Z"}
+         "token_sha256": {"kernel": hashlib.sha256(b"secret").hexdigest(),
+                          "query": hashlib.sha256(b"query-secret").hexdigest()},
+         "expires_at": "2026-10-15T09:00:00Z"}
     g.update(over)
     return g
 
 
-def check(g, token="secret"):
+def check(g, token="secret", scope="kernel"):
     broker.validate_grant(g, RUN, token, workspace_bucket="ws", lake_buckets={"lake-a", "lake-b"},
-                          knowledge_bucket="kn", now=NOW)
+                          knowledge_bucket="kn", now=NOW, scope=scope)
 
 
 def test_valid_grant_passes():
     check(grant())
+    check(grant(), "query-secret", "query")
+
+
+@pytest.mark.parametrize("token,scope", [("secret", "query"), ("query-secret", "kernel"), ("secret", "admin")])
+def test_each_scope_takes_only_its_own_token(token, scope):
+    """The kernel holds the kernel token; it must not get the query scope, which reads the lake (PA-25)."""
+    with pytest.raises(broker.BrokerError, match="bad token|unknown scope"):
+        check(grant(), token, scope)
+
+
+def test_a_grant_without_scope_tokens_is_refused():
+    with pytest.raises(broker.BrokerError, match="bad token"):
+        check(grant(token_sha256=hashlib.sha256(b"secret").hexdigest()))
 
 
 @pytest.mark.parametrize("over,token,msg", [
@@ -50,29 +65,38 @@ def test_bad_grants_are_refused(over, token, msg):
         check(grant(**over), token)
 
 
-def test_session_policy_is_limited_to_the_grant():
-    p = broker.session_policy(grant())
+RUN_ARN = f"arn:aws:s3:::ws/workspaces/quality/projects/p/questions/q/runs/{RUN}/"
+
+
+def test_query_policy_is_limited_to_the_grant():
+    p = broker.session_policy(grant(), "query")
     text = json.dumps(p)
     get = next(s for s in p["Statement"] if s["Action"] == "s3:GetObject")
-    assert get["Resource"] == sorted([
-        "arn:aws:s3:::lake-a/plant=P01/*", "arn:aws:s3:::kn/P01/*",
-        f"arn:aws:s3:::ws/workspaces/quality/projects/p/questions/q/runs/{RUN}/*"])
+    assert get["Resource"] == sorted(["arn:aws:s3:::lake-a/plant=P01/*", "arn:aws:s3:::kn/P01/*", f"{RUN_ARN}*"])
     put = next(s for s in p["Statement"] if "s3:PutObject" in s["Action"])
-    assert put["Resource"] == f"arn:aws:s3:::ws/workspaces/quality/projects/p/questions/q/runs/{RUN}/*"
+    # The query step writes results and their record, so never the seal or the inputs pinned at approval.
+    assert put["Resource"] == [f"{RUN_ARN}inputs/*.parquet", f"{RUN_ARN}inputs/queries.json"]
     lists = {s["Resource"]: s["Condition"]["StringLike"]["s3:prefix"] for s in p["Statement"]
              if s["Action"] == "s3:ListBucket"}
     assert lists == {"arn:aws:s3:::kn": ["P01/*"], "arn:aws:s3:::lake-a": ["plant=P01/*"],
                      "arn:aws:s3:::ws": [f"workspaces/quality/projects/p/questions/q/runs/{RUN}/*"]}
     assert "plant=P02" not in text and "lake-b" not in text
+
+
+def test_kernel_policy_reads_no_lake_data():
+    p = broker.session_policy(grant())  # the kernel scope is the default
+    text = json.dumps(p)
+    assert "lake-a" not in text and "plant=P01" not in text
+    put = next(s for s in p["Statement"] if s["Effect"] == "Allow" and "s3:PutObject" in s["Action"])
+    assert put["Resource"] == f"{RUN_ARN}*"
     deny = next(s for s in p["Statement"] if s["Effect"] == "Deny")
-    assert deny["Resource"][0].endswith(f"/runs/{RUN}/SEALED")
-    assert any(r.endswith(f"/runs/{RUN}/inputs/views.json") for r in deny["Resource"])
+    assert deny["Resource"] == [f"{RUN_ARN}SEALED", f"{RUN_ARN}inputs/*"]
 
 
 def test_too_many_prefixes_is_an_error():
     many = [f"s3://lake-a/plant=P{i:03d}/line={j}/" for i in range(20) for j in range(5)]
     with pytest.raises(broker.BrokerError, match="too many prefixes"):
-        broker.session_policy(grant(read_prefixes=many))
+        broker.session_policy(grant(read_prefixes=many), "query")
 
 
 class FakeS3:
@@ -100,8 +124,11 @@ def test_issue_returns_credential_process_json():
     assert out["Version"] == 1 and out["AccessKeyId"] == "AK" and out["Expiration"].startswith("2026-10-15T09:00")
     assert s3.calls == [("ws", f"_grants/{RUN}.json")]
     assert sts.kw["RoleArn"] == ENV["RUN_ROLE_ARN"] and sts.kw["DurationSeconds"] == 3600
-    assert {t["Key"]: t["Value"] for t in sts.kw["Tags"]} == {"run_id": RUN, "user": "eng_p1", "plants": "P01"}
+    assert {t["Key"]: t["Value"] for t in sts.kw["Tags"]} == {"run_id": RUN, "user": "eng_p1", "plants": "P01",
+                                                              "scope": "kernel"}
     assert json.loads(sts.kw["Policy"]) == broker.session_policy(grant())
+    broker.issue(RUN, "query-secret", s3=FakeS3(grant()), sts=sts, env=ENV, now=NOW, scope="query")
+    assert json.loads(sts.kw["Policy"]) == broker.session_policy(grant(), "query")
 
 
 def test_issue_shortens_the_session_to_the_grant_but_not_below_sts_minimum():

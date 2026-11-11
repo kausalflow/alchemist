@@ -12,6 +12,7 @@ import importlib.metadata
 import json
 import logging
 import math
+import os
 import platform
 import time
 from pathlib import Path
@@ -31,7 +32,8 @@ from .model_roles import with_choices
 from .paths import as_path, copy_tree, read_json, read_yaml, write_json, write_text
 from .plugins import get_registry
 from .report import ReportError, render
-from .sandbox import LocalKernel, RemoteKernel, Sandbox, finding_cell, kernel_env, kernel_jail, query_cell
+from .querystep import QueryFailed, QueryRunner
+from .sandbox import LocalKernel, RemoteKernel, Sandbox, finding_cell, kernel_base_env, kernel_env, kernel_jail
 from .workspace import (create_question, create_run, ensure_project, project_dir, seal, update_question, verify)
 
 log = logging.getLogger("alchemist.run")
@@ -77,59 +79,92 @@ class Services:
         self.knowledge = knowledge or Knowledge(settings.knowledge_root, packs=list(reg.knowledge_packs))
         self.broker = broker or CredentialBroker.from_settings(settings)
 
-    def sandbox_env(self, ctx: "RunContext", views: dict) -> tuple[dict, RefreshingCredentials | None]:
-        """Kernel environment: the pseudonym key, and the run's own S3 credentials when a run role is set.
+    def sandbox_env(self, ctx: "RunContext", views: dict, scope: str = "kernel") -> tuple[dict, RefreshingCredentials | None]:
+        """The run's own S3 credentials for one scope (credentials.SCOPES) when a run role is set: "kernel" for the
+        kernel (its run folder only), "query" for the query step (the run's datasets, and the run's inputs/).
 
         The credentials come with the refresher that re-issues them before they expire; the caller starts it and
-        stops it with the kernel.
+        stops it with the kernel. The manifest records the kernel's in ctx.credentials and the query step's under
+        its "query" key.
         """
-        env = {"ALC_PSEUDONYM_KEY": self.settings.pseudonym_key}
+        def record(rec: dict) -> None:
+            if scope == "kernel":
+                ctx.credentials = {**rec, **({"query": ctx.credentials["query"]} if "query" in ctx.credentials else {})}
+            else:
+                ctx.credentials = {**ctx.credentials, "query": rec}
 
         def issue(policy_out=None):
             return self.broker.issue(run_id=ctx.row["run_id"], user_id=ctx.user_id, workspace=ctx.row["workspace"],
                                      run_dir=str(ctx.run), read_globs=[v["glob"] for v in views.values()],
-                                     policy_out=policy_out)
+                                     policy_out=policy_out, scope=scope)
 
-        creds = issue(ctx.run / "logs" / "session_policy.json")  # later sessions carry the same policy
+        # later sessions carry the same policy
+        creds = issue(ctx.run / "logs" / ("session_policy.json" if scope == "kernel" else "query_session_policy.json"))
         if not creds:
-            ctx.credentials = {"mode": "ambient"}
-            return env, None
+            record({"mode": "ambient"})
+            return {}, None
         lifetime = (creds.expires_at() - dt.datetime.now(dt.timezone.utc)).total_seconds()
         refresher = RefreshingCredentials(issue, first=creds, refresh_before=min(1800, max(lifetime / 2, 60)))
-        ctx.credentials = refresher.record()
-        env.update(refresher.env())
-        return env, refresher
+        record(refresher.record())
+        return refresher.env(), refresher
+
+    def query_runner(self, ctx: "RunContext", views: dict) -> tuple[QueryRunner, RefreshingCredentials | None]:
+        """The query step of an in-process kernel's run: its own process, with the run's query credentials."""
+        env, refresher = self.sandbox_env(ctx, views, "query")
+        runner = QueryRunner({**kernel_base_env(os.environ), **env}, key=self.settings.pseudonym_key,
+                             read_paths=local_read_paths(views), extra_read=[str(refresher.dir)] if refresher else [],
+                             jail_mode=self.settings.kernel_jail)
+        return runner, refresher
 
     def sandbox(self, ctx: "RunContext", views: dict, *, run_mode: str, sandbox_url: str | None = None) -> Sandbox:
         """The run's kernel: a local child process, or the sandbox at sandbox_url (a separate sandbox task, or the
-        sandbox service ALC_SANDBOX_URL names)."""
+        sandbox service ALC_SANDBOX_URL names). Either way its queries run outside the kernel, in the query step
+        (querystep.py), the only place that reads the run's datasets and holds the pseudonym key."""
         sandbox_url = sandbox_url or self.settings.sandbox_url
+        queries = run_mode != "replay" and bool(views)  # a replay reads only the snapshots in its folder
         if sandbox_url:
             kernel = RemoteKernel(sandbox_url, run_dir=str(ctx.run), run_mode=run_mode, seed=self.settings.seed,
                                   read_paths=local_read_paths(views))
-            refresher = None
+            refreshers = []
             if self.settings.sandbox_mode != "separate" and getattr(self.broker, "enabled", False):
-                # The sandbox service holds no storage keys: this worker issues the run's scoped session, sends it
-                # with /start, and sends each new one before the last expires.
-                _, refresher = self.sandbox_env(ctx, views)
-                kernel.push_first(refresher.current.process_json(), refresher.record())
-                refresher.on_issue.append(lambda creds: kernel.push_credentials(creds.process_json()))
-            sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)
-            if refresher:
-                sb.on_stop.append(refresher.start().stop)
+                # The sandbox service holds no storage keys: this worker issues the run's scoped sessions (one for
+                # the kernel, one for the query step), sends them with /start, and sends each new one before the
+                # last expires.
+                _, rk = self.sandbox_env(ctx, views, "kernel")
+                rq = self.sandbox_env(ctx, views, "query")[1] if queries else None
+                kernel.push_first(rk.current.process_json(), ctx.credentials,
+                                  rq.current.process_json() if rq else None)
+                rk.on_issue.append(lambda creds: kernel.push_credentials(creds.process_json()))
+                refreshers.append(rk)
+                if rq:
+                    rq.on_issue.append(lambda creds: kernel.push_credentials(creds.process_json(), "query"))
+                    refreshers.append(rq)
+            step = (lambda qid, sql, mode: kernel.query(views=views, qid=qid, sql=sql, mode=mode)) if queries else None
+            sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel, query_step=step)
+            for r in refreshers:
+                sb.on_stop.append(r.start().stop)
             return sb
         if self.settings.sandbox_mode == "separate":
             raise ValueError("ALC_SANDBOX_MODE=separate: give the sandbox's address (--sandbox-task-arn or --sandbox-url)")
-        env, refresher = self.sandbox_env(ctx, views)
+        env, refresher = self.sandbox_env(ctx, views, "kernel")
+        if refresher is None and "://" not in str(ctx.run):
+            # No run role, and a local run folder (a laptop): the kernel needs no storage access at all, so it gets
+            # none, and cannot read the lake with this process's own AWS identity.
+            env = no_storage_env(os.environ)
+        refreshers = [refresher] if refresher else []
+        step = None
+        if queries:
+            runner, qrefresher = self.query_runner(ctx, views)
+            refreshers += [qrefresher] if qrefresher else []
+            step = lambda qid, sql, mode: runner.run(run_dir=str(ctx.run), views=views, qid=qid, sql=sql, mode=mode)  # noqa: E731
         # The kernel runs code the model wrote: it gets an allow-listed environment (sandbox.kernel_env), and where
-        # Linux Landlock is available it reads only its run's local datasets and writes only its run folder.
-        jail = kernel_jail(str(ctx.run), local_read_paths(views), [str(refresher.dir)] if refresher else [],
-                           mode=self.settings.kernel_jail)
+        # Linux Landlock is available it reads and writes only its run folder; datasets are read by the query step.
+        jail = kernel_jail(str(ctx.run), [], [str(refresher.dir)] if refresher else [], mode=self.settings.kernel_jail)
         ctx.credentials = {**ctx.credentials, "filesystem": f"landlock v{fsjail.abi()}" if jail is not None else "shared"}
         kernel = LocalKernel(kernel_env(str(ctx.run), env), jail=jail)
-        sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel)
-        if refresher:
-            sb.on_stop.append(refresher.start().stop)
+        sb = Sandbox(str(ctx.run), run_mode=run_mode, seed=self.settings.seed, kernel=kernel, query_step=step)
+        for r in refreshers:
+            sb.on_stop.append(r.start().stop)
         return sb
 
     @property
@@ -138,8 +173,20 @@ class Services:
         return self.settings.sandbox_mode != "separate"
 
 
+def no_storage_env(base: dict) -> dict:
+    """Kernel environment changes that leave it no storage identity: no AWS variables, credentials or config files
+    (removed or pointed at nothing), and no instance metadata. For a kernel whose run folder is local."""
+    from .credentials import AMBIENT_AWS_VARS
+
+    env: dict = {k: None for k in base if k.upper().startswith("AWS_")}
+    env.update({k: None for k in AMBIENT_AWS_VARS})
+    env.update({"AWS_SHARED_CREDENTIALS_FILE": os.devnull, "AWS_CONFIG_FILE": os.devnull,
+                "AWS_EC2_METADATA_DISABLED": "true"})
+    return env
+
+
 def local_read_paths(views: dict) -> list[str]:
-    """The local folders a run's datasets live in, which its kernel may read (object store globs need none)."""
+    """The local folders a run's datasets live in, which its query step may read (object store globs need none)."""
     from .credentials import _glob_prefix
 
     return sorted({_glob_prefix(v["glob"]) or v["glob"] for v in views.values() if "://" not in v["glob"]})
@@ -233,7 +280,8 @@ class RunContext:
     def run_query(self, inp: dict) -> ToolOutput:
         self.query_n += 1
         qid = f"q{self.query_n}"
-        res = self.sandbox.execute(query_cell(qid, inp["sql"]), kind="query", meta={"query_id": qid, "purpose": inp.get("purpose", "")})
+        # The query step runs the SQL outside the kernel; the cell loads its result (Sandbox.query).
+        res = self.sandbox.query(qid, inp["sql"], meta={"purpose": inp.get("purpose", "")})
         if res.error:
             self.query_n -= 1
             return ToolOutput(f"Query failed: {res.error}", is_error=True)
@@ -1165,9 +1213,15 @@ def execute_replay(svc: Services, run_id: str, *, sandbox_url: str | None = None
             if meta.get("kind") in ("parameters", "setup"):
                 continue
             src = "".join(c["source"]) if isinstance(c["source"], list) else c["source"]
+            failed = None
+            if mode == "rerun" and meta.get("kind") == "query" and meta.get("query_id"):
+                try:  # the query step runs the recorded SQL on current data; the cell loads that result
+                    sb.run_query(meta["query_id"], None, mode="rerun")
+                except QueryFailed as e:
+                    failed = f"query {meta['query_id']}: {e}"
             res = sb.execute(src, kind=meta.get("kind", "python"), meta={k: v for k, v in meta.items() if k not in ("cell_id", "kind")})
-            if res.error:
-                errors.append({"cell": meta.get("cell_id"), "error": res.error[:500]})
+            if failed or res.error:
+                errors.append({"cell": meta.get("cell_id"), "error": (failed or res.error)[:500]})
             result_check = _result_check(res) or result_check
         if not any(c.get("metadata", {}).get("alchemist", {}).get("kind") == "check" for c in cells):
             result_check = _result_check(sb.execute("alc.check_results()", kind="check"))

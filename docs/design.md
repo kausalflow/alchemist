@@ -38,7 +38,7 @@ flowchart TB
 | --- | --- | --- |
 | Plant groups decide data, workspaces decide projects | identity-provider groups (or local users in `access.yaml`); tool layer, plus per-run STS credentials enforced by S3 when `ALC_RUN_ROLE_ARN` is set | same, always with per-run credentials |
 | Only approved, registered datasets are queryable | views built from approved cards; SQL guard | same, plus the run role can only read registered prefixes |
-| Hidden and pseudonymised columns | dropped or keyed-hashed in the views | same, HMAC with a per-deployment secret |
+| Hidden and pseudonymised columns | dropped or HMAC-hashed in the views, built in a query step outside the kernel; the kernel holds no dataset credentials or key | same |
 | Plant data goes only to approved model providers | `ALC_ALLOWED_PROVIDERS` allow-list | allow-list of inference profile ARNs; Bedrock reached through a VPC endpoint |
 | The kernel cannot reach the model or the internet | not enforced (local process); in AWS a separate Fargate task by default (`workflow.sandbox_mode: separate`) | separate Fargate task, no route to Bedrock, no NAT |
 | Sealed runs cannot change | SEALED written once (S3 conditional put), run credentials may not write it, SHA-256 tamper evidence | same |

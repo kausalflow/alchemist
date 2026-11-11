@@ -65,9 +65,9 @@ In `in_process` mode the orchestrator task gets the sandbox's size (`sizes.sandb
 | `ALC_GRANT_HOURS` | api | how long a broker grant lasts after approval or resume: `workflow.analysis_timeout_hours` × (1 + `workflow.analysis_retries`) + 2 |
 | `ALC_APPROVALS` | api | `s3://<workspace bucket>/_approvals/` |
 | `ALC_RUN_ROLE_ARN`, `ALC_RUN_CREDENTIAL_SECONDS` | orchestrator (in-process) | the run role; `3600` |
-| `ALC_PSEUDONYM_KEY` | indexer, orchestrator (in-process), sandbox (separate) | from Secrets Manager |
+| `ALC_PSEUDONYM_KEY` | indexer, orchestrator (in-process), sandbox (separate) | from Secrets Manager; used by the query step, never passed to a kernel |
 | `ALC_CLUSTER_ARN`, `ALC_SANDBOX_PORT` | orchestrator | to look up the sandbox's address (separate) |
-| `ALC_BROKER_FUNCTION`, `ALC_BROKER_TOKEN` | sandbox (separate) | broker Lambda ARN; the run's broker token |
+| `ALC_BROKER_FUNCTION`, `ALC_BROKER_TOKEN` | sandbox (separate) | broker Lambda ARN; the run's broker token (the sandbox derives a kernel token and a query token from it; the kernel gets only its own) |
 | `ALC_RUN_ID` | workflow tasks | set per execution |
 
 ## HTTP routing and identity
@@ -116,24 +116,32 @@ starts a run's execution, and rewrites it on approval (see Run workflow above):
 {"schema": "alchemist.grant/v1", "run_id": "01JA...", "user": "eng_p1", "plants": ["P01"],
  "read_prefixes": ["s3://lake/line2/historian/"], "knowledge_prefixes": ["s3://<knowledge>/P01/"],
  "run_prefix": "s3://<workspace>/workspaces/.../runs/01JA.../",
- "token_sha256": "<sha256 hex of broker_token>", "expires_at": "2026-10-15T14:00:00Z"}
+ "token_sha256": {"kernel": "<sha256 hex>", "query": "<sha256 hex>"}, "expires_at": "2026-10-15T14:00:00Z"}
 ```
+
+A run's credentials come in two scopes, each with its own token (`alchemist.credentials.scope_token`, an HMAC of the
+run's `broker_token`): **query** for the sandbox's query step, which reads the run's datasets and writes query results
+to the run's `inputs/`, and **kernel** for the kernel running the model's code, which reads and writes only its run
+folder (never under `inputs/`) and reads no dataset. The sandbox keeps the run's token; the kernel gets only the kernel
+token and cannot derive the query token from it.
 
 `read_prefixes` are the catalog registrations of the run's pinned views, as in `alchemist.credentials.run_policy`;
 `knowledge_prefixes` is empty because structured knowledge is copied into the run's `inputs/`. The sandbox kernel's
 AWS profile has `credential_process = alchemist broker credentials`, which invokes `ALC_BROKER_FUNCTION` with
-`{"run_id": ..., "token": ...}` and prints the result, the standard credential-process JSON (`Version`,
+`{"run_id": ..., "token": ..., "scope": ...}` (`ALC_BROKER_SCOPE`, default `kernel`) and prints the result, the standard credential-process JSON (`Version`,
 `AccessKeyId`, `SecretAccessKey`, `SessionToken`, `Expiration`); the broker answers `{"error": "denied"}` otherwise.
 boto3 and cloudpathlib call it again before the credentials expire, and DuckDB's S3 secret is created with
 `refresh auto`, so an analysis may run past the one-hour session limit while the grant lasts. The broker:
 
-- refuses a grant with another run id, a wrong token, a past `expires_at`, a `run_prefix` that is not
+- refuses a grant with another run id, a wrong token for the scope, a past `expires_at`, a `run_prefix` that is not
   `workspaces/.../runs/<run_id>/` in the workspace bucket, a read prefix outside the registered lake buckets (or a
   whole bucket), or a knowledge prefix outside the knowledge bucket;
-- assumes the run role for at most one hour (role chaining), tagged with run id, user and plants for CloudTrail;
-- passes a session policy that allows `GetObject` and `ListBucket` on the read, knowledge and run prefixes,
-  `PutObject` only under the run prefix, and denies writing or deleting the run's `SEALED`, the same rules as
-  `alchemist.credentials.run_policy`.
+- assumes the run role for at most one hour (role chaining), tagged with run id, user, plants and scope for
+  CloudTrail;
+- passes a session policy, the same rules as `alchemist.credentials.run_policy`: for the query scope `GetObject` and
+  `ListBucket` on the read, knowledge and run prefixes and `PutObject` only on the run's `inputs/*.parquet` and
+  `inputs/queries.json`; for the kernel scope `GetObject`, `ListBucket` and `PutObject` on the run prefix only, and
+  denies writing or deleting the run's `SEALED` and anything under its `inputs/`.
 
 A session policy holds about 2 KB, enough for tens of prefixes. A plant whose data is scattered over many prefixes
 needs S3 Access Grants instead (technical design, open question 2).

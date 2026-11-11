@@ -95,11 +95,14 @@ def test_run_used_scoped_credentials(s3_run):
     run = as_path(res["path"])
     m = read_json(run / "manifest.json")
     cred = m["access"]["credentials"]
-    assert cred["mode"] == "scoped" and cred["role"] == ROLE and cred["session"].startswith("alc-run-")
+    assert cred["mode"] == "scoped" and cred["role"] == ROLE and cred["session"].startswith("alc-k-")
     assert cred["refresh"] == "worker"  # re-issued before expiry, so the analysis is not limited to one hour
+    assert cred["query"]["mode"] == "scoped" and cred["query"]["session"].startswith("alc-q-")
     assert m["access"]["user"] == "kim"
-    policy = json.dumps(read_json(run / "logs" / "session_policy.json"))
+    # The query step reads the run's plant data; the kernel's own session reads no lake data at all (PA-25).
+    policy = json.dumps(read_json(run / "logs" / "query_session_policy.json"))
     assert "plant=P01" in policy and "plant=P02" not in policy
+    assert "lake" not in json.dumps(read_json(run / "logs" / "session_policy.json"))
     assert "AKIA" not in (run / "notebook.ipynb").read_text() and "test" not in json.dumps(cred)
 
 

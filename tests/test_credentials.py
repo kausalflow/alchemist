@@ -13,18 +13,33 @@ def _stmts(policy):
     return {s["Sid"]: s for s in policy["Statement"]}
 
 
-def test_policy_reads_only_registered_prefixes_and_writes_only_run_folder():
-    st = _stmts(run_policy(RUN, GLOBS))
+KEY = "workspaces/quality/projects/line2/questions/Q1/runs/R1"
+
+
+def test_query_policy_reads_only_registered_prefixes_and_writes_only_run_inputs():
+    st = _stmts(run_policy(RUN, GLOBS, "query"))
     reads = st["ReadData0"]["Resource"]
     assert reads == ["arn:aws:s3:::lake/plant=P01/historian/line2/*", "arn:aws:s3:::lake/plant=P01/quality/lots/*"]
     assert st["ListData1"]["Condition"]["StringLike"]["s3:prefix"][0] == "plant=P01/historian/line2"
-    key = "workspaces/quality/projects/line2/questions/Q1/runs/R1"
-    assert st["RunFolder"]["Resource"] == f"arn:aws:s3:::alchemist-workspace/{key}/*"
-    assert st["NeverSeal"]["Effect"] == "Deny"
-    assert st["NeverSeal"]["Resource"] == [f"arn:aws:s3:::alchemist-workspace/{key}/{f}" for f in
-                                           ("SEALED", "inputs/views.json", "inputs/knowledge_index.json",
-                                            "inputs/parent_findings.json")]
+    assert st["ReadRunFolder"]["Resource"] == f"arn:aws:s3:::alchemist-workspace/{KEY}/*"
+    # Result snapshots and their record only: never the seal or the inputs pinned at approval.
+    assert st["WriteRunFolder"]["Resource"] == [f"arn:aws:s3:::alchemist-workspace/{KEY}/inputs/*.parquet",
+                                                f"arn:aws:s3:::alchemist-workspace/{KEY}/inputs/queries.json"]
+    assert "NeverSeal" not in st
     assert not any("local" in str(s) for s in st.values())
+
+
+def test_kernel_policy_reads_no_dataset_and_writes_nothing_under_inputs():
+    """PA-25: the kernel's credentials reach its run folder only; query results come from the query step."""
+    policy = run_policy(RUN, GLOBS)  # the kernel scope is the default
+    st = _stmts(policy)
+    assert "lake" not in str(policy) and not any(sid.startswith(("ReadData", "ListData")) for sid in st)
+    assert st["WriteRunFolder"]["Resource"] == f"arn:aws:s3:::alchemist-workspace/{KEY}/*"
+    assert st["NeverSeal"]["Effect"] == "Deny"
+    assert st["NeverSeal"]["Resource"] == [f"arn:aws:s3:::alchemist-workspace/{KEY}/SEALED",
+                                           f"arn:aws:s3:::alchemist-workspace/{KEY}/inputs/*"]
+    with pytest.raises(ValueError):
+        run_policy(RUN, GLOBS, "admin")
 
 
 def test_local_run_needs_no_policy_statements():
@@ -45,10 +60,13 @@ def test_broker_assumes_run_role_with_session_policy_and_tags():
     sts = FakeSTS()
     b = CredentialBroker("arn:aws:iam::1:role/run", duration_seconds=900, sts=sts)
     c = b.issue(run_id="R1", user_id="kim@x.com", workspace="quality", run_dir=RUN, read_globs=GLOBS)
-    call = sts.calls[0]
-    assert call["RoleSessionName"] == "alc-run-R1" and call["DurationSeconds"] == 900
+    b.issue(run_id="R1", user_id="kim@x.com", workspace="quality", run_dir=RUN, read_globs=GLOBS, scope="query")
+    call, query = sts.calls
+    assert call["RoleSessionName"] == "alc-k-R1" and call["DurationSeconds"] == 900
+    assert query["RoleSessionName"] == "alc-q-R1" and "lake" in query["Policy"] and "lake" not in call["Policy"]
     assert call["SourceIdentity"] == "kim@x.com"
-    assert {t["Key"]: t["Value"] for t in call["Tags"]} == {"alc:run": "R1", "alc:user": "kim@x.com", "alc:workspace": "quality"}
+    assert {t["Key"]: t["Value"] for t in call["Tags"]} == {"alc:run": "R1", "alc:user": "kim@x.com",
+                                                            "alc:workspace": "quality", "alc:scope": "kernel"}
     assert c.env()["AWS_SESSION_TOKEN"] == "t" and c.expiration == "2026-01-01T00:00:00Z"
     assert "s" not in c.record().values()
 
@@ -61,7 +79,7 @@ def test_oversized_policy_is_refused():
     globs = [f"s3://lake/plant=P01/dataset_{i:03d}/*.parquet" for i in range(60)]
     with pytest.raises(ValueError, match="session policy"):
         CredentialBroker("arn:aws:iam::1:role/run", sts=FakeSTS()).issue(
-            run_id="R", user_id="u", workspace="w", run_dir=RUN, read_globs=globs)
+            run_id="R", user_id="u", workspace="w", run_dir=RUN, read_globs=globs, scope="query")
 
 
 # ------------------------------------------------------------------ in-process refresh

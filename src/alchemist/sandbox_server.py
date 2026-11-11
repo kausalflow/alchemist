@@ -10,22 +10,32 @@ Two deployments use it:
 The API, reachable only from the orchestrator or the API:
 
     GET  /healthz    {"ok": true, "kernel": <any running>, "kernels": <number running>}
-    POST /start        {"run_dir", "run_mode", "seed", "read_paths"?, "credentials"?} -> {"credentials": <manifest record>}
+    POST /start        {"run_dir", "run_mode", "seed", "read_paths"?, "credentials"?, "query_credentials"?}
+                       -> {"credentials": <manifest record>}
     POST /execute      {"run_dir", "code", "timeout"} -> {"messages": [{"msg_type", "content"}], "reply": <execute_reply content>}
-    POST /credentials  {"run_dir", "credentials"}  (the API's fresh scoped keys for a running kernel)
+    POST /query        {"run_dir", "views", "qid", "sql", "mode", "timeout"} -> the query step's record, or {"error"}
+    POST /credentials  {"run_dir", "credentials", "scope"?}  (the API's fresh scoped keys: kernel, or query)
     POST /stop         {"run_dir"}
 
+The kernel never reads a dataset. Each query runs in the query step (querystep.py, POST /query): a process of its
+own, outside the kernel, that applies the dataset card (hidden and pseudonymised columns) and writes the result to
+the run folder for the kernel to load. Only the query step gets the pseudonym key and dataset credentials.
+
 Each kernel is confined to its own files where Landlock is available (fsjail.py, ALC_KERNEL_JAIL auto, required or
-off): it reads the local datasets its run was given (`read_paths`) and writes only its run folder. With
-`credentials` (credential_process JSON the API issued for this run, scoped to its datasets and folder) the kernel's
-AWS profile reads them from a file only that kernel can open, and the sandbox needs no storage keys of its own;
-ALC_SANDBOX_REQUIRE_SCOPED=1 refuses kernels without them.
+off): it reads and writes only its run folder; the query step reads the local datasets its run was given
+(`read_paths`) and writes the run folder. With `credentials` and `query_credentials` (credential_process JSON the
+API issued for this run: the kernel's scoped to its folder, the query step's to its datasets and inputs/) each reads
+them from a file only it can open, and the sandbox needs no storage keys of its own; ALC_SANDBOX_REQUIRE_SCOPED=1
+refuses kernels without them.
 
 One kernel per run folder. `run_dir` may be left out of /execute and /stop while one kernel runs (the one-run task).
 The kernel's environment is built here, not by the caller: the allowed part of this process's own variables
-(sandbox.KERNEL_ENV_NAMES: the pseudonym key, plugin settings, storage credentials; never this service's token) and, when ALC_BROKER_FUNCTION is set, an AWS profile whose credential_process is
-`alchemist broker credentials`, so S3 access is whatever the broker grants this run and is refreshed as it expires.
-Without ALC_BROKER_FUNCTION the kernel uses the ambient credentials.
+(sandbox.KERNEL_ENV_NAMES: plugin settings, storage settings; never the pseudonym key, the run's broker token or this
+service's token) and, when ALC_BROKER_FUNCTION is set, an AWS profile whose credential_process is
+`alchemist broker credentials`, so S3 access is whatever the broker grants this run's kernel scope and is refreshed as
+it expires. The kernel gets the kernel-scope token derived from the run's ALC_BROKER_TOKEN, and the query step the
+query-scope one (credentials.scope_token); the kernel cannot derive the query token. Without ALC_BROKER_FUNCTION both
+use the ambient credentials.
 """
 
 from __future__ import annotations
@@ -41,8 +51,9 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import fsjail
-from .credentials import AMBIENT_AWS_VARS, process_profile_env, write_credentials
-from .sandbox import LocalKernel, kernel_env, kernel_jail
+from .credentials import AMBIENT_AWS_VARS, process_profile_env, scope_token, write_credentials
+from .querystep import QueryFailed, QueryRunner
+from .sandbox import LocalKernel, kernel_base_env, kernel_env, kernel_jail
 
 MAX_BODY = 16 * 1024 * 1024
 
@@ -78,11 +89,17 @@ class KernelHost:
             raise PermissionError(f"{run_dir} is not a run folder in this sandbox's workspace")
         return run_dir
 
-    def credentials_env(self) -> tuple[dict, dict]:
+    def credentials_env(self, scope: str = "kernel") -> tuple[dict, dict]:
+        """Environment for the kernel or the query step: a profile that asks the broker for that scope's
+        credentials with that scope's token, or nothing (ambient credentials) without a broker."""
         if not self.env.get("ALC_BROKER_FUNCTION"):
             return {}, {"mode": "ambient"}
+        token = self.env.get("ALC_BROKER_TOKEN")
+        if not token:
+            raise PermissionError("ALC_BROKER_FUNCTION is set but this sandbox has no ALC_BROKER_TOKEN")
         command = [sys.executable, "-m", "alchemist.cli", "broker", "credentials"]
-        extra = process_profile_env(tempfile.mkdtemp(prefix="alc-aws-"), command)
+        extra = {**process_profile_env(tempfile.mkdtemp(prefix="alc-aws-"), command),
+                 "ALC_BROKER_TOKEN": scope_token(token, scope), "ALC_BROKER_SCOPE": scope}
         return extra, {"mode": "broker", "function": self.env["ALC_BROKER_FUNCTION"]}
 
     def _key(self, run_dir: str | None) -> str:
@@ -113,6 +130,22 @@ class KernelHost:
         """The paths a run's kernel may use, or None to leave it unrestricted (no Landlock, or ALC_KERNEL_JAIL=off)."""
         return kernel_jail(run_dir, read_paths, extra_read, mode=self.jail_mode())
 
+    def query_runner(self, run_dir: str, read_paths: list[str] | None, query_credentials: dict | None
+                     ) -> tuple[QueryRunner | None, str | None]:
+        """The run's query step: this service's pseudonym key, and the query credentials the API pushed, or the
+        broker's query scope, or the ambient credentials (None when ALC_SANDBOX_REQUIRE_SCOPED=1 forbids them)."""
+        folder = None
+        if query_credentials is None and self.env.get("ALC_SANDBOX_REQUIRE_SCOPED") == "1" \
+                and not self.env.get("ALC_BROKER_FUNCTION"):
+            return None, None
+        if query_credentials is not None:
+            extra, _, folder = self.pushed_credentials_env(query_credentials)
+        else:
+            extra, _ = self.credentials_env("query")
+        runner = QueryRunner({**kernel_base_env(self.env), **extra}, key=self.env.get("ALC_PSEUDONYM_KEY", "dev-only-key"),
+                             read_paths=read_paths, extra_read=[folder] if folder else [], jail_mode=self.jail_mode())
+        return runner, folder
+
     def pushed_credentials_env(self, credentials: dict) -> tuple[dict, dict, str]:
         """The run's own scoped keys, sent by the API, in a file only this run's kernel reads."""
         if "AccessKeyId" not in credentials:
@@ -125,7 +158,7 @@ class KernelHost:
         return extra, {"mode": "scoped", "refresh": "api"}, folder
 
     def start(self, run_dir: str, run_mode: str = "live", seed: int = 1729, *, read_paths: list[str] | None = None,
-              credentials: dict | None = None) -> dict:
+              credentials: dict | None = None, query_credentials: dict | None = None) -> dict:
         key = self._check_run_dir(run_dir)
         if credentials is None and self.env.get("ALC_SANDBOX_REQUIRE_SCOPED") == "1":
             raise PermissionError("this sandbox only runs kernels with the run's own scoped credentials")
@@ -139,28 +172,53 @@ class KernelHost:
                 extra, record, folder = self.pushed_credentials_env(credentials)
             else:
                 extra, record = self.credentials_env()
-            jail = self.jail(key, read_paths, [folder] if folder else [])
+            # The kernel reads only its run folder; the query step reads the run's datasets (read_paths).
+            jail = self.jail(key, [], [folder] if folder else [])
             record = {**record, "filesystem": f"landlock v{fsjail.abi()}" if jail is not None else "shared"}
             kernel = LocalKernel(kernel_env(key, extra, base=self.env), jail=jail)
             kernel.credentials_folder = folder
+            kernel.query_runner, kernel.query_folder = self.query_runner(key, read_paths, query_credentials)
             kernel.start()
             self.kernels[key], self.used[key] = kernel, time.monotonic()
             self.locks.setdefault(key, threading.Lock())
             return {"credentials": record}
 
-    def refresh_credentials(self, run_dir: str, credentials: dict) -> None:
+    def refresh_credentials(self, run_dir: str, credentials: dict, scope: str = "kernel") -> None:
         key = self._key(run_dir)
-        folder = getattr(self.kernels[key], "credentials_folder", None)
+        if scope not in ("kernel", "query"):
+            raise ValueError(f"unknown credential scope {scope!r}")
+        folder = getattr(self.kernels[key], "credentials_folder" if scope == "kernel" else "query_folder", None)
         if folder is None:
-            raise ValueError(f"the kernel for {key} was started without pushed credentials")
+            raise ValueError(f"the {scope} of {key} was started without pushed credentials")
         write_credentials(os.path.join(folder, "credentials.json"), credentials)
+
+    def query(self, run_dir: str | None, *, views: dict, qid: str, sql: str | None, mode: str,
+              timeout: float = 900) -> dict:
+        """Run one query of this run in its query step (outside the kernel); {"error": ...} if it fails."""
+        key = self._key(run_dir)
+        with self.locks[key]:
+            kernel = self.kernels.get(key)
+            if kernel is None:
+                raise RuntimeError(f"no kernel for {key}; POST /start first")
+            self.used[key] = time.monotonic()
+            runner = kernel.query_runner
+            if runner is None:
+                return {"error": "this sandbox runs queries only with the run's own scoped query credentials"}
+            runner.timeout = timeout
+            try:
+                return runner.run(run_dir=key, views=views, qid=qid, sql=sql, mode=mode)
+            except QueryFailed as e:
+                return {"error": str(e)}
+            finally:
+                self.used[key] = time.monotonic()
 
     def _discard(self, key: str, kernel: LocalKernel) -> None:
         kernel.stop()
         self.used.pop(key, None)
-        folder = getattr(kernel, "credentials_folder", None)
-        if folder:
-            shutil.rmtree(folder, ignore_errors=True)
+        for attr in ("credentials_folder", "query_folder"):
+            folder = getattr(kernel, attr, None)
+            if folder:
+                shutil.rmtree(folder, ignore_errors=True)
 
     def execute(self, code: str, timeout: float = 900, run_dir: str | None = None) -> dict:
         key = self._key(run_dir)
@@ -219,10 +277,14 @@ def make_handler(host: KernelHost):
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if self.path == "/start":
                     out = host.start(body["run_dir"], body.get("run_mode", "live"), int(body.get("seed", 1729)),
-                                     read_paths=body.get("read_paths"), credentials=body.get("credentials"))
+                                     read_paths=body.get("read_paths"), credentials=body.get("credentials"),
+                                     query_credentials=body.get("query_credentials"))
                 elif self.path == "/credentials":
-                    host.refresh_credentials(body["run_dir"], body["credentials"])
+                    host.refresh_credentials(body["run_dir"], body["credentials"], body.get("scope", "kernel"))
                     out = {"ok": True}
+                elif self.path == "/query":
+                    out = host.query(body.get("run_dir"), views=body["views"], qid=body["qid"], sql=body.get("sql"),
+                                     mode=body.get("mode", "live"), timeout=float(body.get("timeout", 900)))
                 elif self.path == "/execute":
                     out = host.execute(body["code"], float(body.get("timeout", 900)), body.get("run_dir"))
                 elif self.path == "/stop":

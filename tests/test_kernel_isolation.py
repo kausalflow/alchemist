@@ -19,9 +19,11 @@ def test_kernel_env_is_an_allow_list():
             "ALC_DB": "postgresql://master:pw@db/alc", "ALC_DB_PASSWORD": "pw", "ANTHROPIC_API_KEY": "sk-ant",
             "OPENAI_API_KEY": "sk", "ALC_SANDBOX_TOKEN": "t", "ALC_BEDROCK_PROFILE": "models",
             "AWS_BEARER_TOKEN_BEDROCK": "b", "ALC_OIDC_CLIENT_SECRET": "s", "ALC_PSEUDONYM_KEY": "k",
-            "ALC_PLUGINS": "*", "MY_PLUGIN_ENDPOINT": "x", "MY_PLUGIN_SECRET": "y"}
+            "ALC_BROKER_TOKEN": "run-token", "ALC_PLUGINS": "*", "MY_PLUGIN_ENDPOINT": "x", "MY_PLUGIN_SECRET": "y"}
     env = kernel_base_env(base)
-    assert set(env) == {"PATH", "HOME", "LC_ALL", "AWS_REGION", "AWS_PROFILE", "ALC_PSEUDONYM_KEY", "ALC_PLUGINS"}
+    # The pseudonym key and the run's broker token are for the query step only (PA-25).
+    assert set(env) == {"PATH", "HOME", "LC_ALL", "AWS_REGION", "AWS_PROFILE", "ALC_PLUGINS"}
+    assert "ALC_PSEUDONYM_KEY" not in kernel_base_env({**base, "ALC_KERNEL_ENV": "ALC_*"})
     # An operator can let a plugin's setting through, by name or prefix.
     assert "MY_PLUGIN_ENDPOINT" in kernel_base_env({**base, "ALC_KERNEL_ENV": "MY_PLUGIN_ENDPOINT"})
     assert {"MY_PLUGIN_ENDPOINT", "MY_PLUGIN_SECRET"} <= set(kernel_base_env({**base, "ALC_KERNEL_ENV": "MY_PLUGIN_*"}))
@@ -39,7 +41,7 @@ def test_kernel_jail_modes(monkeypatch):
     with pytest.raises(ValueError):
         kernel_jail("/runs/R1", [], mode="maybe")
     monkeypatch.setattr(fsjail, "available", lambda: True)
-    assert kernel_jail("/runs/R1", ["/lake", "s3://b/x"], ["/creds"]) == {"read": ["/lake", "/creds"],
+    assert kernel_jail("/runs/R1", ["/lake", "s3://b/x"], ["/creds"]) == {"read": ["/lake", "/creds", "/runs/R1"],
                                                                           "write": ["/runs/R1"]}
     assert kernel_jail("s3://ws/runs/R1", [])["write"] == []
 
@@ -80,10 +82,47 @@ def test_in_process_kernel_sees_no_server_secrets_or_other_files(svc, approved, 
             assert "PermissionError" in out, (path, out)
         out = _run(sb, "import os\nopen(os.path.join(os.environ['ALC_RUN_DIR'], 'work-ok.txt'), 'w').write('x')\nprint('ok')")
         assert "ok" in out
-        # It still reads the datasets its run was given.
-        out = _run(sb, "df = alc.query('qx', 'select count(*) as n from ds.resin_lots')\nprint(int(df.n[0]) > 0)")
-        assert "True" in out, out
     (Path(ctx.run) / "work-ok.txt").unlink()
+
+
+def test_the_kernel_cannot_read_datasets_or_the_pseudonym_key(svc, approved, monkeypatch):
+    """PA-25: the run's queries run in the query step; the kernel loads their filtered results and nothing else."""
+    monkeypatch.setenv("ALC_PSEUDONYM_KEY", "pseudonym-secret")
+    ctx = RunContext(svc, approved, user="eng_p1")
+    views = pinned_inputs(svc, approved["run_id"], ctx.run)["views"]
+    lake_file = next(Path(svc.settings.workspace_root).parent.rglob("lake/**/*.parquet"))
+    with svc.sandbox(ctx, views, run_mode="live") as sb:
+        sb.setup()
+        res = sb.query("q1", "select count(*) as n from ds.resin_lots")
+        assert res.error is None, res.error
+        assert "True" in _run(sb, "print(int(df_q1.n[0]) > 0)")
+        # The kernel loads results the query step stored, but cannot run SQL on a dataset itself...
+        out = _run(sb, "alc.query('qx', 'select * from ds.resin_lots')")
+        assert "KeyError" in out and "run_query" in out, out
+        out = _run(sb, "alc.query('q1', 'select * from ds.resin_lots')")
+        assert "other SQL" in out, out
+        # ...and holds no pseudonym key and no view over the lake.
+        out = _run(sb, "import os\nprint(sorted(k for k in os.environ if 'PSEUDONYM' in k or 'BROKER_TOKEN' in k))")
+        assert "[]" in out, out
+        if not fsjail.available():
+            pytest.skip("no Landlock on this machine: the kernel can still open local dataset files directly")
+        out = _run(sb, f"open({str(lake_file)!r}, 'rb').read(1)")
+        assert "PermissionError" in out, out
+        out = _run(sb, f"import duckdb\nduckdb.sql(\"select * from read_parquet('{lake_file}')\").fetchall()")
+        assert "Error" in out and "rows" not in out, out
+
+
+def test_a_rejected_query_adds_no_cell(svc, approved):
+    ctx = RunContext(svc, approved, user="eng_p1")
+    views = pinned_inputs(svc, approved["run_id"], ctx.run)["views"]
+    with svc.sandbox(ctx, views, run_mode="live") as sb:
+        sb.setup()
+        before = len(sb.nb.cells)
+        for sql in ("select * from read_parquet('/etc/passwd')", "select alc_pseudonym('Kim') as p",
+                    "select * from ds.not_a_dataset"):
+            res = sb.query("q9", sql)
+            assert res.error and res.cell_id is None, sql
+        assert len(sb.nb.cells) == before
 
 
 def test_a_run_cannot_widen_its_own_inputs(svc, approved):
