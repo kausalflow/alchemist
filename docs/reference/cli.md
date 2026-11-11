@@ -68,14 +68,17 @@ alchemist sandbox serve [--host 0.0.0.0] [--port 8888]
 
 The analysis kernels as their own service: one sandbox task per run on AWS (`ALC_SANDBOX_MODE=separate`), or one
 sandbox service for every run in docker compose and the Helm chart (`ALC_SANDBOX_URL` on the API). It serves one
-kernel per run folder over a small HTTP API (`GET /healthz`, `POST /start`, `POST /execute`, `POST /stop`) that
-`worker analyse --sandbox-url` and the API use, and builds the kernels' environment itself, without the database
-settings or its own token. With `ALC_BROKER_FUNCTION` set, the kernel has no AWS keys: its AWS profile's
+kernel per run folder over a small HTTP API (`GET /healthz`, `POST /start`, `POST /execute`, `POST /query`,
+`POST /stop`) that `worker analyse --sandbox-url` and the API use, and builds the kernels' environment itself, without
+the database settings, the pseudonym key or its own token. `POST /query` runs a run's SQL in the query step, a process
+outside the kernel that holds the pseudonym key and the run's dataset credentials and writes the filtered result to
+the run folder; the kernel only loads it. With `ALC_BROKER_FUNCTION` set, neither has AWS keys: their AWS profiles'
 `credential_process` is `alchemist broker credentials`, so boto3, cloudpathlib and DuckDB get the run's credentials
-from the broker and fetch new ones when they expire. With `ALC_RUN_ID` set it serves only that run's folder. Without
-`ALC_BROKER_FUNCTION` the kernel uses the credentials the API sent for the run (`POST /start` and
-`POST /credentials`, when `ALC_RUN_ROLE_ARN` is set), or else the ambient ones. Where Linux Landlock is available each
-kernel confines itself to its run's datasets and folder (`ALC_KERNEL_JAIL`). With `ALC_WORKSPACE` set it only starts kernels for
+for their scope (kernel or query) from the broker and fetch new ones when they expire. With `ALC_RUN_ID` set it
+serves only that run's folder. Without `ALC_BROKER_FUNCTION` the kernel and the query step use the credentials the
+API sent for the run (`POST /start` and `POST /credentials`, when `ALC_RUN_ROLE_ARN` is set), or else the ambient
+ones. Where Linux Landlock is available each kernel confines itself to its run folder, and each query step to its
+run's datasets and folder (`ALC_KERNEL_JAIL`). With `ALC_WORKSPACE` set it only starts kernels for
 folders in that workspace, and with `ALC_SANDBOX_TOKEN` set it answers only requests that carry the token
 (`Authorization: Bearer ...`). In AWS only the orchestrator's security group can reach the port; in docker compose
 and Kubernetes only the API can (an internal network, a NetworkPolicy).
@@ -86,8 +89,8 @@ and Kubernetes only the API can (an internal network, a NetworkPolicy).
 alchemist broker credentials [--run-id RUN] [--file PATH]
 ```
 
-An AWS `credential_process`: invokes the broker Lambda (`ALC_BROKER_FUNCTION`) with the run id (`ALC_RUN_ID`) and its
-token (`ALC_BROKER_TOKEN`) and prints the credential-process JSON, or exits non-zero if the broker refuses. It ignores
+An AWS `credential_process`: invokes the broker Lambda (`ALC_BROKER_FUNCTION`) with the run id (`ALC_RUN_ID`), the
+scope (`ALC_BROKER_SCOPE`: `kernel`, the default, or `query`) and that scope's token (`ALC_BROKER_TOKEN`) and prints the credential-process JSON, or exits non-zero if the broker refuses. It ignores
 `AWS_PROFILE` and `AWS_CONFIG_FILE`, so it calls the Lambda with the sandbox task's own role rather than through the
 profile that runs it.
 

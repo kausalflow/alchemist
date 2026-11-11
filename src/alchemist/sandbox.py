@@ -74,19 +74,20 @@ KERNEL_ENV_NAMES = frozenset({
     # certificates and proxies, to reach the object store
     "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
     "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
-    # what alchemist.nb and its storage backends read; the broker's run token (separate sandbox only)
-    "ALC_PSEUDONYM_KEY", "ALC_S3_CREDENTIALS", "ALC_PLUGINS", "ALC_PLUGIN_MODULES",
-    "ALC_RUN_ID", "ALC_BROKER_TOKEN", "ALC_BROKER_FUNCTION",
+    # what alchemist.nb and its storage backends read; the broker function (separate sandbox only)
+    "ALC_S3_CREDENTIALS", "ALC_PLUGINS", "ALC_PLUGIN_MODULES", "ALC_RUN_ID", "ALC_BROKER_FUNCTION",
 })
+# Never inherited, though a sandbox holds them: the pseudonym key and the run's broker token are for the query step
+# (querystep.py), which reads datasets; the kernel gets only its own kernel-scope token (credentials.scope_token).
 # Object store access (in ambient mode the kernel uses the process's own AWS identity), locale and cache settings.
 KERNEL_ENV_PREFIXES = ("AWS_", "LC_", "CLOUDPATHLIB_")
 # Never, even with a prefix above: a Bedrock API key is for model calls, which the kernel does not make.
-KERNEL_ENV_NEVER = frozenset({"AWS_BEARER_TOKEN_BEDROCK"})
+KERNEL_ENV_NEVER = frozenset({"AWS_BEARER_TOKEN_BEDROCK", "ALC_PSEUDONYM_KEY", "ALC_BROKER_TOKEN"})
 
 
 def kernel_env_allowed(name: str, extra: tuple[str, ...] = ()) -> bool:
     """Whether a run's kernel may inherit this variable. `extra`: names, or prefixes ending in `*`, an operator
-    allowed with ALC_KERNEL_ENV (a plugin's storage setting, say)."""
+    allowed with ALC_KERNEL_ENV (a plugin's storage setting, say); never one of KERNEL_ENV_NEVER."""
     key = name.upper()  # Windows names are case-insensitive
     if key in KERNEL_ENV_NEVER:
         return False
@@ -116,8 +117,8 @@ def kernel_jail(run_dir: str, read_paths: list[str] | None, extra_read: list[str
 
     mode (ALC_KERNEL_JAIL): auto confines the kernel where Linux Landlock is available (fsjail.py) and leaves it
     unrestricted elsewhere (Windows, macOS, a container runtime that blocks Landlock); required refuses to start a
-    kernel without it; off never confines it. The kernel reads the local datasets its run was given and writes only
-    its run folder."""
+    kernel without it; off never confines it. `read_paths`: local folders besides its run folder the kernel may read
+    (none for a run's kernel: its queries run in the query step, see querystep.py); it writes only its run folder."""
     from . import fsjail
 
     if mode not in ("auto", "required", "off"):
@@ -129,7 +130,8 @@ def kernel_jail(run_dir: str, read_paths: list[str] | None, extra_read: list[str
             raise PermissionError("ALC_KERNEL_JAIL=required, but this machine has no Landlock (Linux 5.13+)")
         return None
     local = [p for p in (read_paths or []) if "://" not in p]
-    return {"read": [*local, *(extra_read or [])], "write": [] if "://" in str(run_dir) else [str(run_dir)]}
+    run = [] if "://" in str(run_dir) else [str(run_dir)]
+    return {"read": [*local, *(extra_read or []), *run], "write": run}
 
 
 def kernel_transport(platform: str = sys.platform) -> dict[str, str]:
@@ -210,8 +212,8 @@ class SandboxUnavailable(RuntimeError):
 class RemoteKernel:
     """The kernel of a separate sandbox task, over `alchemist sandbox serve`'s HTTP API.
 
-    The sandbox builds the kernel's environment itself (its pseudonym key, its broker credentials); this side only
-    says which run folder, mode and seed to use.
+    The sandbox builds the kernel's environment itself (its broker credentials); this side only says which run
+    folder, mode and seed to use. Queries go to the sandbox's query step (POST /query), never to the kernel.
     """
 
     def __init__(self, url: str, *, run_dir: str, run_mode: str, seed: int, ready_timeout: float = 600,
@@ -251,13 +253,27 @@ class RemoteKernel:
             time.sleep(2)
         raise SandboxUnavailable(f"sandbox at {self.url} did not become ready: {last}")
 
-    def push_first(self, credentials: dict, record: dict) -> None:
-        """Start the kernel with these credentials (credential_process JSON); the manifest keeps `record`."""
+    def push_first(self, credentials: dict, record: dict, query_credentials: dict | None = None) -> None:
+        """Start the kernel with these credentials (credential_process JSON) and its query step with
+        `query_credentials`; the manifest keeps `record`."""
         self.start_body["credentials"] = credentials
+        if query_credentials is not None:
+            self.start_body["query_credentials"] = query_credentials
         self.pushed_record = record
 
-    def push_credentials(self, credentials: dict) -> None:
-        self._call("POST", "/credentials", {"run_dir": self.run_dir, "credentials": credentials}, timeout=30)
+    def push_credentials(self, credentials: dict, scope: str = "kernel") -> None:
+        self._call("POST", "/credentials", {"run_dir": self.run_dir, "credentials": credentials, "scope": scope},
+                   timeout=30)
+
+    def query(self, *, views: dict, qid: str, sql: str | None, mode: str, timeout: float = 900) -> dict:
+        """Run one query in the sandbox's query step (querystep.py); raises QueryFailed with the step's message."""
+        from .querystep import QueryFailed
+
+        out = self._call("POST", "/query", {"run_dir": self.run_dir, "views": views, "qid": qid, "sql": sql,
+                                            "mode": mode, "timeout": timeout}, timeout=timeout + 60)
+        if "error" in out:
+            raise QueryFailed(out["error"])
+        return out
 
     def start(self) -> None:
         self.wait_ready()
@@ -282,8 +298,10 @@ class RemoteKernel:
 
 class Sandbox:
     def __init__(self, run_dir: str, *, run_mode: str = "live", seed: int = 1729, extra_env: dict | None = None,
-                 kernel=None):
+                 kernel=None, query_step=None):
+        """`query_step(qid=, sql=, mode=)` runs a query outside the kernel (querystep.py) and returns its record."""
         self.run = as_path(run_dir)
+        self.query_step = query_step
         self.run_mode = run_mode
         self.seed = seed
         self.kernel = kernel or LocalKernel(kernel_env(str(self.run), extra_env))
@@ -320,6 +338,29 @@ class Sandbox:
         if res.error:
             raise RuntimeError(f"sandbox setup failed: {res.error}")
         return res
+
+    # ---------- queries ----------
+    def run_query(self, qid: str, sql: str | None, *, mode: str | None = None) -> dict:
+        """Run a query in the query step (outside the kernel), which stores its result in the run folder; the
+        query cell then loads it. Raises querystep.QueryFailed."""
+        from .querystep import QueryFailed
+
+        if self.query_step is None:
+            raise QueryFailed("this run reads no datasets (a replay reads only its snapshots)")
+        return self.query_step(qid=qid, sql=sql, mode=mode or self.run_mode)
+
+    def query(self, qid: str, sql: str, *, meta: dict | None = None) -> CellResult:
+        """A query cell: the query step runs the SQL, then the kernel loads its result as df_<qid>. A rejected or
+        failing query adds no cell; the error is returned as the cell's."""
+        from .querystep import QueryFailed
+
+        try:
+            self.run_query(qid, sql)
+        except QueryFailed as e:
+            res = CellResult()
+            res.error, res.cell_id = str(e), None
+            return res
+        return self.execute(query_cell(qid, sql), kind="query", meta={"query_id": qid, **(meta or {})})
 
     # ---------- execution ----------
     def execute(self, code: str, *, kind: str = "python", tags: list[str] | None = None,
@@ -424,6 +465,7 @@ class Sandbox:
 
 
 def query_cell(qid: str, sql: str) -> str:
+    """The cell that loads a query's result; the SQL documents it (the query step ran it, outside the kernel)."""
     return f'df_{qid} = alc.query({qid!r}, """\n{sql.strip()}\n""")\ndf_{qid}.head()'
 
 

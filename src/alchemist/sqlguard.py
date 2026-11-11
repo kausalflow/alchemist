@@ -11,7 +11,8 @@ import json
 
 import duckdb
 
-BANNED_FUNCTIONS = {"glob", "getenv", "current_setting", "query", "query_table", "sniff_csv"}
+# alc_pseudonym: the query step's keyed hash (querystep.py); calling it on a guessed value would reveal its pseudonym.
+BANNED_FUNCTIONS = {"glob", "getenv", "current_setting", "query", "query_table", "sniff_csv", "alc_pseudonym"}
 
 
 class SQLRejected(ValueError):

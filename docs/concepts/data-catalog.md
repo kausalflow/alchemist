@@ -76,7 +76,7 @@ Each column has one exposure, which decides how it appears in the `ds.<dataset>`
 | Exposure | In the view | Use for |
 | --- | --- | --- |
 | `model` | as is | process values, lot ids, timestamps |
-| `pseudonymise` | replaced by a keyed hash (`ALC_PSEUDONYM_KEY`) | crew or person identifiers that are useful for grouping |
+| `pseudonymise` | replaced by a keyed hash (HMAC-SHA256 with `ALC_PSEUDONYM_KEY`) | crew or person identifiers that are useful for grouping |
 | `never_to_model` | left out | personal names, prices, recipe secrets |
 
 The heuristic sets `never_to_model` for columns flagged `never_to_model`, `sensitive`, `pii` or `secret`, and
@@ -84,14 +84,22 @@ The heuristic sets `never_to_model` for columns flagged `never_to_model`, `sensi
 
 ## Querying through views
 
-The agent never sees a raw S3 path. When a query runs, the data tool:
+The agent never sees a raw S3 path, and the kernel that runs its Python never reads a dataset. Each query runs in
+the **query step**, a short-lived process outside the kernel (`alchemist.querystep`), which:
 
 - parses the SQL with DuckDB's parser and accepts only one `SELECT` whose tables are `ds.<dataset>` views the run may
-  read (or its own CTEs), with no table functions such as `read_parquet` and no file-reading functions;
+  read (or its own CTEs), with no table functions such as `read_parquet`, no file-reading functions and no call to
+  the pseudonym function;
 - expands the dataset's glob once and builds the view on that explicit file list, recording each object's key, ETag,
-  size and modified time;
+  size and modified time; the view leaves out `never_to_model` columns and passes `pseudonymise` columns through the
+  keyed hash, computed in Python with a key the SQL never contains;
 - runs on a DuckDB connection locked to the dataset roots (`allowed_directories`, `enable_external_access = false`,
-  `lock_configuration = true`), so code in the kernel cannot widen it.
+  `lock_configuration = true`);
+- writes the result to the run folder as `inputs/<sha256>.parquet` and records it in `inputs/queries.json`.
+
+The kernel then loads that snapshot (`alc.query("q1")`). It holds no credentials that can read the lake, no
+pseudonym key, and (where Linux Landlock is available) no access to local dataset folders, so code the model writes
+cannot read past the card. Only the query step gets the run's dataset credentials and the key.
 
 A dataset tagged with plant `global` (shared data such as raw-material specs) is readable by every run.
 

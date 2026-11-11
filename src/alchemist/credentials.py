@@ -96,12 +96,20 @@ def _minimal(prefixes: set[str]) -> list[str]:
 
 # Files in a run's inputs/ written at approval (or when a replay is created), never by the run itself.
 PINNED_INPUT_FILES = ("views.json", "knowledge_index.json", "parent_findings.json")
+# A run's credentials come in two scopes. "query": the query step (querystep.py), which reads the run's datasets and
+# writes query results to the run's inputs/. "kernel": the kernel running the model's code, which reads and writes
+# its run folder, but reads no dataset and writes nothing under inputs/ (so it cannot replace a result or its record).
+SCOPES = ("kernel", "query")
+# What the query step writes in a run folder (querystep.py): result snapshots and their record.
+QUERY_STEP_FILES = ("inputs/*.parquet", "inputs/queries.json")
 
 
-def run_policy(run_dir: str, read_globs: list[str]) -> dict:
-    """IAM session policy for one run. Only s3:// locations are included; local paths need no policy."""
+def run_policy(run_dir: str, read_globs: list[str], scope: str = "kernel") -> dict:
+    """IAM session policy for one run in one scope. Only s3:// locations are included; local paths need no policy."""
+    if scope not in SCOPES:
+        raise ValueError(f"unknown credential scope {scope!r}")
     reads: dict[str, set[str]] = {}
-    for g in read_globs:
+    for g in read_globs if scope == "query" else []:
         if g.startswith("s3://"):
             bucket, key = _split(_glob_prefix(g))
             reads.setdefault(bucket, set()).add(key)
@@ -115,17 +123,21 @@ def run_policy(run_dir: str, read_globs: list[str]) -> dict:
                            "Condition": {"StringLike": {"s3:prefix": [p for k in keys_list for p in (k, f"{k}/*")]}}})
     if run_dir.startswith("s3://"):
         bucket, key = _split(run_dir)
+        run = f"arn:aws:s3:::{bucket}/{key}"
         statements += [
-            {"Sid": "RunFolder", "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"],
-             "Resource": f"arn:aws:s3:::{bucket}/{key}/*"},
+            {"Sid": "ReadRunFolder", "Effect": "Allow", "Action": "s3:GetObject", "Resource": f"{run}/*"},
+            # The query step writes query results and their record, nothing else; the kernel writes its run folder.
+            {"Sid": "WriteRunFolder", "Effect": "Allow", "Action": "s3:PutObject",
+             "Resource": [f"{run}/{p}" for p in QUERY_STEP_FILES] if scope == "query" else f"{run}/*"},
             {"Sid": "ListRunFolder", "Effect": "Allow", "Action": "s3:ListBucket", "Resource": f"arn:aws:s3:::{bucket}",
              "Condition": {"StringLike": {"s3:prefix": [key, f"{key}/*"]}}},
-            # A run never writes or removes its own seal, nor the inputs pinned when its plan was approved
-            # (Catalog.pin_run_inputs keeps the record that counts; these are the copies its kernel reads).
-            {"Sid": "NeverSeal", "Effect": "Deny", "Action": ["s3:PutObject", "s3:DeleteObject"],
-             "Resource": [f"arn:aws:s3:::{bucket}/{key}/SEALED",
-                          *(f"arn:aws:s3:::{bucket}/{key}/inputs/{name}" for name in PINNED_INPUT_FILES)]},
         ]
+        if scope == "kernel":
+            # A run never writes or removes its own seal, nor anything under inputs/: the inputs pinned when its
+            # plan was approved (Catalog.pin_run_inputs keeps the record that counts; these are the copies kept
+            # with the run) and the query results the query step stored.
+            statements.append({"Sid": "NeverSeal", "Effect": "Deny", "Action": ["s3:PutObject", "s3:DeleteObject"],
+                               "Resource": [f"{run}/SEALED", f"{run}/inputs/*"]})
     return {"Version": "2012-10-17", "Statement": statements}
 
 
@@ -138,7 +150,7 @@ class Broker(Protocol):
     """What run.py needs from a credential broker; another implementation (e.g. a broker service) can replace STS."""
 
     def issue(self, *, run_id: str, user_id: str, workspace: str, run_dir: str, read_globs: list[str],
-              policy_out=None) -> RunCredentials | None: ...
+              policy_out=None, scope: str = "kernel") -> RunCredentials | None: ...
 
 
 class CredentialBroker:
@@ -166,10 +178,10 @@ class CredentialBroker:
         return self._sts
 
     def issue(self, *, run_id: str, user_id: str, workspace: str, run_dir: str, read_globs: list[str],
-              policy_out=None) -> RunCredentials | None:
+              policy_out=None, scope: str = "kernel") -> RunCredentials | None:
         if not self.enabled:
             return None
-        policy = run_policy(str(run_dir), read_globs)
+        policy = run_policy(str(run_dir), read_globs, scope)
         text = json.dumps(policy, separators=(",", ":"))
         if len(text) > MAX_POLICY_CHARS:
             raise ValueError(f"session policy for run {run_id} is {len(text)} characters (limit {MAX_POLICY_CHARS}); "
@@ -178,12 +190,12 @@ class CredentialBroker:
             from .paths import write_json
 
             write_json(policy_out, policy)
-        session = _tag(f"alc-run-{run_id}", 64)
+        session = _tag(f"alc-{'q' if scope == 'query' else 'k'}-{run_id}", 64)
         resp = self.sts().assume_role(
             RoleArn=self.role_arn, RoleSessionName=session, Policy=text, DurationSeconds=self.duration,
             SourceIdentity=re.sub(r"[^\w+=,.@-]", "_", user_id)[:64].ljust(2, "_"),
             Tags=[{"Key": "alc:run", "Value": _tag(run_id)}, {"Key": "alc:user", "Value": _tag(user_id)},
-                  {"Key": "alc:workspace", "Value": _tag(workspace)}])
+                  {"Key": "alc:workspace", "Value": _tag(workspace)}, {"Key": "alc:scope", "Value": scope}])
         c = resp["Credentials"]
         exp = c["Expiration"]
         exp = exp.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if isinstance(exp, dt.datetime) else str(exp)
@@ -227,18 +239,38 @@ def read_prefixes(read_globs: list[str]) -> list[str]:
     return [f"s3://{b}/{k}/" for b, keys in sorted(by_bucket.items()) for k in _minimal(keys)]
 
 
-def make_grant(*, run_id: str, user: str, plants: list[str], run_dir: str, read_globs: list[str], token_sha256: str,
-               expires_at: dt.datetime) -> dict:
-    """The grant the broker Lambda checks before it issues credentials for a run (alchemist.grant/v1)."""
+def make_grant(*, run_id: str, user: str, plants: list[str], run_dir: str, read_globs: list[str],
+               token_sha256: dict[str, str], expires_at: dt.datetime) -> dict:
+    """The grant the broker Lambda checks before it issues credentials for a run (alchemist.grant/v1).
+
+    `token_sha256`: the hash of each scope's token ({"kernel": ..., "query": ...}, see scope_token_hashes); the
+    broker issues a scope only to its own token."""
     run_prefix = str(run_dir).rstrip("/") + "/"
     return {"schema": GRANT_SCHEMA, "run_id": run_id, "user": user, "plants": sorted(plants),
             "read_prefixes": read_prefixes(read_globs), "knowledge_prefixes": [],
-            "run_prefix": run_prefix, "token_sha256": token_sha256,
+            "run_prefix": run_prefix, "token_sha256": dict(token_sha256),
             "expires_at": expires_at.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def token_sha256(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def scope_token(token: str, scope: str) -> str:
+    """The token for one scope, derived from the run's broker token (the one the sandbox task is started with).
+
+    The sandbox service keeps the run's token and hands its kernel only the kernel token, which cannot be turned into
+    the query token."""
+    import hmac
+
+    if scope not in SCOPES:
+        raise ValueError(f"unknown credential scope {scope!r}")
+    return hmac.new(token.encode(), f"alchemist-broker-scope:{scope}".encode(), hashlib.sha256).hexdigest()
+
+
+def scope_token_hashes(token: str) -> dict[str, str]:
+    """What a grant stores for the run's token: the hash of each scope's token."""
+    return {s: token_sha256(scope_token(token, s)) for s in SCOPES}
 
 
 class LambdaBroker:
@@ -256,9 +288,9 @@ class LambdaBroker:
             self._client = boto3.client("lambda", region_name=self.region)
         return self._client
 
-    def fetch(self, run_id: str, token: str) -> dict:
+    def fetch(self, run_id: str, token: str, scope: str = "kernel") -> dict:
         resp = self.client().invoke(FunctionName=self.function, InvocationType="RequestResponse",
-                                    Payload=json.dumps({"run_id": run_id, "token": token}).encode())
+                                    Payload=json.dumps({"run_id": run_id, "token": token, "scope": scope}).encode())
         body = json.loads(resp["Payload"].read() or b"{}")
         if resp.get("FunctionError") or "error" in body or "AccessKeyId" not in body:
             raise BrokerDenied(f"the credential broker refused run {run_id}: {body.get('error') or body}")
@@ -284,7 +316,7 @@ def credential_process(env: dict | None = None, *, broker: LambdaBroker | None =
     if not (run_id and token and (broker or env.get("ALC_BROKER_FUNCTION"))):
         raise BrokerDenied("ALC_RUN_ID, ALC_BROKER_TOKEN and ALC_BROKER_FUNCTION must be set")
     broker = broker or LambdaBroker(env["ALC_BROKER_FUNCTION"], region=env.get("AWS_REGION"))
-    return broker.fetch(run_id, token)
+    return broker.fetch(run_id, token, env.get("ALC_BROKER_SCOPE") or "kernel")
 
 
 def process_profile_env(config_dir: str, command: list[str]) -> dict[str, str | None]:

@@ -140,7 +140,7 @@ class StepFunctionsLauncher:
         bucket, _ = _split(self.services().settings.workspace_root, "ALC_WORKSPACE")
         return bucket, f"{self.grants_prefix}{run_id}.json"
 
-    def _write_grant(self, run_id: str, token_sha: str, *, views: bool, hours: float) -> None:
+    def _write_grant(self, run_id: str, token_sha: dict[str, str], *, views: bool, hours: float) -> None:
         from .credentials import make_grant
         from .run import pinned_inputs
 
@@ -162,10 +162,10 @@ class StepFunctionsLauncher:
     def _new_grant(self, run_id: str, *, ready: bool) -> str | None:
         if not self.separate:
             return None
-        from .credentials import new_token, token_sha256
+        from .credentials import new_token, scope_token_hashes
 
         token = new_token()
-        self._write_grant(run_id, token_sha256(token), views=ready, hours=self._grant_hours() if ready else 0)
+        self._write_grant(run_id, scope_token_hashes(token), views=ready, hours=self._grant_hours() if ready else 0)
         return token
 
     def plan(self, run_id: str) -> None:

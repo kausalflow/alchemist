@@ -54,9 +54,11 @@ A fresh Jupyter kernel starts in the run folder. Its first cells set the run mod
 helpers. The agent then works with these tools:
 
 `run_query`
-:   One read-only `SELECT` over `ds.<dataset>` views, checked by DuckDB's own parser. The dataset's glob is expanded
-    once and the query runs on that explicit file list; every source object's key, ETag, size and modified time is
-    recorded. The result is saved as `inputs/<sha256>.parquet` and loaded in the kernel as `df_<query_id>`. The model
+:   One read-only `SELECT` over `ds.<dataset>` views, checked by DuckDB's own parser. It runs in the query step,
+    outside the kernel, which applies the dataset cards ([column exposure](data-catalog.md#column-exposure)). The
+    dataset's glob is expanded once and the query runs on that explicit file list; every source object's key, ETag,
+    size and modified time is recorded. The result is saved as `inputs/<sha256>.parquet` and loaded in the kernel as
+    `df_<query_id>`; code in the kernel can reload a result (`alc.query("q1")`) but cannot query a dataset itself. The model
     sees only the row count, column types, summary statistics and the first rows; people following the run also see a
     sparkline of each numeric column (kept in the transcript, never sent to the model).
 

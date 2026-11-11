@@ -15,7 +15,7 @@ import pytest
 
 from alchemist.agent import ScriptedModel
 from alchemist.credentials import (BrokerDenied, LambdaBroker, credential_process, make_grant, new_token,
-                                   process_profile_env, read_prefixes, token_sha256)
+                                   process_profile_env, read_prefixes, scope_token, scope_token_hashes)
 from alchemist.demo import script
 from alchemist.paths import duckdb_s3_secret, read_json
 from alchemist.run import (ScriptedReviewer, analyse, ask, execute_replay, report_step, seal_step, start_approval,
@@ -56,7 +56,9 @@ class FakeLambda:
 def test_lambda_broker_returns_credential_process_json():
     fake = FakeLambda(CREDS)
     assert LambdaBroker("arn:fn", client=fake).fetch("R1", "tok") == CREDS
-    assert json.loads(fake.calls[0]["Payload"]) == {"run_id": "R1", "token": "tok"}
+    assert json.loads(fake.calls[0]["Payload"]) == {"run_id": "R1", "token": "tok", "scope": "kernel"}
+    LambdaBroker("arn:fn", client=fake).fetch("R1", "tok", "query")
+    assert json.loads(fake.calls[1]["Payload"])["scope"] == "query"
 
 
 @pytest.mark.parametrize("response", [{"error": "denied"}, {"errorMessage": "boom"}])
@@ -120,14 +122,20 @@ def test_grant_is_accepted_by_the_broker_lambda():
     grant = make_grant(run_id="R1", user="eng_p1", plants=["P01"], run_dir=RUN_DIR,
                        read_globs=["s3://lake/plant=P01/historian/date=*/*.parquet", "s3://lake/plant=P01/lots/*.parquet",
                                    "/local/only/*.csv"],
-                       token_sha256=token_sha256(token), expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1))
+                       token_sha256=scope_token_hashes(token),
+                       expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1))
     assert grant["read_prefixes"] == ["s3://lake/plant=P01/historian/", "s3://lake/plant=P01/lots/"]
-    assert grant["run_prefix"] == RUN_DIR + "/"
-    h.validate_grant(grant, "R1", token, workspace_bucket="ws-bucket", lake_buckets={"lake"}, knowledge_bucket="kn")
-    policy = json.dumps(h.session_policy(grant))
-    assert "lake/plant=P01/historian/*" in policy and "runs/R1/SEALED" in policy
-    with pytest.raises(h.BrokerError, match="bad token"):
-        h.validate_grant(grant, "R1", "other", workspace_bucket="ws-bucket", lake_buckets={"lake"}, knowledge_bucket="kn")
+    assert grant["run_prefix"] == RUN_DIR + "/" and token not in json.dumps(grant)
+    buckets = dict(workspace_bucket="ws-bucket", lake_buckets={"lake"}, knowledge_bucket="kn")
+    h.validate_grant(grant, "R1", scope_token(token, "kernel"), **buckets)
+    h.validate_grant(grant, "R1", scope_token(token, "query"), scope="query", **buckets)
+    # PA-25: only the query step reads the lake; the kernel's session reaches its run folder and nothing under inputs/.
+    query, kernel = json.dumps(h.session_policy(grant, "query")), json.dumps(h.session_policy(grant, "kernel"))
+    assert "lake/plant=P01/historian/*" in query and "runs/R1/inputs/queries.json" in query and "SEALED" not in query
+    assert "lake" not in kernel and "runs/R1/SEALED" in kernel and "runs/R1/inputs/*" in kernel
+    for bad, scope in (("other", "kernel"), (scope_token(token, "kernel"), "query"), (token, "kernel")):
+        with pytest.raises(h.BrokerError, match="bad token"):  # the kernel's token cannot get the query scope
+            h.validate_grant(grant, "R1", bad, scope=scope, **buckets)
 
 
 def test_read_prefixes_drop_covered_prefixes():
@@ -168,13 +176,13 @@ def test_launcher_writes_grants_and_passes_the_token_only_in_the_execution(tmp_p
     l.plan("R1")
     token = json.loads(sfn.started[0]["input"])["broker_token"]
     grant = json.loads(s3.objects[("ws-bucket", "_grants/R1.json")])
-    assert grant["token_sha256"] == token_sha256(token) and token not in json.dumps(grant)
+    assert grant["token_sha256"] == scope_token_hashes(token) and token not in json.dumps(grant)
     assert grant["read_prefixes"] == [] and grant["expires_at"] <= dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     (run / "inputs" / "views.json").write_text(json.dumps({"lots": {"glob": "s3://lake/plant=P01/lots/*.parquet"}}))
     l.analyse("R1", "eng_p1")
     grant = json.loads(s3.objects[("ws-bucket", "_grants/R1.json")])
-    assert grant["read_prefixes"] == ["s3://lake/plant=P01/lots/"] and grant["token_sha256"] == token_sha256(token)
+    assert grant["read_prefixes"] == ["s3://lake/plant=P01/lots/"] and grant["token_sha256"] == scope_token_hashes(token)
     assert grant["expires_at"] > (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -244,10 +252,17 @@ def test_kernel_host_serves_only_its_own_run():
 
 
 def test_broker_mode_builds_the_kernel_environment_itself():
-    host = KernelHost({"ALC_BROKER_FUNCTION": "arn:fn", "ALC_RUN_ID": "R1", "ALC_DB_HOST": "db"})
+    host = KernelHost({"ALC_BROKER_FUNCTION": "arn:fn", "ALC_RUN_ID": "R1", "ALC_DB_HOST": "db",
+                       "ALC_BROKER_TOKEN": "run-token"})
     extra, record = host.credentials_env()
     assert record == {"mode": "broker", "function": "arn:fn"}
     assert "broker credentials" in Path(extra["AWS_CONFIG_FILE"]).read_text()
+    # The kernel gets the kernel-scope token only; the query step its own. Neither is the run's token.
+    assert extra["ALC_BROKER_TOKEN"] == scope_token("run-token", "kernel") and extra["ALC_BROKER_SCOPE"] == "kernel"
+    query, _ = host.credentials_env("query")
+    assert query["ALC_BROKER_TOKEN"] == scope_token("run-token", "query") and query["ALC_BROKER_SCOPE"] == "query"
+    with pytest.raises(PermissionError):
+        KernelHost({"ALC_BROKER_FUNCTION": "arn:fn"}).credentials_env()
 
 
 @pytest.fixture(scope="module")
@@ -405,22 +420,31 @@ def _text(out: dict) -> str:
 
 
 @needs_landlock
-def test_kernel_reads_only_its_datasets_and_writes_only_its_run(tmp_path):
+def test_kernel_reads_no_dataset_and_writes_only_its_run(tmp_path):
+    """PA-25: the kernel reads no dataset, not even its own run's; the query step reads those, and the kernel loads
+    the filtered result."""
     ws, lake = tmp_path / "ws", tmp_path / "lake"
     for d in (ws / "R1", ws / "R2", lake / "P01", lake / "P02"):
         d.mkdir(parents=True)
-    (lake / "P01" / "a.csv").write_text("x\n1\n")
+    (lake / "P01" / "a.csv").write_text("x,secret\n1,s1\n")
     (lake / "P02" / "b.csv").write_text("x\n2\n")
     (ws / "R2" / "secret.txt").write_text("other run")
     host = KernelHost({**os.environ, "ALC_WORKSPACE": str(ws), "ALC_KERNEL_JAIL": "required"})
+    views = {"a": {"glob": f"{lake}/P01/*.csv", "format": "csv", "card_version": 1,
+                   "columns": [{"name": "x", "exposure": "model"}, {"name": "secret", "exposure": "never_to_model"}]}}
     try:
         rec = host.start(str(ws / "R1"), read_paths=[str(lake / "P01")])["credentials"]
         assert rec["filesystem"].startswith("landlock")
+        out = host.query(str(ws / "R1"), views=views, qid="q1", sql="select * from ds.a", mode="live")
+        assert out["rows"] == 1, out
+        bad = host.query(str(ws / "R1"), views=views, qid="q2", sql="select * from read_csv('/etc/passwd')", mode="live")
+        assert "not allowed" in bad["error"]
         code = f"""
-import duckdb, pathlib
-print(duckdb.sql("select sum(x) from read_csv('{lake}/P01/*.csv')").fetchone()[0])
+import alchemist.nb as alc, pathlib
+alc.init('{ws}/R1')
+print(list(alc.query('q1').columns))
 pathlib.Path('{ws}/R1/out.txt').write_text('mine')
-for p in ['{lake}/P02/b.csv', '{ws}/R2/secret.txt', '/root/.bashrc']:
+for p in ['{lake}/P01/a.csv', '{lake}/P02/b.csv', '{ws}/R2/secret.txt', '/root/.bashrc']:
     try:
         open(p).read(); print('READ', p)
     except PermissionError:
@@ -430,7 +454,8 @@ try:
 except PermissionError:
     print('denied')
 """
-        assert _text(host.execute(code, run_dir=str(ws / "R1"))).split() == ["1", "denied", "denied", "denied", "denied"]
+        lines = [l for l in _text(host.execute(code, run_dir=str(ws / "R1"))).splitlines() if not l.startswith("ALC_RESULT")]
+        assert lines == ["['x']", "denied", "denied", "denied", "denied", "denied"]
         assert (ws / "R1" / "out.txt").read_text() == "mine"
     finally:
         host.stop()
@@ -481,7 +506,7 @@ def test_worker_sends_the_runs_scoped_session_to_the_sandbox_service(svc, sandbo
     from alchemist.sandbox import RemoteKernel
 
     pushed = []
-    monkeypatch.setattr(RemoteKernel, "push_credentials", lambda self, c: pushed.append(c["AccessKeyId"]))
+    monkeypatch.setattr(RemoteKernel, "push_credentials", lambda self, c, scope="kernel": pushed.append(c["AccessKeyId"]))
     s = copy.copy(svc)
     s.settings = dataclasses.replace(svc.settings, sandbox_url=sandbox_url)
     sts = _CountingSTS()
@@ -494,7 +519,10 @@ def test_worker_sends_the_runs_scoped_session_to_the_sandbox_service(svc, sandbo
     start_approval(s, out["run_id"], user="eng_p1")
     res = analyse(s, out["run_id"], user="eng_p1", model=ScriptedModel(script.ANALYSIS_TURNS),
                   reviewer=ScriptedReviewer(script.REVIEW))
-    assert res["status"] == "completed" and len(sts.calls) == 1 and pushed == []  # one session, not yet due
+    # One session for the kernel and one for the query step, neither due for renewal yet.
+    assert res["status"] == "completed" and len(sts.calls) == 2 and pushed == []
+    assert [c["RoleSessionName"][:6] for c in sts.calls] == ["alc-k-", "alc-q-"]
     creds = read_json(Path(res["path"]) / "manifest.json")["access"]["credentials"]
     assert creds["mode"] == "scoped" and creds["role"] == "arn:aws:iam::1:role/run"
+    assert creds["query"]["mode"] == "scoped" and creds["query"]["session"].startswith("alc-q-")
     assert creds["filesystem"] == ("landlock v%d" % fsjail.abi() if fsjail.available() else "shared")

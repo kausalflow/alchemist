@@ -56,8 +56,10 @@ See [Run folder](../reference/run-folder.md) for the files.
 alchemist replay <run-id> --user <you> --mode rerun
 ```
 
-A rerun executes the same SQL on current data and reports, per query, rows then and now, whether the result hash
-changed and how many source objects are new or changed.
+A rerun executes the same SQL on current data (in the query step, as in the original run) and reports, per query,
+rows then and now, whether the result hash changed and how many source objects are new or changed. Runs made before
+pseudonyms became HMAC-SHA256 (PA-25) show their pseudonymised columns as changed in a rerun; a replay on their own
+snapshots is unaffected.
 
 ## How numbers stay honest
 

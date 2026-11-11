@@ -3,9 +3,12 @@
 Every notebook a run produces calls these functions, and the same notebook runs
 in three modes:
 
-- live:    alc.query runs SQL on the lake and stores a content-hashed snapshot
+- live:    alc.query loads the content-hashed snapshot the query step stored
 - replay:  alc.query reads the stored snapshot, so results must match exactly
-- rerun:   alc.query runs the SQL on current data and reports how it differs
+- rerun:   alc.query loads the result the query step got on current data, and reports how it differs
+
+The kernel runs code the model wrote, so it never reads datasets itself: each query runs in the query step outside
+the kernel (querystep.py), which applies the dataset card (hidden and pseudonymised columns) and writes the result.
 
 alc.finding records each claim with the number that supports it; in replay the
 number is checked against the original run.
@@ -13,7 +16,6 @@ number is checked against the original run.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import random
@@ -21,16 +23,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-import duckdb
 import numpy as np
 import pandas as pd
 import yaml
 from penguineer.agent import findings as agent_findings
 from penguineer.agent.tools import HIDDEN as PENGUINEER_HIDDEN
 
-from .paths import as_path, copy_tree, expand_glob, object_info, put_file, read_json, write_json
+from .paths import as_path, copy_tree, read_json, write_json
 from .plugins import get_registry
-from .sqlguard import check_sql
 
 RESULT_MARKER = "ALC_RESULT "
 
@@ -38,7 +38,10 @@ _state: dict = {}
 
 
 def init(run_dir: str, run_mode: str = "live", seed: int = 1729) -> None:
-    """Prepare the kernel: seeds, the run folder and a locked-down DuckDB connection."""
+    """Prepare the kernel: seeds and the run folder.
+
+    The kernel never reads datasets: queries run in the query step outside it (querystep.py), which writes each
+    result to the run folder; alc.query loads it from there."""
     random.seed(seed)
     np.random.seed(seed)
     os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -46,67 +49,19 @@ def init(run_dir: str, run_mode: str = "live", seed: int = 1729) -> None:
     tmp = Path(tempfile.mkdtemp(prefix="alc-"))
     _state.update(run=run, mode=run_mode, seed=seed, tmp=tmp, findings={}, rng=np.random.default_rng(seed))
 
-    views_file = run / "inputs" / "views.json"
-    views = read_json(views_file) if views_file.exists() else {}
-    _state["views"] = views
-    queries_file = run / "inputs" / "queries.json"
-    _state["queries"] = read_json(queries_file) if queries_file.exists() else {}
     parent = run / "inputs" / "parent_findings.json"
     _state["expected"] = {f["id"]: f for f in read_json(parent)["findings"]} if parent.exists() else {}
     findings_file = run / "findings.json"
     if findings_file.exists() and run_mode == "live":
         _state["findings"] = {f["id"]: f for f in read_json(findings_file)["findings"]}
 
-    con = duckdb.connect()
-    con.execute("set threads = 1")
-    backends = get_registry().storage_backends
-    for scheme in sorted({_scheme(v["glob"]) for v in views.values()}):
-        backends.get(scheme).setup(con)
-    roots = sorted({_root(v["glob"]) for v in views.values()} | {str(tmp)})
-    con.execute("set allowed_directories = " + "[" + ", ".join(f"'{r}'" for r in roots) + "]")
-    con.execute("set enable_external_access = false")
-    con.execute("set lock_configuration = true")
-    con.execute("create schema if not exists ds")
-    _state["con"] = con
 
-
-def _scheme(uri: str) -> str:
-    return uri.split("://", 1)[0] if "://" in uri else "file"
-
-
-def _root(glob: str) -> str:
-    parts = glob.split("/")
-    for i, p in enumerate(parts):
-        if any(c in p for c in "*?["):
-            return "/".join(parts[:i])
-    return "/".join(parts[:-1])
-
-
-def _con() -> duckdb.DuckDBPyConnection:
-    if "con" not in _state:
+def _queries() -> dict:
+    """The run's queries as the query step recorded them (inputs/queries.json)."""
+    if "run" not in _state:
         raise RuntimeError("call alc.init(...) first")
-    return _state["con"]
-
-
-def _pin_views(datasets: list[str]) -> list[dict]:
-    """Expand each dataset's glob once and point its view at that explicit file list."""
-    con, objects = _con(), []
-    key = os.environ.get("ALC_PSEUDONYM_KEY", "dev-only-key").replace("'", "")
-    for name in datasets:
-        spec = _state["views"][name]
-        files = expand_glob(spec["glob"])
-        if not files:
-            raise FileNotFoundError(f"no files for dataset {name}")
-        objects += [dict(object_info(f), dataset=name) for f in files]
-        scan = get_registry().data_formats.get(spec["format"]).scan(files)
-        cols = []
-        for c in spec["columns"]:
-            if c["exposure"] == "never_to_model":
-                continue
-            q = f'"{c["name"]}"'
-            cols.append(f"md5('{key}' || {q}::varchar) as {q}" if c["exposure"] == "pseudonymise" else q)
-        con.execute(f"create or replace view ds.{name} as select {', '.join(cols)} from {scan}")
-    return objects
+    f = _state["run"] / "inputs" / "queries.json"
+    return read_json(f) if f.exists() else {}
 
 
 def _summary(df: pd.DataFrame, max_rows: int = 20) -> dict:
@@ -156,51 +111,32 @@ def _num(x):
 
 
 def query(qid: str, sql: str | None = None) -> pd.DataFrame:
-    """Run (live), read back (replay) or re-run and compare (rerun) one recorded query."""
+    """Load the result of one recorded query: the snapshot the query step wrote (live, replay), or the one it wrote
+    on current data (rerun), with how it differs from the original.
+
+    The SQL in the call documents the query; it must be the SQL that was run. Code in the kernel cannot run new SQL
+    on datasets: the run_query tool does that, outside the kernel."""
     run, mode = _state["run"], _state["mode"]
-    rec = _state["queries"].get(qid)
+    rec = _queries().get(qid)
+    if rec is None:
+        raise KeyError(f"query {qid} has no result in this run; datasets are queried with the run_query tool, "
+                       "and code in the kernel can only load those results (alc.query('q1'))")
+    if sql is not None and " ".join(sql.split()) != " ".join(rec["sql"].split()):
+        raise ValueError(f"query {qid} was run with other SQL; call alc.query({qid!r}) to load its result")
     if mode == "replay":
-        if rec is None:
-            raise KeyError(f"query {qid} has no snapshot in this run's inputs")
         df = pd.read_parquet(_local(run / rec["snapshot"]))
         print(RESULT_MARKER + json.dumps({"query": qid, "mode": "replay", "snapshot": rec["snapshot"], "rows": len(df)}))
         return df
-
-    sql = sql if sql is not None else (rec or {}).get("sql")
-    if sql is None:
-        raise ValueError("live queries need SQL")
-    datasets = check_sql(sql, set(_state["views"]))
-    objects = _pin_views(datasets)
-    tmp_file = _state["tmp"] / f"{qid}.parquet"
-    _con().execute(f"copy ({sql}) to '{tmp_file}' (format parquet)")
-    df = pd.read_parquet(tmp_file)
-    digest = _frame_hash(df)
-
-    if mode == "rerun" and rec is not None:
-        changed = digest != rec.get("result_sha256")
-        drift = [o for o in objects if o["key"] not in {x["key"]: x for x in rec["objects"]}
-                 or {x["key"]: x for x in rec["objects"]}[o["key"]]["etag"] != o["etag"]]
-        report = {"query": qid, "mode": "rerun", "rows_then": rec["rows"], "rows_now": len(df),
-                  "result_changed": changed, "objects_changed_or_new": len(drift)}
-        print(RESULT_MARKER + json.dumps(report))
+    if mode == "rerun":
+        again = rec.get("rerun")
+        if again is None:
+            raise KeyError(f"query {qid} has not been re-run on current data")
+        df = pd.read_parquet(_local(run / again["snapshot"]))
+        print(RESULT_MARKER + json.dumps(again["report"]))
         return df
-
-    snapshot = f"inputs/{digest}.parquet"
-    put_file(tmp_file, run / snapshot)
-    _state["queries"][qid] = {"sql": sql, "datasets": datasets, "objects": objects, "rows": int(len(df)),
-                              "snapshot": snapshot, "result_sha256": digest,
-                              "card_versions": {d: _state["views"][d]["card_version"] for d in datasets}}
-    write_json(run / "inputs" / "queries.json", _state["queries"])
-    print(RESULT_MARKER + json.dumps({"query": qid, "snapshot": snapshot, **_summary(df)}, default=str))
+    df = pd.read_parquet(_local(run / rec["snapshot"]))
+    print(RESULT_MARKER + json.dumps({"query": qid, "snapshot": rec["snapshot"], **_summary(df)}, default=str))
     return df
-
-
-def _frame_hash(df: pd.DataFrame) -> str:
-    """Content hash of a result, independent of Parquet writer details."""
-    h = hashlib.sha256()
-    h.update(json.dumps([str(c) for c in df.columns]).encode())
-    h.update(pd.util.hash_pandas_object(df, index=False).values.tobytes())
-    return h.hexdigest()
 
 
 def _local(path) -> Path:
@@ -318,14 +254,15 @@ def _penguineer_input(value: str, staged: Path) -> tuple[Path, str]:
         path = staged / f"{name}.yaml"
         path.write_text(yaml.safe_dump(knowledge(name), sort_keys=False))
         return path, value
-    if value in _state["queries"]:
-        snapshot = _state["queries"][value]["snapshot"]
+    queries = _queries()
+    if value in queries:
+        snapshot = queries[value]["snapshot"]
         return _local(_state["run"] / snapshot), snapshot
     table = _state.get("calls", {}).get(value, {}).get("table")
     if table:
         return _local(_state["run"] / table), table
     raise ValueError(f"{value!r} is not a query of this run, an earlier call with a table, or knowledge:<name>; "
-                     f"penguineer reads only the run's query snapshots ({sorted(_state['queries'])}), tables of "
+                     f"penguineer reads only the run's query snapshots ({sorted(queries)}), tables of "
                      f"earlier calls ({sorted(_state.get('calls', {}))}) and its structured knowledge")
 
 
@@ -354,7 +291,7 @@ def knowledge(name: str):
 
 
 def _debug() -> dict:  # pragma: no cover - handy in an interactive kernel
-    return {k: v for k, v in _state.items() if k not in ("con",)}
+    return dict(_state)
 
 
 sys.modules.setdefault("alc", sys.modules[__name__])
