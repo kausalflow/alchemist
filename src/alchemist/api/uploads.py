@@ -152,3 +152,12 @@ def set_exposure(workspace: str, project: str, upload_id: str, body: ExposureBod
         raise HTTPException(404, f"no column {body.table}.{body.column}") from e
     svc.catalog.audit(me.user.id, "upload.exposure", f"{workspace}/{project}/{upload_id}", body.model_dump())
     return _out(rec)
+
+
+@router.get("/projects/{workspace}/{project}/uploads/{upload_id}/about")
+def about_upload(workspace: str, project: str, upload_id: str, svc: Svc, me: Me) -> dict:
+    """The file in plain words, and three or four questions to start with (worked out without a model)."""
+    from .. import describe
+
+    pdir = _project(svc, me, workspace, project)
+    return describe.about(pdir, _get(svc, me, pdir, upload_id))

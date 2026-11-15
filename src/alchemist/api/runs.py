@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from ..access import AccessDenied
 from ..catalog import now
+from .. import plain
 from ..paths import as_path, is_cloud, read_json, read_yaml
 from ..safehtml import markdown_html
 from ..workspace import verify
@@ -38,8 +39,10 @@ TERMINAL = {"completed", "partial", "failed", "mismatch", "cancelled", "expired"
 
 def _question(row: dict) -> dict:
     q = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
+    fu = q.get("follow_up_of")
     return {k: q.get(k) for k in ("id", "text", "asker", "scope", "status", "created_at", "updated_at")} | {
-        "plan": q.get("plan")}
+        "plan": q.get("plan"),
+        "follow_up_of": {"run_id": fu["run_id"], "question": fu.get("question")} if fu else None}
 
 
 def _json(path, default=None):
@@ -57,7 +60,10 @@ def _summary(svc, me, row: dict) -> dict:
            "status": row["status"], "created_at": row["created_at"], "updated_at": row["updated_at"],
            "sealed": bool(row["seal_sha256"]), "plants": json.loads(row["plants"] or "[]"), "entitled": ok}
     try:
-        out["question"] = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")["text"]
+        q = read_yaml(as_path(row["path"]).parent.parent / "question.yaml")
+        out["question"] = q["text"]
+        if q.get("follow_up_of"):
+            out["follow_up_of"] = q["follow_up_of"]["run_id"]
     except (FileNotFoundError, OSError, KeyError, TypeError):
         out["question"] = None
     if row["status"] == "paused":
@@ -155,6 +161,9 @@ class AskBody(BaseModel):
     scope: dict[str, Any] = Field(default_factory=dict)
     # Data files uploaded to the project (POST /projects/{workspace}/{project}/uploads) that the runs may query.
     uploads: list[str] = Field(default_factory=list, max_length=50)
+    # A finished run in the same project this question follows up on; its question, conclusion and findings go to
+    # the agents, and its files and scope are the defaults.
+    follow_up_of: str | None = None
 
 
 @router.post("/questions", status_code=201)
@@ -164,7 +173,7 @@ def ask(body: AskBody, svc: Svc, me: Me, request: Request) -> dict:
 
     try:
         row = create(svc, user=me.user, workspace=body.workspace, project=body.project, question=body.question,
-                     scope=body.scope, upload_ids=body.uploads)
+                     scope=body.scope, upload_ids=body.uploads, follow_up_of=body.follow_up_of)
     except AccessDenied as e:
         raise access_error(e) from e
     except ValueError as e:  # an upload that is not in the project
@@ -322,13 +331,19 @@ def _verdicts(svc, run_id: str) -> list[dict]:
 
 def _failure(svc, run_id: str) -> dict | None:
     rows = _audit(svc, run_id, "run.fail")
-    return rows[-1] if rows else None
+    return {**rows[-1], "plain": plain.explain(rows[-1].get("error"))} if rows else None
 
 
 def _closed(svc, run_id: str) -> dict | None:
     """Why a run was cancelled, expired or paused (who, when, reason)."""
     rows = _audit(svc, run_id, "run.cancel") + _audit(svc, run_id, "run.expire") + _audit(svc, run_id, "run.paused")
-    return sorted(rows, key=lambda r: r["at"])[-1] if rows else None
+    if not rows:
+        return None
+    last = sorted(rows, key=lambda r: r["at"])[-1]
+    # A pause the system made because something broke gets plain words too; one a person made keeps their reason.
+    if last.get("actor") == "system" and re.search(r"error|unavailable|interrupted", last.get("reason") or "", re.I):
+        last["plain"] = plain.explain(last["reason"])
+    return last
 
 
 @router.get("/runs/{run_id}/steps")

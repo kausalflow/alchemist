@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, uploadsPath, type Upload, type UploadTable } from "../api";
+import { api, uploadsPath, type Upload, type UploadAbout, type UploadTable } from "../api";
 import { Collapsible, ErrorNote, day } from "./bits";
 
 const ACCEPT = ".xlsx,.xlsm,.xls,.csv,.tsv";
@@ -17,6 +17,7 @@ export default function DataFiles({
   selected,
   onSelected,
   pickable = true,
+  onStarter,
 }: {
   workspace: string;
   project: string;
@@ -26,6 +27,8 @@ export default function DataFiles({
   onSelected: (ids: string[]) => void;
   /** On the Ask page each file has a tick box for the question; the project page only lists and adds files. */
   pickable?: boolean;
+  /** A starter question was clicked: ask it with this file. */
+  onStarter?: (question: string, uploadId: string) => void;
 }) {
   const [files, setFiles] = useState<Upload[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -111,7 +114,7 @@ export default function DataFiles({
           <ErrorNote error={error} />
           {files.length > 0 && (
             <div className="stack-sm">
-              {files.map((u) => (
+              {files.map((u, i) => (
                 <FileCard
                   key={u.id}
                   upload={u}
@@ -121,6 +124,8 @@ export default function DataFiles({
                   checked={selected.includes(u.id)}
                   onToggle={pickable ? (on) => toggle(u.id, on) : undefined}
                   onChange={(rec) => setFiles((prev) => prev.map((x) => (x.id === rec.id ? rec : x)))}
+                  onStarter={onStarter ? (q) => onStarter(q, u.id) : undefined}
+                  starters={i === 0}
                 />
               ))}
             </div>
@@ -139,6 +144,8 @@ function FileCard({
   checked,
   onToggle,
   onChange,
+  onStarter,
+  starters = true,
 }: {
   upload: Upload;
   workspace: string;
@@ -147,7 +154,16 @@ function FileCard({
   checked: boolean;
   onToggle?: (on: boolean) => void;
   onChange: (u: Upload) => void;
+  onStarter?: (question: string) => void;
+  /** Only the newest file offers starter questions, so a long list stays short. */
+  starters?: boolean;
 }) {
+  const [about, setAbout] = useState<UploadAbout | null>(null);
+  // Hiding a column changes what the description and questions may mention, so fetch again after a change.
+  const hidden = u.tables.flatMap((t) => t.columns.filter((c) => c.exposure === "never_to_model").map((c) => c.name)).join(",");
+  useEffect(() => {
+    api.get<UploadAbout>(`${uploadsPath(workspace, project)}/${u.id}/about`).then(setAbout).catch(() => setAbout(null));
+  }, [workspace, project, u.id, hidden]);
   return (
     <div className="subcard">
       <label className="row-center">
@@ -161,6 +177,31 @@ function FileCard({
           Download
         </a>
       </label>
+      {about && (
+        <div className="about-file">
+          {about.tables.map((t) => (
+            <p key={t.table} className="small">
+              {t.description}
+            </p>
+          ))}
+          {starters && about.questions.length > 0 && (
+            <div className="starters">
+              <span className="small muted">{onStarter ? "Start with one of these:" : "Questions you could ask:"}</span>
+              {about.questions.map((q) =>
+                onStarter ? (
+                  <button key={q} type="button" className="starter" onClick={() => onStarter(q)}>
+                    {q}
+                  </button>
+                ) : (
+                  <span key={q} className="starter static">
+                    {q}
+                  </span>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {u.tables.map((t) => (
         <TableInfo key={t.name} upload={u} table={t} workspace={workspace} project={project} mine={mine} onChange={onChange} />
       ))}

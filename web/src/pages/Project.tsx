@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type RunSummary } from "../api";
 import { useApi, useSession } from "../session";
 import { useWorkspace } from "../workspace";
@@ -25,6 +25,7 @@ const projectPath = (ws: string, p: string) => `/projects/${encodeURIComponent(w
 export default function ProjectPage() {
   const { workspace = "", project = "" } = useParams();
   const { me } = useSession();
+  const nav = useNavigate();
   const { workspaces, reload: reloadWorkspaces } = useWorkspace();
   const { data: proj, error, setData } = useApi<Project>(projectPath(workspace, project));
   const { data: runs } = useApi<RunSummary[]>(
@@ -41,7 +42,27 @@ export default function ProjectPage() {
       const prev = seen.get(key);
       if (!prev || (r.created_at ?? "") > (prev.created_at ?? "")) seen.set(key, r);
     }
-    return [...seen.values()].sort((a, b) => (b.updated_at ?? b.created_at ?? "").localeCompare(a.updated_at ?? a.created_at ?? ""));
+    const latest = [...seen.values()].sort((a, b) =>
+      (b.updated_at ?? b.created_at ?? "").localeCompare(a.updated_at ?? a.created_at ?? ""),
+    );
+    // Follow-ups sit under the question they build on, like replies in a thread.
+    const questionOf = new Map((runs ?? []).map((r) => [r.run_id, r.question_id ?? r.run_id]));
+    const parentOf = (r: RunSummary) => (r.follow_up_of ? questionOf.get(r.follow_up_of) : undefined);
+    const children = new Map<string, RunSummary[]>();
+    for (const r of latest) {
+      const p = parentOf(r);
+      if (p && seen.has(p)) children.set(p, [r, ...(children.get(p) ?? [])]); // oldest first under the parent
+    }
+    const rows: { run: RunSummary; depth: number }[] = [];
+    const add = (r: RunSummary, depth: number) => {
+      rows.push({ run: r, depth });
+      for (const c of children.get(r.question_id ?? r.run_id) ?? []) add(c, depth + 1);
+    };
+    for (const r of latest) {
+      const p = parentOf(r);
+      if (!p || !seen.has(p)) add(r, 0);
+    }
+    return rows;
   }, [runs]);
 
   const ask = `/ask?workspace=${encodeURIComponent(workspace)}&project=${encodeURIComponent(project)}`;
@@ -81,10 +102,13 @@ export default function ProjectPage() {
               )}
               {!runs && <Loading />}
               <ul className="qlist">
-                {questions.map((r) => (
-                  <li key={r.run_id}>
+                {questions.map(({ run: r, depth }) => (
+                  <li key={r.run_id} style={depth ? { paddingLeft: Math.min(depth, 4) * 20 } : undefined}>
                     <Link to={`/runs/${r.run_id}`} className="qrow">
-                      <span className="qtext">{r.question ?? r.run_id}</span>
+                      <span className="qtext">
+                        {depth > 0 && <span className="faint small">Follow-up: </span>}
+                        {r.question ?? r.run_id}
+                      </span>
                       <span className="qmeta small muted">
                         {r.user_id === me!.id ? "You" : r.user_id} · {relTime(r.updated_at ?? r.created_at)}
                       </span>
@@ -96,7 +120,8 @@ export default function ProjectPage() {
               </ul>
             </section>
 
-            <DataFiles workspace={workspace} project={project} plants={plants} me={me!.id} selected={[]} onSelected={() => {}} pickable={false} />
+            <DataFiles workspace={workspace} project={project} plants={plants} me={me!.id} selected={[]} onSelected={() => {}} pickable={false}
+              onStarter={(q, id) => nav(`/ask?${new URLSearchParams({ workspace, project, question: q, upload: id })}`)} />
           </div>
 
           <aside className="split-side stack">
