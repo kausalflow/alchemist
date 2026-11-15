@@ -16,6 +16,7 @@ export default function DataFiles({
   me,
   selected,
   onSelected,
+  pickable = true,
 }: {
   workspace: string;
   project: string;
@@ -23,6 +24,8 @@ export default function DataFiles({
   me: string;
   selected: string[];
   onSelected: (ids: string[]) => void;
+  /** On the Ask page each file has a tick box for the question; the project page only lists and adds files. */
+  pickable?: boolean;
 }) {
   const [files, setFiles] = useState<Upload[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -67,10 +70,11 @@ export default function DataFiles({
 
   return (
     <fieldset className="box">
-      <legend>Data files (optional)</legend>
+      <legend>{pickable ? "Data files (optional)" : "Data files"}</legend>
       <p className="muted small">
-        Upload Excel or CSV files to analyse with the catalog data. Each sheet becomes a table the agent queries as{" "}
-        <span className="mono">ds.up_…</span>; the file is kept unchanged with the run's provenance.
+        {pickable
+          ? "Upload Excel or CSV files to analyse with the catalog data. Each sheet becomes a table the agent can query; the file is kept unchanged with the run's records."
+          : "Excel and CSV files for this project's questions. Each sheet becomes a table the agent can query; tick the files a question should use when you ask it."}
       </p>
       {!ready ? (
         <p className="faint small">Name the project above first: files belong to a project, so later questions in it can use them too.</p>
@@ -115,7 +119,7 @@ export default function DataFiles({
                   project={project}
                   mine={u.uploaded_by === me}
                   checked={selected.includes(u.id)}
-                  onToggle={(on) => toggle(u.id, on)}
+                  onToggle={pickable ? (on) => toggle(u.id, on) : undefined}
                   onChange={(rec) => setFiles((prev) => prev.map((x) => (x.id === rec.id ? rec : x)))}
                 />
               ))}
@@ -141,13 +145,13 @@ function FileCard({
   project: string;
   mine: boolean;
   checked: boolean;
-  onToggle: (on: boolean) => void;
+  onToggle?: (on: boolean) => void;
   onChange: (u: Upload) => void;
 }) {
   return (
     <div className="subcard">
       <label className="row-center">
-        <input type="checkbox" checked={checked} onChange={(e) => onToggle(e.target.checked)} />
+        {onToggle && <input type="checkbox" checked={checked} onChange={(e) => onToggle(e.target.checked)} />}
         <span className="strong-ish">{u.file.name}</span>
         <span className="small muted">
           {size(u.file.size)} · {mine ? "you" : u.uploaded_by} · {day(u.uploaded_at)}

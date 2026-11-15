@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type RunSummary } from "../api";
 import { useSession } from "../session";
 import { useWorkspace } from "../workspace";
@@ -23,8 +23,9 @@ export default function AskPage() {
   const { me, meta } = useSession();
   const { workspaces, current } = useWorkspace();
   const nav = useNavigate();
-  const [workspace, setWorkspace] = useState(current);
-  const [project, setProject] = useState("");
+  const [params] = useSearchParams();
+  const [workspace, setWorkspace] = useState(params.get("workspace") || current);
+  const [project, setProject] = useState(projectName(params.get("project") ?? ""));
   const [question, setQuestion] = useState("");
   const [line, setLine] = useState("");
   const [plants, setPlants] = useState<string[]>([]);
@@ -94,7 +95,10 @@ export default function AskPage() {
 
   return (
     <div className="fullpage">
-      <TopBar>
+      <TopBar
+        back={params.get("project") ? `/projects/${encodeURIComponent(workspace)}/${encodeURIComponent(params.get("project")!)}` : "/"}
+        backLabel={params.get("project") ? "Project" : "Board"}
+      >
         <span className="crumb">
           {workspace || "No workspace"}
           {project && <> / <span className="mono">{project}</span></>}

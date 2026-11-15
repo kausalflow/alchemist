@@ -399,7 +399,9 @@ class RunContext:
             "schema": "alchemist.manifest/v1",
             "run_id": self.row["run_id"], "mode": self.row.get("mode", "live"), "parent_run": self.row.get("parent_run"),
             "status": status, "updated_at": now(),
-            "question": {"id": self.question["id"], "text": self.question["text"], "scope": self.question.get("scope")},
+            "question": {"id": self.question["id"], "text": self.question["text"], "scope": self.question.get("scope"),
+                         **({"project_background": self.question["project_background"]}
+                            if self.question.get("project_background") else {})},
             "plan": self.plan,
             "access": {"user": self.user_id, "workspace": self.row["workspace"], "project": self.row["project"],
                        "plants": sorted(self.plants), "credentials": self.credentials},
@@ -634,12 +636,24 @@ def create(svc: Services, *, user: "str | User", workspace: str, project: str, q
     qid, qdir = create_question(s.workspace_root, workspace, project, text=question, asker=user, scope=scope)
     if attached:
         update_question(qdir, uploads=[a["id"] for a in attached])
+    # The project's background, as it stands now: the question keeps this copy, so its runs read (and record) the
+    # version it was asked with, whatever is edited later.
+    background = (read_yaml(project_dir(s.workspace_root, workspace, project) / "project.yaml") or {}).get("background")
+    if background:
+        update_question(qdir, project_background=background)
     rid, rdir = create_run(qdir)
     row = {"run_id": rid, "question_id": qid, "project": project, "workspace": workspace, "user_id": user,
            "path": str(rdir), "mode": "live", "status": "planning", "plants": json.dumps(sorted(plants))}
     svc.catalog.upsert_run(**row)
     svc.catalog.audit(user, "run.create", rid, {"plants": sorted(plants), "workspace": workspace})
     return svc.catalog.run(rid)
+
+
+def background_note(text: str) -> str:
+    """How the agents receive a project's background: context from the people asking, not evidence."""
+    return ("Background the project's engineers wrote for every question in this project (their knowledge of the "
+            "process and what they already suspect or ruled out; use it to plan and interpret, but test claims "
+            f"against the data rather than citing it as evidence):\n<project_background>\n{text}\n</project_background>")
 
 
 def check_uploads(svc: Services, pdir, upload_ids: list[str], plants) -> list[dict]:
@@ -687,6 +701,8 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
     handlers.update(extra_handlers)
     first = (f"Question from {user}: {ctx.question['text']}\nScope given by the user: {json.dumps(ctx.question.get('scope') or {})}\n"
              f"Plants this run may read: {sorted(ctx.plants)}")
+    if ctx.question.get("project_background"):
+        first += f"\n\n{background_note(ctx.question['project_background'])}"
     if ctx.uploads:
         first += ("\nThe user uploaded data files for this question; their tables are views like catalog datasets: "
                   + ", ".join(f"ds.{t['name']} ({u['file']['name']}" + (f", sheet {t['sheet']}" if t.get("sheet") else "")
@@ -953,6 +969,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
         first = (f"Question: {question['text']}\n\nApproved plan:\n{json.dumps(ctx.plan, indent=1)}\n\n"
                  f"Datasets you may query: {sorted(views)}. Structured knowledge available via alc.knowledge(name): "
                  f"{[k['name'] for k in pinned['knowledge_index']]}.")
+        if question.get("project_background"):
+            first += f"\n\n{background_note(question['project_background'])}"
         methods = get_registry().method_docs()
         if methods:
             first += f"\nAnalysis methods available in the kernel as alc.methods.<name>(...): {json.dumps(methods)}"

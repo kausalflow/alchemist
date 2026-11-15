@@ -72,6 +72,10 @@ export interface Me {
   catalog_admin: boolean;
   workspaces: string[];
   readable_plants: string[];
+  /** How they signed in (dev, oidc, alb-oidc), the groups their sign-in sent and what each gives here. */
+  auth?: string;
+  groups?: { group: string; id?: string; means: string; used: boolean }[];
+  group_names?: Record<string, string>;
 }
 
 export interface Meta {

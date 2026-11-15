@@ -58,6 +58,7 @@ function Rail() {
   const { data: runs } = useApi<RunSummary[]>("/runs", [loc.pathname]);
   const waiting = runs && me ? waitingOnMe(runs, me).length : 0;
   const project = loc.pathname === "/" ? params.get("project") ?? "" : null;
+  const projectPage = loc.pathname.startsWith("/projects/") ? loc.pathname.split("/").slice(2, 4).map(decodeURIComponent).join("/") : null;
   const isAdmin = me!.catalog_admin || me!.admin;
 
   return (
@@ -119,7 +120,11 @@ function Rail() {
             All projects
           </Link>
           {ws?.projects.map((p) => (
-            <Link key={p.name} to={`/?project=${encodeURIComponent(p.name)}`} className={`proj mono ${project === p.name ? "active" : ""}`}>
+            <Link
+              key={p.name}
+              to={`/projects/${encodeURIComponent(ws.name)}/${encodeURIComponent(p.name)}`}
+              className={`proj mono ${projectPage === `${ws.name}/${p.name}` || project === p.name ? "active" : ""}`}
+            >
               <span className="pdot" aria-hidden="true" />
               {p.name}
             </Link>
@@ -128,13 +133,16 @@ function Rail() {
         </div>
 
         <div className="rail-foot">
-          <div className="who-name">{me!.name}</div>
+          <Link to="/profile" className="who-name">
+            {me!.name}
+          </Link>
           <div className="faint small">
             Can read data from {me!.global || me!.admin ? "all plants" : me!.readable_plants.join(", ") || "no plant"}
           </div>
           <div className="faint small">Workspaces: {me!.workspaces.join(", ") || "none"}</div>
           {(me!.admin || me!.catalog_admin) && <div className="faint small">{me!.admin ? "Admin" : "Catalog admin"}</div>}
           <div className="foot-links small">
+            <Link to="/profile">Your profile</Link>
             <Link to="/about">About this deployment</Link>
             {meta?.auth === "dev" && (
               <button type="button" className="link" onClick={signOut}>

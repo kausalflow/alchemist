@@ -65,6 +65,10 @@ Open <http://127.0.0.1:8000> and sign in as **eng_p1**. Leave the PowerShell win
    untick *Model sees it* for a column the AI should not see (names, for example).
 4. Leave the scope empty unless you want to limit it to a line or dates, and click **Draft a plan**.
 
+The project then appears in the side menu. Its page lists every question asked in it and its files, and has a
+**Background for Alchemist** box: write there once what you would tell a colleague about the process, and Alchemist
+reads it before every question in the project.
+
 ## 6. Check the plan
 
 After a minute the AI proposes the candidate causes it will test, and the data for each. Untick causes you do not
