@@ -16,6 +16,7 @@ The web app and CLI use only this API; the OpenAPI spec is at /api/openapi.json.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import importlib
 import importlib.metadata
 import logging
@@ -270,6 +271,14 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
     @app.exception_handler(KeyError)
     async def not_found(request, exc):
         return JSONResponse({"detail": f"not found: {exc}"}, status_code=404)
+
+    @app.exception_handler(Exception)
+    async def server_error(request, exc):
+        # The trace goes to the server log for IT; the person sees what happened and what to do, not a stack trace.
+        log.error("unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+        return JSONResponse({"detail": "Something went wrong on the server. Try again; if it keeps happening, tell "
+                                       f"IT what you did and when ({dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M} "
+                                       "UTC)."}, status_code=500)
 
     dist = Path(web_dist or os.environ.get("ALC_WEB_DIST") or Path(__file__).resolve().parents[3] / "web" / "dist")
     if (dist / "index.html").exists():

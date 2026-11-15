@@ -7,23 +7,51 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+  const res = await reach(`/api${path}`, {
     method,
     credentials: "same-origin",
     headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const j = await res.json();
-      detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-    } catch {
-      /* not JSON */
-    }
-    throw new ApiError(res.status, detail);
-  }
+  if (!res.ok) throw await failure(res);
   return res.json() as Promise<T>;
+}
+
+/** fetch, with a plain sentence instead of "Failed to fetch" when the server cannot be reached at all. */
+async function reach(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch {
+    throw new ApiError(0, "Alchemist can't be reached. Check your network or VPN, then try again.");
+  }
+}
+
+const FIELD = (loc: unknown) => (Array.isArray(loc) ? loc.filter((x) => x !== "body" && x !== "query").join(" ") : "");
+
+/** An error response as a sentence a person can act on: the server's own words when it sent some, plain words for
+ * sign-in, gateway and form errors, never a code or a JSON dump. */
+async function failure(res: Response): Promise<ApiError> {
+  let detail: unknown = null;
+  try {
+    detail = (await res.json()).detail;
+  } catch {
+    /* not JSON: a load balancer or proxy page */
+  }
+  if (res.status === 401) return new ApiError(401, "Your sign-in has expired. Reload the page to sign in again.");
+  if ([502, 503, 504].includes(res.status))
+    return new ApiError(res.status, "Alchemist is not responding right now (it may be restarting). Try again in a minute.");
+  if (typeof detail === "string" && detail) return new ApiError(res.status, detail);
+  if (Array.isArray(detail)) {
+    const fields = [...new Set(detail.map((d) => FIELD(d?.loc)).filter(Boolean))];
+    return new ApiError(
+      res.status,
+      fields.length ? `Please check ${fields.join(", ")}: something is missing or not in the expected form.` : "Some of what you entered is not in the expected form.",
+    );
+  }
+  if (res.status === 403) return new ApiError(403, "You don't have access to this.");
+  if (res.status === 404) return new ApiError(404, "This no longer exists, or you can't see it.");
+  if (res.status === 413) return new ApiError(413, "The file is too large.");
+  return new ApiError(res.status, "Something went wrong. Try again; if it keeps happening, tell IT.");
 }
 
 export const api = {
@@ -34,22 +62,13 @@ export const api = {
   /** Send a file as the request body (Excel and CSV uploads); query parameters carry its name and tags. */
   upload: async <T,>(path: string, file: File, params: Record<string, string>): Promise<T> => {
     const q = new URLSearchParams(params).toString();
-    const res = await fetch(`/api${path}?${q}`, {
+    const res = await reach(`/api${path}?${q}`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/octet-stream" },
       body: file,
     });
-    if (!res.ok) {
-      let detail = res.statusText;
-      try {
-        const j = await res.json();
-        detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
-      } catch {
-        /* not JSON */
-      }
-      throw new ApiError(res.status, detail);
-    }
+    if (!res.ok) throw await failure(res);
     return res.json() as Promise<T>;
   },
 };
@@ -180,6 +199,8 @@ export interface RunSummary {
   entitled: boolean;
   question?: string | null;
   review_pause?: boolean;
+  /** The run of the sealed answer this question follows up on. */
+  follow_up_of?: string;
 }
 
 export interface Hypothesis {
@@ -262,6 +283,20 @@ export interface UploadTable {
 }
 
 /** A data file uploaded to a project (Excel or CSV); each sheet is a ds.up_* table runs can query. */
+/** GET .../uploads/{id}/about: the file in plain words and questions to start with. */
+export interface UploadAbout {
+  id: string;
+  tables: { table: string; sheet?: string | null; description: string; questions: string[] }[];
+  questions: string[];
+}
+
+/** A failure in plain words (what happened, what to do) with the technical text for IT. */
+export interface Plain {
+  message: string;
+  action: string;
+  details: string;
+}
+
 export interface Upload {
   id: string;
   uploaded_by: string;
@@ -278,7 +313,16 @@ export interface Upload {
 export interface RunDetail {
   entitled: boolean;
   run: RunSummary;
-  question?: { id: string; text: string; asker: string; scope: Record<string, unknown>; status: string; created_at: string };
+  question?: {
+    id: string;
+    text: string;
+    asker: string;
+    scope: Record<string, unknown>;
+    status: string;
+    created_at: string;
+    /** The sealed answer this question follows up on. */
+    follow_up_of?: { run_id: string; question: string | null } | null;
+  };
   plan?: Plan | null;
   permissions?: {
     approve: boolean;
@@ -321,8 +365,8 @@ export interface RunDetail {
   figures?: string[];
   children?: RunSummary[];
   verdicts?: { at: string; actor: string; verdict: string; note: string; findings: Record<string, string> }[];
-  failure?: { at: string; error: string } | null;
-  closed?: { at: string; actor: string; reason: string } | null;
+  failure?: { at: string; error: string; plain?: Plain } | null;
+  closed?: { at: string; actor: string; reason: string; plain?: Plain } | null;
 }
 
 export interface Step {

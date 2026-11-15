@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type { Step } from "../api";
 import { Code, Collapsible } from "./bits";
 import { QueryPreviewView, StepFigures } from "./Visuals";
@@ -150,4 +151,61 @@ export default function StepList({
 export function clock(at: number) {
   const d = new Date(at * 1000);
   return isNaN(d.getTime()) ? "" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/** What a working run does right after each kind of step, in plain words. */
+const NEXT: Record<string, string> = {
+  search_catalog: "Looking through the data catalog for data that can answer the question",
+  search_knowledge: "Reading plant documents and past investigations",
+  submit_plan: "Finishing the plan",
+  run_query: "Looking at the data it just read",
+  run_python: "Looking at the result of a calculation",
+  record_finding: "Writing down what it found and moving to the next cause",
+  finish_analysis: "A second model is checking the findings",
+  build_report: "Writing the report",
+};
+
+/** One line on what a planning or running question is doing now, how long ago the last step was, and how far along
+ * it is, so a person glancing at the page knows it is alive. */
+export function NowLine({
+  steps,
+  phase,
+  paused = false,
+  reviewing = false,
+  causes,
+}: {
+  steps: Step[];
+  phase: "planning" | "running";
+  paused?: boolean;
+  reviewing?: boolean;
+  causes?: { done: number; total: number };
+}) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 20000);
+    return () => clearInterval(t);
+  }, []);
+  const tools = steps.filter((s) => s.type === "tool");
+  const last = tools[tools.length - 1];
+  const lastAny = steps[steps.length - 1];
+  let main: string;
+  if (paused) main = "Paused";
+  else if (reviewing) main = "A second model is checking the findings before the report is written";
+  else if (lastAny?.type === "note") main = "Reading your note";
+  else if (!last)
+    main = phase === "planning" ? "Reading your question and looking for data that could answer it" : "Setting up the notebook and data";
+  else main = NEXT[last.tool ?? ""] ?? (phase === "planning" ? "Drafting the plan" : "Deciding the next step");
+  const ago = lastAny?.at ? Math.max(0, Math.round((Date.now() / 1000 - lastAny.at) / 60)) : null;
+  const bits = [
+    tools.length ? `${tools.length} step${tools.length === 1 ? "" : "s"} so far` : null,
+    causes && causes.total ? `findings for ${causes.done} of ${causes.total} causes` : null,
+    ago !== null ? (ago < 1 ? "last step just now" : `last step ${ago} min ago`) : null,
+  ].filter(Boolean);
+  return (
+    <div className="now-line" aria-live="polite">
+      {!paused && <span className="live-dot" aria-hidden="true" />}
+      <span className="now-main">{main}{paused ? "" : "…"}</span>
+      {bits.length > 0 && <span className="now-sub">{bits.join(" · ")}</span>}
+    </div>
+  );
 }

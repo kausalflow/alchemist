@@ -26,12 +26,12 @@ export default function AskPage() {
   const [params] = useSearchParams();
   const [workspace, setWorkspace] = useState(params.get("workspace") || current);
   const [project, setProject] = useState(projectName(params.get("project") ?? ""));
-  const [question, setQuestion] = useState("");
+  const [question, setQuestion] = useState(params.get("question") ?? "");
   const [line, setLine] = useState("");
   const [plants, setPlants] = useState<string[]>([]);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [uploadIds, setUploadIds] = useState<string[]>([]);
+  const [uploadIds, setUploadIds] = useState<string[]>(params.get("upload") ? [params.get("upload")!] : []);
   const [similar, setSimilar] = useState<RunSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,6 +210,11 @@ export default function AskPage() {
             me={me!.id}
             selected={uploadIds}
             onSelected={setUploadIds}
+            onStarter={(q, id) => {
+              setQuestion(q);
+              setUploadIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
           />
 
           <ErrorNote error={error} />

@@ -62,7 +62,8 @@ Open <http://127.0.0.1:8000> and sign in as **eng_p1**. Leave the PowerShell win
    had low yield, and what do they have in common?"*
 2. Under **Project**, give it a name such as `pilot`. Files belong to the project, so later questions can reuse them.
 3. Under **Files**, pick your Excel or CSV file (and any SOP, spec or report as PDF or Word for background). Open *Columns and first rows* to check it was read correctly;
-   untick *Model sees it* for a column the AI should not see (names, for example).
+   untick *Model sees it* for a column the AI should not see (names, for example). Alchemist describes the file in a
+   few sentences and offers three or four starter questions; click one to use it as your question.
 4. Leave the scope empty unless you want to limit it to a line or dates, and click **Draft a plan**.
 
 The project then appears in the side menu. Its page lists every question asked in it and its files, and has a
@@ -77,7 +78,8 @@ want, add one you suspect with **Add a cause**, or **Send back with a note** to 
 
 ## 7. Steer it while it works
 
-The page shows what the AI is doing in plain words, with each chart and data preview as it is made.
+A line at the top says what the AI is doing right now and how long ago its last step was. Below it, the page shows
+each step in plain words, with each chart and data preview as it is made.
 
 - To comment on one chart or calculation, click **Comment on this step** under it, finish the sentence, and click
   **Send note**. The AI reads it before its next step.
@@ -91,6 +93,10 @@ this step** here as well), and it carries on with the same notebook and reports 
 **Finish and seal this report**. The sealed answer has the data, method and notebook behind it, and anyone can
 replay it.
 
+To dig further into an answer, type under **Ask a follow-up**, for example *"Is R-118 worse on every crew?"*. This
+works as soon as there is a conclusion, whether or not you have sealed it. Alchemist starts from the answer, with the
+same files, drafts a short plan for you to approve, and leaves the answer as it is. Follow-ups are listed under their question on the project page.
+
 The page opens in the **Simple** view, which hides code and SQL. Switch to **Detailed** at the top right to see the
 queries and Python.
 
@@ -99,4 +105,6 @@ queries and Python.
 - A full run makes many model calls. Watch the first few in the Bedrock console before running many.
 - `alchemist serve --scripted` plays the built-in demo without calling Bedrock. It only knows the demo question, and
   *Ask for more* ends its run, because the script has nothing more to do.
+- If a question stops, its page says what went wrong in plain words and what to do, for example that the AWS
+  sign-in has expired. *Details for IT* holds the technical message.
 - To start again from nothing, stop the app and delete the `ALC_HOME` folder.

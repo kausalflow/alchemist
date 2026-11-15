@@ -405,7 +405,9 @@ class RunContext:
             "status": status, "updated_at": now(),
             "question": {"id": self.question["id"], "text": self.question["text"], "scope": self.question.get("scope"),
                          **({"project_background": self.question["project_background"]}
-                            if self.question.get("project_background") else {})},
+                            if self.question.get("project_background") else {}),
+                         **({"follow_up_of": {k: self.question["follow_up_of"][k] for k in ("run_id", "seal_sha256")}}
+                            if self.question.get("follow_up_of") else {})},
             "plan": self.plan,
             "access": {"user": self.user_id, "workspace": self.row["workspace"], "project": self.row["project"],
                        "plants": sorted(self.plants), "credentials": self.credentials},
@@ -627,13 +629,24 @@ def interrupted(svc: Services, run_id: str, reason: str) -> str | None:
 
 
 def create(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict,
-           upload_ids: list[str] | None = None) -> dict:
+           upload_ids: list[str] | None = None, follow_up_of: str | None = None) -> dict:
     """Check access, create the question and run folders and index the run. Returns the run row.
 
-    `upload_ids` are files uploaded to the project (uploads.py) that the question's runs may query."""
+    `upload_ids` are files uploaded to the project (uploads.py) that the question's runs may query.
+    `follow_up_of` is a finished run in the same project this question builds on (see follow_up_context)."""
     s, acc = svc.settings, svc.access
     u = svc.access.resolve(user)
     user = u.id
+    previous = None
+    if follow_up_of:
+        previous = follow_up_context(svc, u, workspace, project, follow_up_of)
+        # The follow-up covers at least the earlier run's plants (its answer is about their data), and by default the
+        # same files and scope.
+        scope = {**previous["scope"], **scope}
+        if scope.get("plants") or previous["plants"]:
+            scope["plants"] = sorted(set(scope.get("plants") or []) | set(previous["plants"]))
+        if not upload_ids:
+            upload_ids = previous["uploads"]
     plants = acc.run_plants(u, workspace, scope.get("plants"))
     attached = check_uploads(svc, project_dir(s.workspace_root, workspace, project), upload_ids or [], plants)
     check_capacity(svc, user)
@@ -646,6 +659,9 @@ def create(svc: Services, *, user: "str | User", workspace: str, project: str, q
     background = (read_yaml(project_dir(s.workspace_root, workspace, project) / "project.yaml") or {}).get("background")
     if background:
         update_question(qdir, project_background=background)
+    if previous:
+        update_question(qdir, follow_up_of={k: previous[k] for k in ("run_id", "question_id", "question", "seal_sha256",
+                                                                      "conclusion", "findings")})
     pinned_docs = documents.pins(project_dir(s.workspace_root, workspace, project))
     if pinned_docs:  # likewise the documents in the project now
         update_question(qdir, documents=pinned_docs)
@@ -655,6 +671,49 @@ def create(svc: Services, *, user: "str | User", workspace: str, project: str, q
     svc.catalog.upsert_run(**row)
     svc.catalog.audit(user, "run.create", rid, {"plants": sorted(plants), "workspace": workspace})
     return svc.catalog.run(rid)
+
+
+FOLLOW_UP_CONCLUSION_CHARS = 8000
+
+
+def follow_up_context(svc: Services, user: User, workspace: str, project: str, run_id: str) -> dict:
+    """What a follow-up question carries from the finished run it builds on: that question, its conclusion and its
+    findings (with their computed values), plus its scope, plants and files as defaults. The run must have written a
+    conclusion (sealed or not: one waiting for review counts), be in the same project, and be one the asker may read."""
+    try:
+        row = svc.catalog.run(run_id)
+    except KeyError as e:
+        raise ValueError(f"no run {run_id}") from e
+    if (row["workspace"], row["project"]) != (workspace, project):
+        raise ValueError("a follow-up is asked in the same project as the answer it builds on")
+    plants = json.loads(row["plants"] or "[]")
+    if not svc.access.can_view_run(user, workspace, plants):
+        raise AccessDenied("you may not read the run this follow-up builds on")
+    rdir = as_path(row["path"])
+    conclusion_md = rdir / "report" / "conclusion.md"
+    if not conclusion_md.exists():
+        raise ValueError("ask a follow-up once the answer has a conclusion")
+    q = read_yaml(rdir.parent.parent / "question.yaml")
+    conclusion = conclusion_md.read_text(encoding="utf-8")[:FOLLOW_UP_CONCLUSION_CHARS]
+    found = read_json(rdir / "findings.json").get("findings", []) if (rdir / "findings.json").exists() else []
+    findings = [{k: f.get(k) for k in ("id", "hypothesis", "statement", "value", "unit", "verdict", "confidence")}
+                for f in found]
+    return {"run_id": run_id, "question_id": row["question_id"], "question": q.get("text"),
+            "seal_sha256": row.get("seal_sha256"), "conclusion": conclusion, "findings": findings,
+            "scope": {k: v for k, v in (q.get("scope") or {}).items() if k != "plants"}, "plants": plants,
+            "uploads": list(q.get("uploads") or [])}
+
+
+def follow_up_note(prev: dict) -> str:
+    """How the agents receive the earlier answer a follow-up builds on."""
+    findings = "\n".join(f"- {f['id']} ({f.get('hypothesis')}, {f.get('verdict')}, {f.get('confidence')}): "
+                         f"{f.get('statement')} = {f.get('value')} {f.get('unit') or ''}".rstrip() for f in prev["findings"])
+    return ("This is a follow-up to an earlier answer in the same project (run " + prev["run_id"] + "). Build on "
+            "it: do not redo what it established unless the new question needs it checked again, and re-query any "
+            "number you use rather than copying it, so this run stands on its own.\n"
+            f"<earlier_question>{prev['question']}</earlier_question>\n"
+            f"<earlier_conclusion>\n{prev['conclusion']}\n</earlier_conclusion>\n"
+            f"<earlier_findings>\n{findings}\n</earlier_findings>")
 
 
 def background_note(text: str) -> str:
@@ -711,6 +770,8 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
              f"Plants this run may read: {sorted(ctx.plants)}")
     if ctx.question.get("project_background"):
         first += f"\n\n{background_note(ctx.question['project_background'])}"
+    if ctx.question.get("follow_up_of"):
+        first += f"\n\n{follow_up_note(ctx.question['follow_up_of'])}"
     if ctx.documents.docs:
         first += f"\n\n{ctx.documents.note()}"
     if ctx.uploads:
@@ -744,10 +805,10 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
 
 
 def ask(svc: Services, *, user: "str | User", workspace: str, project: str, question: str, scope: dict,
-        model: Model | None = None, upload_ids: list[str] | None = None) -> dict:
+        model: Model | None = None, upload_ids: list[str] | None = None, follow_up_of: str | None = None) -> dict:
     """Create a run and plan it; it then waits for approval."""
     row = create(svc, user=user, workspace=workspace, project=project, question=question, scope=scope,
-                 upload_ids=upload_ids)
+                 upload_ids=upload_ids, follow_up_of=follow_up_of)
     return plan(svc, row["run_id"], model=model)
 
 
@@ -981,6 +1042,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
                  f"{[k['name'] for k in pinned['knowledge_index']]}.")
         if question.get("project_background"):
             first += f"\n\n{background_note(question['project_background'])}"
+        if question.get("follow_up_of"):
+            first += f"\n\n{follow_up_note(question['follow_up_of'])}"
         if ctx.documents.docs:
             first += f"\n\n{ctx.documents.note()}"
         methods = get_registry().method_docs()

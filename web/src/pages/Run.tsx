@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, fileUrl, CLOSED, SEALED, TERMINAL, type RunDetail, type Step } from "../api";
+import { api, fileUrl, CLOSED, SEALED, TERMINAL, type RunDetail, type RunSummary, type Step } from "../api";
 import { useApi, useSession } from "../session";
-import { ErrorNote, Loading, StatusChip, TopBar, shortId, when } from "../components/bits";
+import { ErrorNote, Loading, PlainNote, StatusChip, TopBar, shortId, when } from "../components/bits";
 import Icon from "../components/icons";
 import PlanEditor from "../components/PlanEditor";
-import StepList, { isReviewing } from "../components/StepList";
+import StepList, { NowLine, isReviewing } from "../components/StepList";
 import Stepper from "../components/Stepper";
 import { AskForMore, SteerPanel, commentOnStep } from "../components/Steer";
 import NotebookView from "../components/Notebook";
@@ -141,6 +141,12 @@ export default function RunPage() {
       <Stepper run={run} reviewing={reviewing} />
 
       <div className="pad-page">
+        {run.question?.follow_up_of && (
+          <div className="follow-of small muted">
+            <Icon name="replay" size={14} /> Follow-up to{" "}
+            <Link to={`/runs/${run.question.follow_up_of.run_id}`}>{run.question.follow_up_of.question ?? "an earlier answer"}</Link>
+          </div>
+        )}
         {queued && <QueueNote run={run} />}
 
         {status === "planning" && (
@@ -188,6 +194,7 @@ function PlanningView({ run, steps, onStop, reload }: { run: RunDetail; steps: S
     <div className="split">
       <div className="split-main stack">
         <h1 className="title">{run.question?.text}</h1>
+        <NowLine steps={steps} phase="planning" />
         <section className="panel" aria-labelledby="planlog">
           <div className="panel-head">
             <h2 id="planlog" className="h-panel">
@@ -309,6 +316,15 @@ function RunningView({
       </aside>
 
       <div className="center-col stack">
+        {!reviewPause && !atLimit && r.mode === "live" && (
+          <NowLine
+            steps={steps}
+            phase="running"
+            paused={paused}
+            reviewing={reviewing}
+            causes={run.plan ? { done: run.plan.hypotheses.filter((h) => found.has(h.id)).length, total: run.plan.hypotheses.length } : undefined}
+          />
+        )}
         {(atLimit || reviewPause) && run.conclusion_html && (
           <section aria-labelledby="prelim" className={`panel pad stack-sm ${reviewPause ? "review-ready" : ""}`}>
             <h2 id="prelim" className="h-panel">
@@ -322,6 +338,7 @@ function RunningView({
             <article className="answer-body" dangerouslySetInnerHTML={{ __html: run.conclusion_html }} />
           </section>
         )}
+        {reviewPause && run.conclusion_html && r.mode === "live" && <FollowUp run={run} />}
         <FigureStrip runId={r.run_id} steps={steps} />
         <section aria-labelledby="log" className="panel">
           <div className="panel-head">
@@ -377,13 +394,10 @@ function RunningView({
             Controls
           </h2>
           {reviewPause && run.permissions?.resume && <AskForMore run={run} reload={reload} />}
+          {paused && !reviewPause && !atLimit && run.closed?.plain && <PlainNote plain={run.closed.plain} />}
           {paused && !reviewPause && (
             <p className="small muted">
-              {atLimit
-                ? `Paused at its time limit of ${tl?.minutes} minutes. `
-                : run.closed?.reason?.startsWith("interrupted")
-                  ? "The analysis stopped unexpectedly. "
-                  : ""}
+              {atLimit ? `Paused at its time limit of ${tl?.minutes} minutes. ` : ""}
               The conversation and notebook are saved after every step.
             </p>
           )}
@@ -585,6 +599,8 @@ function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
           <p className="muted">No conclusion was written for this run.</p>
         )}
 
+        {r.mode === "live" && !!run.conclusion_html && <FollowUp run={run} />}
+
         <RunTabs run={run} reload={reload} />
       </div>
       <aside className="split-side stack">
@@ -596,6 +612,74 @@ function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
   );
 }
 
+// ------------------------------------------------------------------ follow-ups
+
+/** Ask a follow-up to an answer (sealed or still waiting for review): a new question in the same project that starts from this answer (its
+ * conclusion, findings, files and scope), like the next message in a chat. Earlier follow-ups are listed above it. */
+function FollowUp({ run }: { run: RunDetail }) {
+  const r = run.run;
+  const nav = useNavigate();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { data: runs } = useApi<RunSummary[]>(
+    `/runs?workspace=${encodeURIComponent(r.workspace)}&project=${encodeURIComponent(r.project)}`,
+  );
+  const earlier = (runs ?? []).filter((x) => x.follow_up_of === r.run_id && x.mode === "live");
+
+  const ask = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await api.post<RunSummary>("/questions", {
+        workspace: r.workspace,
+        project: r.project,
+        question: text.trim(),
+        follow_up_of: r.run_id,
+      });
+      nav(`/runs/${created.run_id}`);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="followup" className="panel pad stack-sm follow-up">
+      <h2 id="followup" className="h-panel">
+        Ask a follow-up
+      </h2>
+      {earlier.length > 0 && (
+        <ul className="follow-list small">
+          {earlier.map((x) => (
+            <li key={x.run_id}>
+              <Link to={`/runs/${x.run_id}`}>{x.question ?? x.run_id}</Link> <StatusChip status={x.status} />
+            </li>
+          ))}
+        </ul>
+      )}
+      <textarea
+        rows={3}
+        value={text}
+        maxLength={4000}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="For example: split that by shift, or check whether the same happened on Line 5."
+        aria-label="Follow-up question"
+      />
+      <ErrorNote error={error} />
+      <div className="row-center">
+        <button type="button" className="primary" onClick={ask} disabled={busy || text.trim().length < 5}>
+          {busy ? "Starting…" : "Ask"}
+        </button>
+        <span className="small muted">
+          Alchemist starts from this answer, with the same files and scope, drafts a short plan for you to approve, and keeps this
+          answer as it is.
+        </span>
+      </div>
+    </section>
+  );
+}
+
 // ------------------------------------------------------------------ failed, cancelled, expired
 
 function ClosedView({ run, reload, onAsk }: { run: RunDetail; reload: () => void; onAsk: () => void }) {
@@ -603,11 +687,14 @@ function ClosedView({ run, reload, onAsk }: { run: RunDetail; reload: () => void
   return (
     <div className="stack">
       <h1 className="title">{run.question?.text ?? r.question}</h1>
-      {r.status === "failed" && (
-        <div className="callout bad">
-          <strong>This run failed.</strong> {run.failure?.error}
-        </div>
-      )}
+      {r.status === "failed" &&
+        (run.failure?.plain ? (
+          <PlainNote title="This question stopped." plain={run.failure.plain} />
+        ) : (
+          <div className="callout bad">
+            <strong>This question stopped.</strong> Try asking it again; if it happens again, tell IT.
+          </div>
+        ))}
       {(r.status === "cancelled" || r.status === "expired") && (
         <div className="callout">
           {r.status === "cancelled" ? "Cancelled" : "The plan expired"}

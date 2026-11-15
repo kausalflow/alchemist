@@ -701,3 +701,23 @@ iframe.report { width: 100%; height: 75vh; border: 1px solid var(--line); border
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .rail-foot a.who-name { color: inherit; text-decoration: none; display: block; }
 .rail-foot a.who-name:hover { text-decoration: underline; }
+
+/* Follow-ups: the line naming the answer a question builds on, and the box under a sealed answer. */
+.follow-of { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.follow-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+/* After an upload: the file in plain words and questions to start with. */
+.about-file { margin: 6px 0 8px; padding: 10px 12px; border-radius: 8px; background: var(--panel-3); }
+.about-file p { margin: 0 0 6px; }
+.starters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.starter { font: inherit; font-size: 13px; text-align: left; padding: 5px 10px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+.starter:hover { border-color: var(--accent); background: var(--accent-bg); }
+.starter.static { cursor: default; }
+pre.wrap { white-space: pre-wrap; word-break: break-word; max-height: 240px; }
+/* One line at the top of a working run: what it is doing now, in plain words. */
+.now-line { display: flex; gap: 10px; align-items: baseline; padding: 10px 14px; border: 1px solid var(--accent-line);
+  background: var(--accent-bg); border-radius: var(--radius-lg); }
+.now-line .live-dot { flex: none; }
+.now-line .now-main { color: var(--accent-text); font-weight: 600; }
+.now-line .now-sub { color: var(--muted); font-size: 13px; }

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import Icon from "./icons";
+import type { Plain } from "../api";
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   planning: { label: "Drafting plan", tone: "plan" },
@@ -94,6 +95,24 @@ export function ErrorNote({ error }: { error: string | null }) {
       {error}
     </p>
   ) : null;
+}
+
+/** What went wrong in plain words, what to do, and the technical text folded away for IT. */
+export function PlainNote({ plain, title }: { plain: Plain; title?: string }) {
+  return (
+    <div className="callout bad stack-sm" role="alert">
+      <div>
+        {title && <strong>{title} </strong>}
+        {plain.message}
+      </div>
+      <div className="small">{plain.action}</div>
+      {plain.details && (
+        <Collapsible title={<span className="small">Details for IT</span>}>
+          <pre className="mono tiny wrap">{plain.details}</pre>
+        </Collapsible>
+      )}
+    </div>
+  );
 }
 
 export function Loading() {

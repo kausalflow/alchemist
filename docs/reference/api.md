@@ -38,7 +38,7 @@ All paths are under `/api`.
 
 | Method and path | Does | Who |
 | --- | --- | --- |
-| `POST /questions` | create a question and its first run, and start planning; body `{workspace, project, question, scope, uploads}` (`uploads`: ids of data files uploaded to the project; 422 for one not there, 403 for one of a plant not in scope) | workspace member, within their plants |
+| `POST /questions` | create a question and its first run, and start planning; body `{workspace, project, question, scope, uploads, follow_up_of}` (`uploads`: ids of data files uploaded to the project; 422 for one not there, 403 for one of a plant not in scope. `follow_up_of`: a run in the same project to build on, sealed or not, once it has a conclusion; the question inherits its scope, plants and files, the agent gets its conclusion and findings as context, and the manifest records that run (and its seal hash, if sealed); 422 if it has no conclusion yet or is in another project) | workspace member, within their plants |
 | `GET /questions/similar?q=` | past questions the user may open, by word overlap | any user |
 | `GET /runs?workspace=&project=&question_id=` | runs in the user's workspaces, newest first | members |
 | `GET /runs/{id}` | question, plan, permissions, conclusion, findings, queries, datasets, knowledge, review, replay check, manifest, children, verdicts, `time_limit` (`{minutes, used_seconds, reached}` once approved; `reached` while paused at the limit), `review_pause` (paused with its report, waiting for the asker) | entitled viewer |
@@ -71,6 +71,7 @@ See [Upload data files](../guides/data-files.md).
 | `GET /projects/{workspace}/{project}/uploads` | the project's uploads, newest first (those tagged with a plant only for people entitled to it) | workspace member |
 | `GET /projects/{workspace}/{project}/uploads/{id}?rows=` | one upload with the first rows of each table (`previews`) | workspace member |
 | `GET /projects/{workspace}/{project}/uploads/{id}/original` | the file as uploaded | workspace member |
+| `GET /projects/{workspace}/{project}/uploads/{id}/about` | the file in plain words and up to four starter questions (`{tables: [{table, description, questions}], questions}`), worked out from the tables without a model; columns hidden from the model are left out | workspace member |
 | `PUT /projects/{workspace}/{project}/uploads/{id}/exposure` | `{table, column, exposure}`: whether the model sees a column (`model`, `pseudonymise`, `never_to_model`); runs approved earlier keep what they pinned | who uploaded it, admin |
 
 On S3, `files/{path}` answers with a redirect to a presigned GET URL valid for five minutes, issued only after the
