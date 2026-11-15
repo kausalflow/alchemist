@@ -49,6 +49,14 @@ _NUM_COMMA = re.compile(r"^[+-]?\d+,\d+$")
 _THOUSANDS = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
 
 
+# Minitab's own files are a closed format with no reliable reader outside Minitab; Minitab saves any worksheet as
+# Excel or CSV, which this module reads.
+MINITAB = {".mtw", ".mwx", ".mtp", ".mpj", ".mpx", ".mpjx"}
+MINITAB_ADVICE = ("Minitab files cannot be read directly. In Minitab, open the worksheet and choose File > Save "
+                  "Worksheet As, pick Excel Workbook (*.xlsx) or CSV, and add that file instead. For Minitab results "
+                  "(graphs and output), send them to Word or PowerPoint, or save them as PDF, and add that.")
+
+
 class UploadError(ValueError):
     """The file cannot be taken: wrong type, too large, unreadable or empty."""
 
@@ -58,9 +66,13 @@ def uploads_dir(project_dir) -> object:
 
 
 def file_format(filename: str) -> str:
-    fmt = FORMATS.get(Path(filename).suffix.lower())
+    ext = Path(filename).suffix.lower()
+    if ext in MINITAB:
+        raise UploadError(f"{filename}: {MINITAB_ADVICE}")
+    fmt = FORMATS.get(ext)
     if not fmt:
-        raise UploadError(f"{filename}: upload an Excel (.xlsx, .xlsm, .xls) or CSV (.csv, .tsv) file")
+        raise UploadError(f"{filename}: upload an Excel (.xlsx, .xlsm, .xls) or CSV (.csv, .tsv) file "
+                          "(PDF, Word and PowerPoint files go in as project documents)")
     return fmt
 
 

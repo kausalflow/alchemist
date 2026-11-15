@@ -28,7 +28,7 @@ Type the question, narrow the line, period and plants if you like, and pick the 
 
 ### Add data files
 
-Upload Excel or CSV files to the project and tick the ones the question uses. Each sheet becomes a `ds.up_…` table. The page shows how it was read (header row, units, values that were not numbers, decimal separator, day/month order), the first rows, and which columns the model may see. See [Upload data files](guides/data-files.md).
+Add files to the project in one place: PDF, Word and PowerPoint documents (SOPs, specs, reports) that every new question reads as background, and Excel or CSV data files, ticking the ones the question uses. Each sheet becomes a `ds.up_…` table. The page shows how it was read (header row, units, values that were not numbers, decimal separator, day/month order), the first rows, and which columns the model may see. See [Upload data files and documents](guides/data-files.md).
 
 ![Data files on the Ask page](assets/ui/ask-data-files-light.png#only-light)
 ![Data files on the Ask page](assets/ui/ask-data-files-dark.png#only-dark)

@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { api, uploadsPath, type Upload, type UploadAbout, type UploadTable } from "../api";
+import { api, documentsPath, isDocumentFile, uploadsPath, type ProjectDocument, type Upload, type UploadAbout, type UploadTable } from "../api";
 import { Collapsible, ErrorNote, day } from "./bits";
+import DocumentCard from "./DocumentCard";
 
-const ACCEPT = ".xlsx,.xlsm,.xls,.csv,.tsv";
+// Data files, documents, and Minitab files (refused with a note on saving them as Excel instead).
+const ACCEPT = ".xlsx,.xlsm,.xls,.csv,.tsv,.pdf,.docx,.docm,.pptx,.txt,.md,.doc,.ppt,.mtw,.mwx,.mpj,.mpx";
 
 function size(bytes: number) {
   return bytes > 1 << 20 ? `${(bytes / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`;
 }
 
-/** Data files on the Ask page: upload Excel or CSV files to the project, and pick which ones the question uses. */
+/** A project's files, in one place: Excel and CSV files become tables a question can query (on the Ask page each has
+ * a tick box), and PDF, Word and PowerPoint files become documents every new question in the project reads. */
 export default function DataFiles({
   workspace,
   project,
@@ -31,6 +34,7 @@ export default function DataFiles({
   onStarter?: (question: string, uploadId: string) => void;
 }) {
   const [files, setFiles] = useState<Upload[]>([]);
+  const [docs, setDocs] = useState<ProjectDocument[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [plant, setPlant] = useState("");
@@ -40,9 +44,11 @@ export default function DataFiles({
 
   useEffect(() => {
     setFiles([]);
+    setDocs([]);
     if (!ready) return;
     const t = setTimeout(() => {
       api.get<Upload[]>(uploadsPath(workspace, project)).then(setFiles).catch(() => setFiles([]));
+      api.get<ProjectDocument[]>(documentsPath(workspace, project)).then(setDocs).catch(() => setDocs([]));
     }, 300);
     return () => clearTimeout(t);
   }, [workspace, project, ready]);
@@ -54,6 +60,11 @@ export default function DataFiles({
     for (const f of Array.from(list)) {
       setBusy(`Reading ${f.name}…`);
       try {
+        if (isDocumentFile(f.name)) {
+          const doc = await api.upload<ProjectDocument>(documentsPath(workspace, project), f, { filename: f.name });
+          setDocs((prev) => [doc, ...prev]);
+          continue;
+        }
         const params: Record<string, string> = { filename: f.name };
         if (plant) params.plant = plant;
         if (timeZone) params.time_zone = timeZone;
@@ -73,11 +84,12 @@ export default function DataFiles({
 
   return (
     <fieldset className="box">
-      <legend>{pickable ? "Data files (optional)" : "Data files"}</legend>
+      <legend>{pickable ? "Files (optional)" : "Files"}</legend>
       <p className="muted small">
-        {pickable
-          ? "Upload Excel or CSV files to analyse with the catalog data. Each sheet becomes a table the agent can query; the file is kept unchanged with the run's records."
-          : "Excel and CSV files for this project's questions. Each sheet becomes a table the agent can query; tick the files a question should use when you ask it."}
+        Add Excel or CSV data and PDF, Word or PowerPoint documents here. Each data sheet becomes a table the agent can
+        query{pickable ? " (tick the ones this question uses)" : "; you tick the ones a question uses when you ask it"}.
+        Documents such as SOPs, specs and reports are read as background by every new question in the project. Files are
+        kept unchanged with the run's records.
       </p>
       {!ready ? (
         <p className="faint small">Name the project above first: files belong to a project, so later questions in it can use them too.</p>
@@ -85,7 +97,7 @@ export default function DataFiles({
         <>
           <div className="grid3">
             <label className="field">
-              <span className="field-label">Plant whose data it is</span>
+              <span className="field-label">Plant whose data it is (data files)</span>
               <select value={plant} onChange={(e) => setPlant(e.target.value)}>
                 <option value="">Not plant data</option>
                 {plants.map((p) => (
@@ -106,14 +118,30 @@ export default function DataFiles({
                 multiple
                 disabled={!!busy}
                 onChange={(e) => add(e.target.files)}
-                aria-label="Upload Excel or CSV files"
+                aria-label="Add data files or documents"
               />
             </label>
           </div>
           {busy && <p className="small muted">{busy}</p>}
           <ErrorNote error={error} />
+          {docs.length > 0 && (
+            <div className="stack-sm">
+              <div className="small strong-ish">Documents read by every new question</div>
+              {docs.map((d) => (
+                <DocumentCard
+                  key={d.id}
+                  doc={d}
+                  workspace={workspace}
+                  project={project}
+                  me={me}
+                  onRemoved={(id) => setDocs((prev) => prev.filter((x) => x.id !== id))}
+                />
+              ))}
+            </div>
+          )}
           {files.length > 0 && (
             <div className="stack-sm">
+              {docs.length > 0 && <div className="small strong-ish">Data files</div>}
               {files.map((u, i) => (
                 <FileCard
                   key={u.id}

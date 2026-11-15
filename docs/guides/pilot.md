@@ -61,14 +61,14 @@ Open <http://127.0.0.1:8000> and sign in as **eng_p1**. Leave the PowerShell win
 1. Click **Ask a question** and type the question as you would ask a colleague, for example *"Which of these batches
    had low yield, and what do they have in common?"*
 2. Under **Project**, give it a name such as `pilot`. Files belong to the project, so later questions can reuse them.
-3. Under **Data files**, pick your Excel or CSV file. Open *Columns and first rows* to check it was read correctly;
+3. Under **Files**, pick your Excel or CSV file (and any SOP, spec or report as PDF or Word for background). Open *Columns and first rows* to check it was read correctly;
    untick *Model sees it* for a column the AI should not see (names, for example). Alchemist describes the file in a
    few sentences and offers three or four starter questions; click one to use it as your question.
 4. Leave the scope empty unless you want to limit it to a line or dates, and click **Draft a plan**.
 
 The project then appears in the side menu. Its page lists every question asked in it and its files, and has a
 **Background for Alchemist** box: write there once what you would tell a colleague about the process, and Alchemist
-reads it before every question in the project.
+reads it before every question in the project. PDF and Word documents added under **Files** are read the same way.
 
 ## 6. Check the plan
 

@@ -62,7 +62,7 @@ TOOLS = {
     },
     "search_knowledge": {
         "name": "search_knowledge",
-        "description": "Search plant documents (SOPs, FMEA, process descriptions, past investigations). Returns passages with document id and version for citation.",
+        "description": "Search plant documents and the documents added to this project (SOPs, specs, FMEA, process descriptions, past investigations). Returns passages with document id and version for citation.",
         "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     },
     "run_query": {
