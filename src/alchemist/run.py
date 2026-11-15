@@ -21,7 +21,7 @@ from typing import Callable
 from penguineer.agent import protocol
 from penguineer.agent.loop import Budget, Model, ScriptedText, ToolOutput, run_loop
 
-from . import fsjail, penguineer_tools, prompts, steering, uploads
+from . import documents, fsjail, penguineer_tools, prompts, steering, uploads
 from .access import AccessDenied, User
 from .llm import role_model
 from .catalog import Catalog, now
@@ -220,6 +220,8 @@ class RunContext:
         self.question = read_yaml(self.qdir / "question.yaml")
         # Data files people uploaded to the project and attached to this question (uploads.py).
         self.uploads = [uploads.load(self.project_dir, u) for u in self.question.get("uploads") or []]
+        # Documents (PDF, Word, ...) in the project when the question was asked; search_knowledge searches them.
+        self.documents = documents.ProjectDocuments(self.project_dir, self.question.get("documents"))
         self.plants = frozenset(json.loads(run_row["plants"]))
         self.citations: list[dict] = []
         self.plan: dict | None = self.question.get("plan")
@@ -259,6 +261,8 @@ class RunContext:
 
     def search_knowledge(self, inp: dict) -> ToolOutput:
         hits = self.svc.knowledge.search(inp["query"], self.plants)
+        if self.documents.docs:  # the project's own documents first: the engineers chose them for these questions
+            hits = (self.documents.search(inp["query"], limit=4) + hits)[:7]
         for h in hits:
             self.cite(h["doc"], h["version"], h["title"], h["section"], h["stale"])
         return ToolOutput(json.dumps(hits, indent=1) if hits else "No matching passages.")
@@ -410,6 +414,7 @@ class RunContext:
             "plugins": get_registry().summary(),
             "catalog": [{"dataset": k, "card_version": v["card_version"]} for k, v in sorted(views.items())],
             "uploads": [{"table": k, **v["upload"]} for k, v in sorted(views.items()) if v.get("upload")],
+            **({"documents": self.question["documents"]} if self.question.get("documents") else {}),
             "knowledge": {"citations": self.citations, "structured": pinned["knowledge_index"]},
             "queries": self._queries(),
             "cells": cells,
@@ -641,6 +646,9 @@ def create(svc: Services, *, user: "str | User", workspace: str, project: str, q
     background = (read_yaml(project_dir(s.workspace_root, workspace, project) / "project.yaml") or {}).get("background")
     if background:
         update_question(qdir, project_background=background)
+    pinned_docs = documents.pins(project_dir(s.workspace_root, workspace, project))
+    if pinned_docs:  # likewise the documents in the project now
+        update_question(qdir, documents=pinned_docs)
     rid, rdir = create_run(qdir)
     row = {"run_id": rid, "question_id": qid, "project": project, "workspace": workspace, "user_id": user,
            "path": str(rdir), "mode": "live", "status": "planning", "plants": json.dumps(sorted(plants))}
@@ -703,6 +711,8 @@ def plan(svc: Services, run_id: str, *, model: Model | None = None,
              f"Plants this run may read: {sorted(ctx.plants)}")
     if ctx.question.get("project_background"):
         first += f"\n\n{background_note(ctx.question['project_background'])}"
+    if ctx.documents.docs:
+        first += f"\n\n{ctx.documents.note()}"
     if ctx.uploads:
         first += ("\nThe user uploaded data files for this question; their tables are views like catalog datasets: "
                   + ", ".join(f"ds.{t['name']} ({u['file']['name']}" + (f", sheet {t['sheet']}" if t.get("sheet") else "")
@@ -971,6 +981,8 @@ def analyse(svc: Services, run_id: str, *, user: str, model: Model | None = None
                  f"{[k['name'] for k in pinned['knowledge_index']]}.")
         if question.get("project_background"):
             first += f"\n\n{background_note(question['project_background'])}"
+        if ctx.documents.docs:
+            first += f"\n\n{ctx.documents.note()}"
         methods = get_registry().method_docs()
         if methods:
             first += f"\nAnalysis methods available in the kernel as alc.methods.<name>(...): {json.dumps(methods)}"

@@ -30,6 +30,7 @@ export const api = {
   get: <T,>(path: string) => request<T>("GET", path),
   post: <T,>(path: string, body: unknown = {}) => request<T>("POST", path, body),
   put: <T,>(path: string, body: unknown = {}) => request<T>("PUT", path, body),
+  del: <T,>(path: string) => request<T>("DELETE", path),
   /** Send a file as the request body (Excel and CSV uploads); query parameters carry its name and tags. */
   upload: async <T,>(path: string, file: File, params: Record<string, string>): Promise<T> => {
     const q = new URLSearchParams(params).toString();
@@ -56,6 +57,29 @@ export const api = {
 /** The API path of a project's uploaded data files. */
 export const uploadsPath = (workspace: string, project: string) =>
   `/projects/${encodeURIComponent(workspace)}/${encodeURIComponent(project)}/uploads`;
+
+/** The API path of a project's documents (PDF, Word, PowerPoint, text read as background). */
+export const documentsPath = (workspace: string, project: string) =>
+  `/projects/${encodeURIComponent(workspace)}/${encodeURIComponent(project)}/documents`;
+
+/** A document added to a project: every new question there can search its text. */
+export interface ProjectDocument {
+  id: string;
+  added_by: string;
+  added_at: string;
+  description: string;
+  file: { name: string; format: string; size: number; sha256: string };
+  chars: number;
+  pages?: number | null;
+  empty_pages?: number[] | null;
+  sections: string[];
+  removed_at?: string | null;
+  text?: string;
+  truncated?: boolean;
+}
+
+/** Files that go in as documents rather than data tables (the server says what to do with old formats). */
+export const isDocumentFile = (name: string) => /\.(pdf|docx|docm|pptx|txt|md|doc|ppt|rtf)$/i.test(name);
 
 export const fileUrl = (runId: string, path: string, download = false) =>
   `/api/runs/${runId}/files/${path}${download ? "?download=true" : ""}`;
