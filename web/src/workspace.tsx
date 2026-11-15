@@ -9,6 +9,8 @@ interface WorkspaceCtx {
   current: string;
   ws: Workspace | undefined;
   setCurrent: (name: string) => void;
+  /** Fetch the workspaces again, e.g. after a project was created. */
+  reload: () => void;
 }
 
 const KEY = "alchemist.workspace";
@@ -23,7 +25,7 @@ function stored(): string {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const { data: workspaces } = useApi<Workspace[]>("/workspaces");
+  const { data: workspaces, reload } = useApi<Workspace[]>("/workspaces");
   const [current, setCurrentState] = useState(stored);
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   };
 
   const ws = workspaces?.find((w) => w.name === current);
-  return <Ctx.Provider value={{ workspaces, current, ws, setCurrent }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ workspaces, current, ws, setCurrent, reload }}>{children}</Ctx.Provider>;
 }
 
 export function useWorkspace(): WorkspaceCtx {

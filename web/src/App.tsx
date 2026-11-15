@@ -10,6 +10,8 @@ import RunPage from "./pages/Run";
 import CatalogPage from "./pages/Catalog";
 import DatasetPage from "./pages/Dataset";
 import AboutPage from "./pages/About";
+import ProjectPage from "./pages/Project";
+import ProfilePage from "./pages/Profile";
 import SignIn from "./pages/SignIn";
 import AdminLayout from "./pages/admin/AdminLayout";
 import AdminHome from "./pages/admin/AdminHome";
@@ -46,6 +48,8 @@ function Gate() {
           <Route path="/catalog/:datasetId" element={<DatasetPage />} />
           <Route path="/catalog-admin" element={<Navigate to="/admin" replace />} />
           <Route path="/about" element={<AboutPage />} />
+          <Route path="/projects/:workspace/:project" element={<ProjectPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
           <Route path="*" element={<p className="pad-page">Page not found.</p>} />
         </Route>
         <Route element={<FocusLayout />}>

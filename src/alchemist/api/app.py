@@ -32,6 +32,7 @@ from ..config import Settings, load_settings
 from ..paths import as_path, read_yaml
 from . import admin as admin_api
 from . import catalog as catalog_api
+from . import projects as projects_api
 from . import runs as runs_api
 from . import uploads as uploads_api
 from .deps import Me, Svc, in_workspace
@@ -109,7 +110,12 @@ def me(svc: Svc, me: Me) -> dict:
     return {"id": u.id, "name": me.name or u.id, "email": me.email, "plants": sorted(u.plants),
             "global": u.is_global, "admin": u.is_admin, "catalog_admin": me.is_catalog_admin,
             "workspaces": sorted(_known_workspaces(svc) if u.is_admin else u.workspaces),
-            "readable_plants": sorted(svc.access.all_plants if (u.is_global or u.is_admin) else u.plants)}
+            "readable_plants": sorted(svc.access.all_plants if (u.is_global or u.is_admin) else u.plants),
+            # For the profile page: how they signed in, the groups their sign-in carried and what each gives, and the
+            # group names that would give more (so they know what to ask IT for).
+            "auth": auth_mode(), "groups": list(me.groups),
+            "group_names": {k: v for k, v in (getattr(svc.access, "identity", None) or {}).items()
+                            if k in ("plant_group", "workspace_group", "global_group", "admin_group", "catalog_admin_group")}}
 
 
 @core.get("/workspaces")
@@ -248,7 +254,7 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
     app.state.launcher = launcher
     app.state.plugins = []
 
-    for r in (core, runs_api.router, catalog_api.router, admin_api.router, uploads_api.router):
+    for r in (core, runs_api.router, catalog_api.router, admin_api.router, uploads_api.router, projects_api.router):
         app.include_router(r, prefix="/api")
     for name, r in plugin_routers():
         app.include_router(r, prefix=f"/api/ext/{name}")

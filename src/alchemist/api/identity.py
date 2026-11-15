@@ -40,6 +40,8 @@ class Principal:
     is_catalog_admin: bool
     email: str | None = None
     name: str | None = None
+    # The groups in the sign-in token, each with what it gives here (AccessModel.explain_groups); empty in dev mode.
+    groups: tuple = ()
 
 
 def auth_mode() -> str:
@@ -218,8 +220,10 @@ def principal_from_claims(svc, claims: dict) -> Principal:
     if hasattr(svc.access, "user_from_claims"):
         # The access model maps claims itself (group patterns configurable in access.yaml `identity:`).
         user = svc.access.user_from_claims(claims)
+        groups = tuple(svc.access.explain_groups(claims)) if hasattr(svc.access, "explain_groups") else ()
         return Principal(user=user, is_catalog_admin=user.is_admin or bool(getattr(user, "is_catalog_admin", False)),
-                         email=claims.get("email"), name=claims.get("name") or claims.get("email") or user.id)
+                         email=claims.get("email"), name=claims.get("name") or claims.get("email") or user.id,
+                         groups=groups)
     groups_claim = os.environ.get("ALC_OIDC_GROUPS_CLAIM") or os.environ.get("ALC_GROUP_CLAIM", "groups")
     groups = claims.get(groups_claim) or []
     if isinstance(groups, str):
@@ -229,7 +233,8 @@ def principal_from_claims(svc, claims: dict) -> Principal:
         raise NotSignedIn("token has no user id claim")
     user = user_from_groups(str(user_id), groups)
     return Principal(user=user, is_catalog_admin=user.is_admin or "alc-catalog-admin" in groups,
-                     email=claims.get("email"), name=claims.get("name") or claims.get("email"))
+                     email=claims.get("email"), name=claims.get("name") or claims.get("email"),
+                     groups=tuple({"group": g, "means": "", "used": g.startswith("alc-")} for g in groups))
 
 
 def user_from_groups(user_id: str, groups: list[str]) -> User:

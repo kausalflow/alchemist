@@ -73,7 +73,10 @@ export default function RunPage() {
   const crumb = (
     <>
       <span className="crumb">
-        {r.workspace} / <span className="mono">{r.project}</span>
+        {r.workspace} /{" "}
+        <Link className="mono" to={`/projects/${encodeURIComponent(r.workspace)}/${encodeURIComponent(r.project)}`}>
+          {r.project}
+        </Link>
       </span>
       {!simple && <span className="mono faint small">run {r.run_id}</span>}
     </>

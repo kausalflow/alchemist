@@ -29,7 +29,7 @@ All paths are under `/api`.
 
 | Method and path | Does | Who |
 | --- | --- | --- |
-| `GET /me` | user, plants, workspaces and roles | any user |
+| `GET /me` | user, plants, workspaces and roles; `auth` (how they signed in), `groups` (each group in the sign-in token with what it gives here, `used` false for groups Alchemist ignores) and `group_names` (the group name patterns, for asking IT for access) | any user |
 | `GET /meta` | models, budgets, agent tools, loaded plugins, form options | any user |
 | `GET /workspaces` | workspaces with their plants and projects | members |
 | `GET /dev/users` | users in `access.yaml` (dev mode only) | anyone |
@@ -65,6 +65,8 @@ See [Upload data files](../guides/data-files.md).
 
 | Method and path | Does | Who |
 | --- | --- | --- |
+| `GET /projects/{workspace}/{project}` | the project's owner, creation time and background (`exists` false for a name nobody has used yet) | workspace member |
+| `PUT /projects/{workspace}/{project}/background` | `{text}` (up to 20,000 characters): the background the agents read before every new question in the project; creates the project if needed; audited as `project.background` | workspace member |
 | `POST /projects/{workspace}/{project}/uploads?filename=&plant=&description=&time_zone=` | upload one Excel or CSV file as the request body (`application/octet-stream`); returns the upload with its tables, columns and conversion notes. 415 for another file type, 413 above `ALC_UPLOAD_MAX_MB`, 422 for a file that cannot be read | workspace member; `plant` must be one of theirs |
 | `GET /projects/{workspace}/{project}/uploads` | the project's uploads, newest first (those tagged with a plant only for people entitled to it) | workspace member |
 | `GET /projects/{workspace}/{project}/uploads/{id}?rows=` | one upload with the first rows of each table (`previews`) | workspace member |

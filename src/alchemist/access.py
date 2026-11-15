@@ -112,6 +112,36 @@ class AccessModel:
                     is_admin=idc["admin_group"] in groups, workspaces=frozenset(workspaces),
                     is_catalog_admin=idc["catalog_admin_group"] in groups, source="oidc")
 
+    def explain_groups(self, claims: dict) -> list[dict]:
+        """Each group in the sign-in token and what it gives in this deployment, for the profile page."""
+        idc = self.identity
+        raw = claims.get(idc["group_claim"], [])
+        if isinstance(raw, str):
+            raw = re.split(r"[,\s]+", raw.strip())
+        aliases = idc.get("group_aliases") or {}
+        plant_re, ws_re = _pattern(idc["plant_group"], "plant"), _pattern(idc["workspace_group"], "workspace")
+        known_ws = set(self.data.get("workspaces", {}))
+        out = []
+        for g in dict.fromkeys(x for x in raw if x):
+            name = aliases.get(g, g)
+            used, means = True, ""
+            if name == idc["admin_group"]:
+                means = "Admin: everything, including the admin pages"
+            elif name == idc["global_group"]:
+                means = "Read data from every plant"
+            elif name == idc["catalog_admin_group"]:
+                means = "Catalog admin: approve data sources and plant knowledge"
+            elif m := plant_re.match(name):
+                used = not self.all_plants or m["v"] in self.all_plants
+                means = f"Read data from plant {m['v']}" if used else f"Plant {m['v']}, which this deployment does not have"
+            elif m := ws_re.match(name):
+                used = m["v"] in known_ws
+                means = f"Member of workspace {m['v']}" if used else f"Workspace {m['v']}, which this deployment does not have"
+            else:
+                used, means = False, "Not used by Alchemist"
+            out.append({"group": name, **({"id": g} if name != g else {}), "means": means, "used": used})
+        return out
+
     def resolve(self, user: "str | User") -> User:
         """Accept a User built from claims, or a local user id."""
         return user if isinstance(user, User) else self.user(user)
