@@ -1,4 +1,4 @@
-"""Follow-up questions: a new question in the same project that builds on a sealed answer."""
+"""Follow-up questions: a new question in the same project that builds on an earlier answer."""
 
 import json
 
@@ -8,7 +8,7 @@ from alchemist.access import AccessDenied
 from alchemist.agent import ScriptedModel
 from alchemist.demo import script
 from alchemist.paths import as_path, read_json, read_yaml
-from alchemist.run import ScriptedReviewer, approve, ask
+from alchemist.run import ScriptedReviewer, approve, ask, follow_up_context
 
 PLAN = {"metric": "Melt temperature by zone", "scope": {"plants": ["P01"]},
         "hypotheses": [{"id": "H1", "cause": "Zone 3 setpoint", "method": "Compare", "datasets": ["historian_line2"]}]}
@@ -44,7 +44,7 @@ def test_follow_up_carries_the_earlier_answer(svc, answer):
     assert "earlier_conclusion" in text and "R-118" in text
 
 
-def test_follow_up_needs_a_sealed_answer_in_the_same_project(svc, answer):
+def test_follow_up_needs_an_answer_in_the_same_project(svc, answer):
     with pytest.raises(ValueError, match="same project"):
         ask(svc, user="eng_p1", workspace="quality", project="elsewhere", question="And then what happened?",
             scope={}, follow_up_of=answer["run_id"], model=ScriptedModel([]))
@@ -53,9 +53,15 @@ def test_follow_up_needs_a_sealed_answer_in_the_same_project(svc, answer):
             scope={}, follow_up_of="0" * 26, model=ScriptedModel([]))
     pending = ask(svc, user="eng_p1", workspace="quality", project="follow-ups", question="Not finished yet?",
                   scope={}, model=ScriptedModel([[("submit_plan", PLAN)]]))
-    with pytest.raises(ValueError, match="sealed"):
+    with pytest.raises(ValueError, match="conclusion"):
         ask(svc, user="eng_p1", workspace="quality", project="follow-ups", question="Based on the pending one?",
             scope={}, follow_up_of=pending["run_id"], model=ScriptedModel([]))
+    # Sealing does not matter: an answer with a conclusion (one waiting for review, say) can be followed up.
+    report = as_path(pending["path"]) / "report"
+    report.mkdir(exist_ok=True)
+    (report / "conclusion.md").write_text("Yield fell on R-118 lots.")
+    ctx = follow_up_context(svc, svc.access.user("eng_p1"), "quality", "follow-ups", pending["run_id"])
+    assert ctx["seal_sha256"] is None and ctx["conclusion"] == "Yield fell on R-118 lots."
 
 
 def test_follow_up_needs_access_to_the_earlier_answer(svc, answer):

@@ -338,6 +338,7 @@ function RunningView({
             <article className="answer-body" dangerouslySetInnerHTML={{ __html: run.conclusion_html }} />
           </section>
         )}
+        {reviewPause && run.conclusion_html && r.mode === "live" && <FollowUp run={run} />}
         <FigureStrip runId={r.run_id} steps={steps} />
         <section aria-labelledby="log" className="panel">
           <div className="panel-head">
@@ -598,7 +599,7 @@ function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
           <p className="muted">No conclusion was written for this run.</p>
         )}
 
-        {r.mode === "live" && r.sealed && <FollowUp run={run} />}
+        {r.mode === "live" && !!run.conclusion_html && <FollowUp run={run} />}
 
         <RunTabs run={run} reload={reload} />
       </div>
@@ -613,7 +614,7 @@ function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
 
 // ------------------------------------------------------------------ follow-ups
 
-/** Ask a follow-up to a sealed answer: a new question in the same project that starts from this answer (its
+/** Ask a follow-up to an answer (sealed or still waiting for review): a new question in the same project that starts from this answer (its
  * conclusion, findings, files and scope), like the next message in a chat. Earlier follow-ups are listed above it. */
 function FollowUp({ run }: { run: RunDetail }) {
   const r = run.run;

@@ -93,9 +93,9 @@ this step** here as well), and it carries on with the same notebook and reports 
 **Finish and seal this report**. The sealed answer has the data, method and notebook behind it, and anyone can
 replay it.
 
-To dig further into a sealed answer, type under **Ask a follow-up**, for example *"Is R-118 worse on every crew?"*.
-Alchemist starts from the answer, with the same files, drafts a short plan for you to approve, and keeps the sealed
-answer as it is. Follow-ups are listed under their question on the project page.
+To dig further into an answer, type under **Ask a follow-up**, for example *"Is R-118 worse on every crew?"*. This
+works as soon as there is a conclusion, whether or not you have sealed it. Alchemist starts from the answer, with the
+same files, drafts a short plan for you to approve, and leaves the answer as it is. Follow-ups are listed under their question on the project page.
 
 The page opens in the **Simple** view, which hides code and SQL. Switch to **Detailed** at the top right to see the
 queries and Python.

@@ -670,8 +670,8 @@ FOLLOW_UP_CONCLUSION_CHARS = 8000
 
 def follow_up_context(svc: Services, user: User, workspace: str, project: str, run_id: str) -> dict:
     """What a follow-up question carries from the finished run it builds on: that question, its conclusion and its
-    findings (with their computed values), plus its scope, plants and files as defaults. The run must be sealed, in
-    the same project, and one the asker may read."""
+    findings (with their computed values), plus its scope, plants and files as defaults. The run must have written a
+    conclusion (sealed or not: one waiting for review counts), be in the same project, and be one the asker may read."""
     try:
         row = svc.catalog.run(run_id)
     except KeyError as e:
@@ -681,17 +681,17 @@ def follow_up_context(svc: Services, user: User, workspace: str, project: str, r
     plants = json.loads(row["plants"] or "[]")
     if not svc.access.can_view_run(user, workspace, plants):
         raise AccessDenied("you may not read the run this follow-up builds on")
-    if not row.get("seal_sha256"):
-        raise ValueError("ask a follow-up once the answer is finished and sealed")
     rdir = as_path(row["path"])
-    q = read_yaml(rdir.parent.parent / "question.yaml")
     conclusion_md = rdir / "report" / "conclusion.md"
-    conclusion = conclusion_md.read_text(encoding="utf-8")[:FOLLOW_UP_CONCLUSION_CHARS] if conclusion_md.exists() else ""
+    if not conclusion_md.exists():
+        raise ValueError("ask a follow-up once the answer has a conclusion")
+    q = read_yaml(rdir.parent.parent / "question.yaml")
+    conclusion = conclusion_md.read_text(encoding="utf-8")[:FOLLOW_UP_CONCLUSION_CHARS]
     found = read_json(rdir / "findings.json").get("findings", []) if (rdir / "findings.json").exists() else []
     findings = [{k: f.get(k) for k in ("id", "hypothesis", "statement", "value", "unit", "verdict", "confidence")}
                 for f in found]
     return {"run_id": run_id, "question_id": row["question_id"], "question": q.get("text"),
-            "seal_sha256": row["seal_sha256"], "conclusion": conclusion, "findings": findings,
+            "seal_sha256": row.get("seal_sha256"), "conclusion": conclusion, "findings": findings,
             "scope": {k: v for k, v in (q.get("scope") or {}).items() if k != "plants"}, "plants": plants,
             "uploads": list(q.get("uploads") or [])}
 
@@ -700,7 +700,7 @@ def follow_up_note(prev: dict) -> str:
     """How the agents receive the earlier answer a follow-up builds on."""
     findings = "\n".join(f"- {f['id']} ({f.get('hypothesis')}, {f.get('verdict')}, {f.get('confidence')}): "
                          f"{f.get('statement')} = {f.get('value')} {f.get('unit') or ''}".rstrip() for f in prev["findings"])
-    return ("This is a follow-up to an earlier, sealed answer in the same project (run " + prev["run_id"] + "). Build on "
+    return ("This is a follow-up to an earlier answer in the same project (run " + prev["run_id"] + "). Build on "
             "it: do not redo what it established unless the new question needs it checked again, and re-query any "
             "number you use rather than copying it, so this run stands on its own.\n"
             f"<earlier_question>{prev['question']}</earlier_question>\n"
