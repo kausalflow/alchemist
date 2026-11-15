@@ -1,12 +1,19 @@
-# Upload data files
+# Upload data files and documents
 
-People can upload their own data, such as a LIMS export, a lab spreadsheet or a list of setpoints, and ask a
-question about it alongside the catalog's data. Excel (`.xlsx`, `.xlsm`, `.xls`) and CSV (`.csv`, `.tsv`) files
-are accepted, up to `ALC_UPLOAD_MAX_MB` (200 MB by default).
+People can add their own files to a project, in one place (*Files* on the project page and the Ask page), up to
+`ALC_UPLOAD_MAX_MB` (200 MB by default):
+
+- **Data**, such as a LIMS export, a lab spreadsheet or a list of setpoints, to ask about alongside the catalog's
+  data. Excel (`.xlsx`, `.xlsm`, `.xls`) and CSV (`.csv`, `.tsv`) files are accepted.
+- **Documents**, such as SOPs, specs, FMEAs and earlier reports, that Alchemist reads as background instead of
+  you retyping them. PDF, Word (`.docx`), PowerPoint (`.pptx`) and text (`.txt`, `.md`) files are accepted. See
+  [Documents](#documents) below.
+
+The app tells the two apart by the file type. Minitab files are explained under [Minitab files](#minitab-files).
 
 ## How it works
 
-1. **Upload to a project.** On the Ask page, name the project and pick the files under *Data files*. With the
+1. **Upload to a project.** On the Ask page, name the project and pick the files under *Files*. With the
    command line, use `alchemist upload FILE --workspace WS --project P`, or `alchemist ask ... --file FILE`.
 2. **Each sheet becomes a table.** Every sheet with data (or the one table in a CSV file) is converted to Parquet
    and gets a view name such as `ds.up_lims_export_lab_results`. Empty sheets are skipped and listed.
@@ -58,3 +65,33 @@ or `--time-zone`).
 
 Files are converted in the API process, which caps the size of an `.xlsx` once unpacked (2 GiB) and the cells of a
 sheet (50 million). For files larger than that, register the data as a [catalog dataset](catalog-admin.md) instead.
+
+## Documents
+
+A document added to a project is read by every question asked there afterwards, like the *Background for
+Alchemist* note.
+
+1. **Add it.** Pick the file under *Files*, or use `alchemist upload SOP-12.pdf --workspace WS --project P`.
+2. **Check the text.** Open *Text Alchemist reads* under the document. Only the text is read: pictures, drawings and
+   scanned pages are not. A PDF that is all scans is refused with a note saying so; a PDF with some scanned pages
+   lists the pages that gave no text.
+3. **Ask.** The planning and analysis agents are told which documents the project holds (with their headings) and
+   search them with the same search as the plant's documents. Passages they use are cited in the report, with the
+   file name and the first characters of its SHA-256.
+
+Each question records the documents it was asked with (`question.yaml` `documents`, and the run's manifest), so
+taking a document out later (*Take out*) does not change what an earlier question read; the file stays on record.
+Word files keep their headings and tables; PDF files are split by page and PowerPoint files by slide. Old `.doc`
+and `.ppt` files cannot be read: save them as `.docx`, `.pptx` or PDF.
+
+## Minitab files
+
+Minitab's own files (`.mtw`, `.mwx` worksheets, `.mpj`, `.mpx` projects) are a closed format. No reliable
+reader for them exists outside Minitab, so Alchemist does not guess at them: adding one shows how to save it in
+a format it reads.
+
+- **Worksheet data:** in Minitab, open the worksheet and choose *File > Save Worksheet As*, pick *Excel Workbook
+  (\*.xlsx)* or CSV, and add that file. Column names and values carry over; Minitab's column formulas and
+  value orders do not.
+- **Results (graphs, session output):** send the output to Word or PowerPoint, or save it as PDF, and add it as
+  a document.

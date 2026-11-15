@@ -241,8 +241,39 @@ def _upload(svc, user, workspace: str, project: str, file: str, plant: str | Non
     return rec
 
 
+def _add_document(svc, user, workspace: str, project: str, file: str, description: str = "") -> dict:
+    from . import documents
+    from .uploads import UploadError
+    from .workspace import ensure_project, project_dir
+
+    u = svc.access.resolve(user)
+    plants = svc.access.run_plants(u, workspace)
+    path = Path(file)
+    if path.stat().st_size > svc.settings.upload_max_mb * 1024 * 1024:
+        raise SystemExit(f"{file} is larger than {svc.settings.upload_max_mb} MB (ALC_UPLOAD_MAX_MB)")
+    pdir = project_dir(svc.settings.workspace_root, workspace, project)
+    ensure_project(svc.settings.workspace_root, workspace, project, owner=u.id, plants=sorted(plants))
+    try:
+        rec = documents.save(pdir, filename=path.name, source=path, user=u.id, description=description)
+    except UploadError as e:
+        raise SystemExit(str(e)) from e
+    svc.catalog.audit(u.id, "document.add", f"{workspace}/{project}/{rec['id']}",
+                      {"file": rec["file"]["name"], "sha256": rec["file"]["sha256"], "chars": rec["chars"]})
+    pages = f", {rec['pages']} pages" if rec.get("pages") else ""
+    print(f"Document {rec['id']}: {rec['file']['name']} ({rec['chars']:,} characters of text{pages}); "
+          "every new question in the project can search it")
+    if rec.get("empty_pages"):
+        print(f"  no text on pages {rec['empty_pages']} (scanned pages or pictures are not read)")
+    return rec
+
+
 def cmd_upload(a) -> None:
+    from .documents import is_document
+
     svc = _svc()
+    if is_document(a.file):
+        _add_document(svc, _user(a, svc), a.workspace, a.project, a.file, a.description or "")
+        return
     _upload(svc, _user(a, svc), a.workspace, a.project, a.file, a.plant, a.description or "", a.time_zone or "")
 
 
@@ -724,7 +755,8 @@ def main(argv=None) -> None:
                    help="a file already uploaded to the project (alchemist upload) to use (repeatable)")
     k.set_defaults(fn=cmd_ask)
 
-    up = sub.add_parser("upload", help="upload an Excel or CSV file to a project; each sheet becomes a ds.up_* table")
+    up = sub.add_parser("upload", help="upload a file to a project: an Excel or CSV file becomes ds.up_* tables; a PDF, Word, "
+                        "PowerPoint or text file becomes a document every new question can search")
     up.add_argument("file")
     up.add_argument("--user")
     up.add_argument("--claims", help="verified identity-provider token claims (JSON file); replaces --user")

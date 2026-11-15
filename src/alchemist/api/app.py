@@ -32,6 +32,7 @@ from ..config import Settings, load_settings
 from ..paths import as_path, read_yaml
 from . import admin as admin_api
 from . import catalog as catalog_api
+from . import documents as documents_api
 from . import projects as projects_api
 from . import runs as runs_api
 from . import uploads as uploads_api
@@ -254,7 +255,8 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
     app.state.launcher = launcher
     app.state.plugins = []
 
-    for r in (core, runs_api.router, catalog_api.router, admin_api.router, uploads_api.router, projects_api.router):
+    for r in (core, runs_api.router, catalog_api.router, admin_api.router, uploads_api.router, projects_api.router,
+              documents_api.router):
         app.include_router(r, prefix="/api")
     for name, r in plugin_routers():
         app.include_router(r, prefix=f"/api/ext/{name}")

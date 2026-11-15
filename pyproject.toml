@@ -33,6 +33,7 @@ dependencies = [
     "scipy>=1.13",
     "uvicorn[standard]>=0.30",
     "xlrd>=2.0.2",
+    "pypdf>=5.1",
 ]
 
 [project.optional-dependencies]

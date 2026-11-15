@@ -142,7 +142,8 @@ function Background({ project, onSaved }: { project: Project; onSaved: (p: Proje
       </h2>
       <p className="small muted">
         Alchemist reads this before every question in this project. Write what you would tell a colleague: the process and
-        product, what normal looks like, recent changes, and what you already suspect or have ruled out.
+        product, what normal looks like, recent changes, and what you already suspect or have ruled out. SOPs, specs and
+        reports do not need retyping: add the PDF or Word files under Files.
       </p>
       {editing ? (
         <>

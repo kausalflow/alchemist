@@ -286,7 +286,8 @@ await shoot(eng, "dataset");
 await open(eng, "/about");
 await shoot(eng, "about");
 
-// Last, so no other screen shows its project: a data file uploaded on the Ask page, with its columns opened.
+// Last, so no other screen shows its project: a document and a data file added on the Ask page, with the data
+// file's columns opened.
 const lims = ["LIMS export, Line 2", "", "Lot;Sampled;Viscosity (mPa s);MFI [g/10min];Crew"];
 for (let i = 0; i < 14; i++) {
   const v = i === 4 ? "<0.1" : String(1180 + ((i * 37) % 60)).replace(/(\d)$/, ",$1");
@@ -295,13 +296,19 @@ for (let i = 0; i < 14; i++) {
 await open(eng, "/ask");
 await eng.getByLabel("Project").fill("lab-results");
 await settle(eng);
-await eng.getByLabel("Upload Excel or CSV files").setInputFiles({
+const sop = ["# SOP 12 Extruder start-up", "", "Heat zones 1 to 4 to 215 degC before feeding resin.", "",
+  "## Melt temperature", "", "Below 205 degC melt temperature, voids appear in the film.", ""];
+await eng.getByLabel("Add data files or documents").setInputFiles({
+  name: "SOP-12 Extruder start-up.md", mimeType: "text/markdown", buffer: Buffer.from(sop.join("\n")),
+});
+await eng.getByText("Documents read by every new question").waitFor();
+await eng.getByLabel("Add data files or documents").setInputFiles({
   name: "LIMS export line 2.csv", mimeType: "text/csv", buffer: Buffer.from(lims.join("\n") + "\n"),
 });
 await eng.getByText("ds.up_lims_export_line_2").first().waitFor();
 await eng.getByText("Columns and first rows").first().click();
 await settle(eng);
-await eng.getByText("Data files (optional)").evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 24));
+await eng.getByText("Files (optional)", { exact: true }).evaluate((el) => window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 24));
 await shoot(eng, "ask-data-files");
 
 // ---------------------------------------------------------------- the admin area
