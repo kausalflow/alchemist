@@ -158,6 +158,8 @@ An admin's value on the admin "Models and limits" page overrides `ALC_MAX_STEPS`
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ALC_AUTH` | `dev` | `dev`: the user comes from the `X-Alchemist-User` header or `alc_user` cookie (local only); `alb-oidc`: the load balancer's signed OIDC header; `oidc`: an ID token from any OIDC provider, forwarded by a sign-in proxy ([Single sign-on](../guides/single-sign-on.md#any-oidc-provider-outside-aws)) |
+| `ALC_MCP` | `on` | `/api/mcp` for AI assistants: `on`, `read-only` (no asking, approving, notes, pausing or stopping) or `off`; also read by `alchemist mcp` ([AI assistants](../guides/ai-assistants.md)) |
+| `ALC_MCP_URL`, `ALC_MCP_USER`, `ALC_MCP_TOKEN` | `http://127.0.0.1:8000`, none, none | defaults for `alchemist mcp --url / --user / --token` |
 | `ALC_OIDC_ISSUER` | unset | in `oidc` mode, the provider's issuer URL; its discovery document names the signing keys, and tokens from any other issuer are refused |
 | `ALC_OIDC_AUDIENCE` | unset | in `oidc` mode (required), the client id the tokens must be issued to |
 | `ALC_OIDC_TOKEN_HEADER` | `authorization` | in `oidc` mode, the header the proxy puts the token in (`Bearer ` is optional) |

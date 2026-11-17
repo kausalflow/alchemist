@@ -456,6 +456,27 @@ def cmd_serve(a) -> None:
     uvicorn.run(create_app(), host=a.host, port=a.port, log_level="info")
 
 
+def cmd_mcp(a) -> None:
+    import asyncio
+    import os
+
+    from .mcp_server import StdioOptions, serve_stdio
+
+    headers = {}
+    for h in a.header or []:
+        name, sep, value = h.partition(":")
+        if not sep:
+            raise SystemExit(f"--header needs 'Name: value', got {h!r}")
+        headers[name.strip()] = value.strip()
+    o = StdioOptions(url=a.url or os.environ.get("ALC_MCP_URL", "http://127.0.0.1:8000"),
+                     user=a.user or os.environ.get("ALC_MCP_USER"), token=a.token or os.environ.get("ALC_MCP_TOKEN"),
+                     read_only=a.read_only or os.environ.get("ALC_MCP", "").lower() == "read-only", headers=headers)
+    try:
+        asyncio.run(serve_stdio(o))
+    except KeyboardInterrupt:
+        pass
+
+
 def sandbox_url_for_task(task_arn: str, *, cluster: str | None = None, port: int | None = None, ecs=None,
                          timeout: float = 900) -> str:
     """Address of a sandbox task started by the workflow, once it is running (ECS DescribeTasks)."""
@@ -823,6 +844,16 @@ def main(argv=None) -> None:
     sv.add_argument("--scripted", action="store_true",
                     help="plan and analyse with the offline demo script instead of a model (demo question only)")
     sv.set_defaults(fn=cmd_serve)
+
+    mc = sub.add_parser("mcp", help="connect an AI assistant (Claude, Copilot, Cursor, ...): an MCP server on stdin/stdout "
+                                     "that talks to a running Alchemist server")
+    mc.add_argument("--url", help="the Alchemist server (default ALC_MCP_URL or http://127.0.0.1:8000)")
+    mc.add_argument("--user", help="dev sign-in: act as this access.yaml user (default ALC_MCP_USER)")
+    mc.add_argument("--token", help="OIDC sign-in: an ID token sent as a bearer token (default ALC_MCP_TOKEN)")
+    mc.add_argument("--header", action="append", metavar="'Name: value'", help="an extra HTTP header (repeatable)")
+    mc.add_argument("--read-only", action="store_true",
+                    help="only the reading tools: no asking, approving, notes, pausing or stopping")
+    mc.set_defaults(fn=cmd_mcp)
 
     w = sub.add_parser("worker", help="take run steps from the queue (ALC_LAUNCHER=queue); or run one step of one run")
     w.add_argument("step", nargs="?", choices=["plan", "analyse", "report", "seal", "replay"],

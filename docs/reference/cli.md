@@ -32,6 +32,16 @@ Runs the [REST API](api.md) under `/api` and, when `web/dist` has been built, th
 
 `alchemist api` is the same command (the name the container deployment uses).
 
+## `mcp`
+
+```text
+alchemist mcp [--url http://127.0.0.1:8000] [--user USER | --token TOKEN] [--header 'Name: value'] [--read-only]
+```
+
+Connects an AI assistant (Claude Desktop, Claude Code, Copilot, Cursor) to a running Alchemist: an
+[MCP](https://modelcontextprotocol.io) server on stdin/stdout whose tools call the [REST API](api.md) as the given
+user. Defaults come from `ALC_MCP_URL`, `ALC_MCP_USER` and `ALC_MCP_TOKEN`. See [AI assistants](../guides/ai-assistants.md).
+
 ## `worker`
 
 ```text
