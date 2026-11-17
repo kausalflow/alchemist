@@ -39,7 +39,8 @@ uv run alchemist serve --scripted   # http://127.0.0.1:8000; drop --scripted to 
 ```
 
 Ask a question, review and edit the plan, watch the run, then read the conclusion with the data, queries, notebook,
-citations and review behind it. See [Web app](docs/guides/web-app.md) and [REST API](docs/reference/api.md).
+citations and review behind it. See [Web app](docs/guides/web-app.md) and [REST API](docs/reference/api.md). To use Alchemist from Claude, GitHub
+Copilot or another AI assistant, see [AI assistants](docs/guides/ai-assistants.md).
 
 ## Choose the model provider
 

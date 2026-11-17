@@ -27,6 +27,7 @@ nav = [
     "guides/pilot.md",
     "guides/docker-laptop.md",
     "guides/web-app.md",
+    "guides/ai-assistants.md",
     "guides/models.md",
     "guides/bedrock-local.md",
     "guides/real-questions.md",

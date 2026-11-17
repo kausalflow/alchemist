@@ -10,7 +10,8 @@ Extending it: the launcher and identity are swappable without touching this file
     entry point group "alchemist.api"     each entry point is an APIRouter (or a callable returning one), mounted
                                           under /api/ext/<entry point name>
 
-The web app and CLI use only this API; the OpenAPI spec is at /api/openapi.json.
+The web app and CLI use only this API; the OpenAPI spec is at /api/openapi.json. AI assistants reach the same API as
+MCP tools at /api/mcp (alchemist.mcp_server).
 """
 
 from __future__ import annotations
@@ -262,6 +263,10 @@ def create_app(settings: Settings | None = None, *, launcher=None, services_fact
     for name, r in plugin_routers():
         app.include_router(r, prefix=f"/api/ext/{name}")
         app.state.plugins.append(name)
+
+    from ..mcp_server import mount as mount_mcp
+
+    mount_mcp(app)  # POST /api/mcp: the same API for AI assistants (Claude, Copilot, ...); ALC_MCP=off|read-only
 
     @app.get("/api/health", include_in_schema=False)
     @app.get("/healthz", include_in_schema=False)  # load balancer health check

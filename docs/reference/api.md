@@ -114,6 +114,13 @@ admins only.
 | `GET /admin/facts/{name}` | a reference fact table as YAML |
 | `POST /admin/facts` | save a fact table `{name, plant, description, content}` (YAML mapping); an existing name gets the next version |
 
+## AI assistants (MCP)
+
+`POST /api/mcp` offers the API as [MCP](https://modelcontextprotocol.io) tools (streamable HTTP, JSON answers), for
+Claude, Copilot, Cursor and other assistants. Each tool calls the endpoints above with the caller's own sign-in headers,
+so the same rules apply. `ALC_MCP=read-only` offers only the reading tools; `ALC_MCP=off` removes it. Requests from a
+web page on another origin are refused. See [AI assistants](../guides/ai-assistants.md).
+
 ## Progress events
 
 `GET /runs/{id}/events` is a `text/event-stream`:
