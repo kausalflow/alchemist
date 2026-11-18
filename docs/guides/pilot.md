@@ -81,8 +81,9 @@ want, add one you suspect with **Add a cause**, or **Send back with a note** to 
 A line at the top says what the AI is doing right now and how long ago its last step was. Below it, the page shows
 each step in plain words, with each chart and data preview as it is made.
 
-- To comment on one chart or calculation, click **Comment on this step** under it, finish the sentence, and click
-  **Send note**. The AI reads it before its next step.
+- To comment on one chart, table or result, click **Comment** on it (under the step in the activity, or on its cell
+  under **Notebook**), finish the sentence, and click **Send note**. The AI reads it before its next step, together
+  with what that cell showed.
 - To give a general instruction ("ignore the March data, the sensor was off"), type it in the note box on the right.
 - **Pause after this step** and **Stop and write a partial report** are on the right too.
 
@@ -95,7 +96,9 @@ replay it.
 
 To dig further into an answer, type under **Ask a follow-up**, for example *"Is R-118 worse on every crew?"*. This
 works as soon as there is a conclusion, whether or not you have sealed it. Alchemist starts from the answer, with the
-same files, drafts a short plan for you to approve, and leaves the answer as it is. Follow-ups are listed under their question on the project page.
+same files, drafts a short plan for you to approve, and leaves the answer as it is. Follow-ups are listed under their question on the project page. To ask about one table or chart, open the **Notebook** tab and click **Comment**
+on its cell: the follow-up starts with "About cell c12 (...)", and the AI gets that cell's code and output with your
+question.
 
 The page opens in the **Simple** view, which hides code and SQL. Switch to **Detailed** at the top right to see the
 queries and Python.

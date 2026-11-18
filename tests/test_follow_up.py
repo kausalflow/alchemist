@@ -77,3 +77,19 @@ def test_follow_up_is_in_the_manifest_after_sealing(svc, answer):
                   reviewer=ScriptedReviewer(script.REVIEW))
     m = read_json(as_path(res["path"]) / "manifest.json")
     assert m["question"]["follow_up_of"] == {"run_id": answer["run_id"], "seal_sha256": answer["seal_sha256"]}
+
+
+def test_follow_up_about_a_notebook_cell_carries_that_cell(svc, answer):
+    """Commenting on an output cell of the answer's notebook asks a follow-up that names the cell; the new run's
+    agent gets the cell's purpose, code and output, since its own notebook does not have it."""
+    nb = json.loads((as_path(answer["path"]) / "notebook.ipynb").read_text())
+    cell = next(c["metadata"]["alchemist"] for c in nb["cells"]
+                if c.get("metadata", {}).get("alchemist", {}).get("kind") == "query")
+    question = f"About cell {cell['cell_id']} (Data read: {cell.get('purpose', '')}): split this by shift, please."
+    out = ask(svc, user="eng_p1", workspace="quality", project="follow-ups", question=question, scope={},
+              follow_up_of=answer["run_id"], model=ScriptedModel([[("submit_plan", PLAN)]]))
+    rdir = as_path(out["path"])
+    cells = read_yaml(rdir.parent.parent / "question.yaml")["follow_up_of"]["cells"]
+    assert [c["cell"] for c in cells] == [cell["cell_id"]] and cells[0]["kind"] == "query" and cells[0]["code"]
+    text = json.dumps(json.loads((rdir / "logs" / "plan_transcript.jsonl").read_text().splitlines()[0]))
+    assert "earlier_cells" in text and f'cell id=\\"{cell["cell_id"]}\\"' in text

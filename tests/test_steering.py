@@ -151,3 +151,34 @@ def test_sending_the_plan_back_with_a_note_gives_a_revised_plan(svc):
     start_approval(svc, rid, user="eng_p1")
     out, model = analysis(svc, rid)
     assert out["status"] == "completed" and "resin dryer" not in model.seen[0]  # already acted on in planning
+
+
+def test_a_note_about_a_notebook_cell_carries_what_the_cell_showed(svc, reference):
+    """A comment on an output cell names the cell; the note keeps that cell's purpose and output and the agent
+    reads them with the note."""
+    rid = asked(svc, "steer-cell")
+    start_approval(svc, rid, user="eng_p1")
+    sent = {}
+
+    def comment(n):
+        if n != 4:
+            return
+        run = Path(svc.catalog.run(rid)["path"])
+        nb = json.loads((run / "notebook.ipynb").read_text())
+        cid = next(c["metadata"]["alchemist"]["cell_id"] for c in nb["cells"]
+                   if c.get("metadata", {}).get("alchemist", {}).get("cell_id"))
+        sent["cell"] = cid
+        note(svc, rid, user="eng_p1", text=f"About cell {cid.upper()} (Data read): these rows look too few.")
+
+    out, model = analysis(svc, rid, before_call=comment)
+    assert out["status"] == "completed" and hashes(Path(out["path"])) == reference
+    rec = steering.notes(svc, rid)
+    assert [c["cell"] for c in rec[0]["cells"]] == [sent["cell"]]
+    assert sum(f'<cell id=\\"{sent["cell"]}\\"' in s for s in model.seen) >= 1
+
+
+def test_unknown_cells_are_left_out(tmp_path):
+    from alchemist import cell_refs
+
+    assert cell_refs.mentioned("About cell c3 and Cell C10, then cell c3 again") == ["c3", "c10"]
+    assert cell_refs.excerpts(tmp_path, "About cell c3") == []  # no notebook yet

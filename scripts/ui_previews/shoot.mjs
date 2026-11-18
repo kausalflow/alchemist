@@ -241,6 +241,10 @@ await shoot(eng, "running-figure");
 await open(eng, `/runs/${runId}`);
 await eng.getByRole("button", { name: /^Notebook/ }).click();
 await shoot(eng, "running-notebook");
+// Comment on a notebook cell: the note box on the right starts a note that names the cell (not sent).
+await eng.locator(".nbcell:has(img) .cell-comment").first().click();
+await settle(eng);
+await shoot(eng, "running-notebook-comment");
 await view(eng, "simple");
 await open(eng, `/runs/${runId}`);
 await shoot(eng, "running-simple");
@@ -258,6 +262,10 @@ await tab(eng, "Notes");
 await shoot(eng, "report-notes");
 await tab(eng, "Notebook");
 await shoot(eng, "report-notebook");
+// On a finished answer, a comment on a cell starts a follow-up question about it (not asked).
+await eng.locator(".nbcell:has(img) .cell-comment").first().click();
+await settle(eng);
+await shoot(eng, "report-notebook-comment");
 await tab(eng, "Provenance");
 await shoot(eng, "report-provenance");
 // A failed attempt in the agent's steps, folded to one line, then opened.

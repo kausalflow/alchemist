@@ -7,7 +7,7 @@ import Icon from "../components/icons";
 import PlanEditor from "../components/PlanEditor";
 import StepList, { NowLine, isReviewing } from "../components/StepList";
 import Stepper from "../components/Stepper";
-import { AskForMore, SteerPanel, commentOnStep } from "../components/Steer";
+import { AskForMore, SteerPanel, commentOnStep, useStepComments } from "../components/Steer";
 import NotebookView from "../components/Notebook";
 import { ViewToggle, useSimple } from "../viewMode";
 import { FigureStrip } from "../components/Visuals";
@@ -361,14 +361,19 @@ function RunningView({
           </div>
           <p className="muted small pad-x">
             {view === "notebook"
-              ? "The notebook as it stands, updated after every step. Seen something worth following up? Ask for more on the right."
+              ? "The notebook as it stands, updated after every step. Seen something in a table or figure? Use Comment on that cell to tell the agent."
               : simple
                 ? "What the agent is doing and why, with figures and data previews as they are made."
                 : "Every query and computation becomes a notebook cell in the run folder."}
           </p>
           {view === "notebook" ? (
             <div className="pad-x">
-              <NotebookView runId={r.run_id} refresh={steps.length} live={!paused} />
+              <NotebookView
+                runId={r.run_id}
+                refresh={steps.length}
+                live={!paused}
+                onComment={(reviewPause ? run.permissions?.resume : run.permissions?.note) ? commentOnStep : undefined}
+              />
             </div>
           ) : (
           <StepList
@@ -622,6 +627,7 @@ function FollowUp({ run }: { run: RunDetail }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const box = useStepComments(setText, { fallback: true });
   const { data: runs } = useApi<RunSummary[]>(
     `/runs?workspace=${encodeURIComponent(r.workspace)}&project=${encodeURIComponent(r.project)}`,
   );
@@ -659,6 +665,7 @@ function FollowUp({ run }: { run: RunDetail }) {
         </ul>
       )}
       <textarea
+        ref={box}
         rows={3}
         value={text}
         maxLength={4000}
@@ -673,7 +680,7 @@ function FollowUp({ run }: { run: RunDetail }) {
         </button>
         <span className="small muted">
           Alchemist starts from this answer, with the same files and scope, drafts a short plan for you to approve, and keeps this
-          answer as it is.
+          answer as it is. To ask about one table or figure, use Comment on it in the Notebook tab.
         </span>
       </div>
     </section>

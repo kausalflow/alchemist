@@ -45,7 +45,8 @@ export function describe(s: Step): string {
 /** How a note names the step it is about, so the agent knows which query, calculation or figure is meant. */
 const stepRef = (n: number, s: Step) => {
   const what = describe(s);
-  return `About step #${n} (${what.length > 90 ? `${what.slice(0, 87)}...` : what}): `;
+  const cell = s.meta?.cell ?? s.meta?.preview?.cell;
+  return `About step #${n}${cell ? `, cell ${cell}` : ""} (${what.length > 90 ? `${what.slice(0, 87)}...` : what}): `;
 };
 
 /** True once the agent has handed its findings to the reviewer (or is building the report). */

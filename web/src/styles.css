@@ -741,3 +741,9 @@ pre.wrap { white-space: pre-wrap; word-break: break-word; max-height: 240px; }
 .now-line .live-dot { flex: none; }
 .now-line .now-main { color: var(--accent-text); font-weight: 600; }
 .now-line .now-sub { color: var(--muted); font-size: 13px; }
+
+/* "Comment" on a notebook cell or one of its figures: starts a note (or follow-up) about it. */
+.nbmeta .cell-comment { float: right; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.cell-comment:hover:not(:disabled) { color: var(--accent-text); }
+.nbfig { margin: 6px 0; }
+.nbfig .cell-comment { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
