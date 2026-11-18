@@ -64,7 +64,7 @@ def create_run(qdir) -> tuple[str, object]:
         keep = rdir / sub / ".keep"
         if not is_cloud(keep):
             keep.parent.mkdir(parents=True, exist_ok=True)
-        keep.write_text("")
+        keep.write_text("", encoding="utf-8")
     return rid, rdir
 
 
@@ -103,7 +103,7 @@ def verify(run, expected_seal_sha256: str | None = None) -> dict:
     sealed_file = run / "SEALED"
     if not sealed_file.exists():
         return {"ok": False, "problems": ["run is not sealed"]}
-    text = sealed_file.read_text()
+    text = sealed_file.read_text(encoding="utf-8")
     problems = []
     if expected_seal_sha256 and hashlib.sha256(text.encode()).hexdigest() != expected_seal_sha256:
         problems.append("SEALED does not match the hash recorded at seal time")

@@ -25,6 +25,9 @@ export ALC_HOME=./alchemist-home
     home such as `$env:ALC_HOME = "C:\alc"` in PowerShell (Alchemist warns when the home is too deep). The
     deployment runs on Linux; Windows is supported for trying the demo locally.
 
+    Text is UTF-8 everywhere: Alchemist writes its own files as UTF-8 and starts each analysis in Python's UTF-8
+    mode, so a `°C`, `≥` or `µ` no longer stops an analysis with "'charmap' codec can't encode character".
+
 ## Run the demo
 
 ```bash

@@ -41,6 +41,9 @@ Your data and tools:
   cite its values (for example "round(pg_p2['diff'], 2)").
 - run_python: a persistent Jupyter kernel (pandas, numpy, scipy, matplotlib, and the `alc` helpers) for plots
   and checks no penguineer tool covers. record_finding evaluates its value_expression in this kernel.
+  Plant data and documents often hold symbols such as °C, ≥, µ, ² or Greek letters: whenever your code writes or
+  reads a text file, name the encoding (open(..., encoding="utf-8"), Path.write_text(..., encoding="utf-8"),
+  to_csv(..., encoding="utf-8")). The kernel runs in UTF-8 mode, but code that names it also reruns on any machine.
 
 {protocol.ANALYSIS_STEPS}
 

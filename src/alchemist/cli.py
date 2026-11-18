@@ -41,7 +41,7 @@ def _user(a, svc=None):
     """The acting user: verified identity-provider claims (--claims) or a local user from access.yaml (--user)."""
     if getattr(a, "claims", None):
         svc = svc or _svc()
-        return svc.access.user_from_claims(json.loads(Path(a.claims).read_text()))
+        return svc.access.user_from_claims(json.loads(Path(a.claims).read_text(encoding="utf-8")))
     if not a.user:
         sys.exit("give --user (local user in access.yaml) or --claims (verified token claims as JSON)")
     return a.user
@@ -135,7 +135,7 @@ def cmd_catalog(a) -> None:
     elif a.action == "show":
         _print(svc.catalog.latest_card(a.id, status=None))
     elif a.action == "approve":
-        card = json.loads(Path(a.card_file).read_text()) if a.card_file else None
+        card = json.loads(Path(a.card_file).read_text(encoding="utf-8")) if a.card_file else None
         svc.catalog.approve(a.id, a.version, reviewer=a.user, card=card)
         print(f"approved {a.id}@{a.version}")
     elif a.action == "reject":
@@ -303,7 +303,7 @@ def cmd_ask(a) -> None:
 def cmd_approve(a) -> None:
     from .run import approve
 
-    plan = json.loads(Path(a.plan_file).read_text()) if a.plan_file else None
+    plan = json.loads(Path(a.plan_file).read_text(encoding="utf-8")) if a.plan_file else None
     svc = _svc()
     res = approve(svc, a.run_id, user=_user(a, svc), plan=plan, model=_model(a.model, "analysis"),
                   reviewer=_reviewer(a.model, a.reviewer_model), time_limit_minutes=a.time_limit)
@@ -349,7 +349,7 @@ def cmd_status(a) -> None:
     if a.plan:
         out["plan"] = q.get("plan")
     if (run / "report" / "conclusion.md").exists():
-        out["conclusion"] = (run / "report" / "conclusion.md").read_text()
+        out["conclusion"] = (run / "report" / "conclusion.md").read_text(encoding="utf-8")
     _print(out)
 
 
@@ -421,7 +421,7 @@ def _first_tool_error(run_dir: str) -> str:
     log = as_path(run_dir) / "logs" / "transcript.jsonl"
     if not log.exists():
         return ""
-    for line in log.read_text().splitlines():
+    for line in log.read_text(encoding="utf-8").splitlines():
         rec = json.loads(line)
         if rec.get("is_error"):
             return f"\n   First failed step ({rec['tool']}):\n{str(rec.get('output', ''))[:3000]}"
@@ -706,9 +706,21 @@ def _config_arg(argv: list[str]) -> str | None:
     return None
 
 
+def utf8_output(platform: str = sys.platform, streams=None) -> None:
+    """Windows only: print UTF-8 to stdout and stderr. When output goes to a file or a pipe, Python there uses the
+    code page (often cp1252), and printing a model's answer with a "°C" or "≥" in it stops with "'charmap' codec can't
+    encode character". Linux and macOS already use UTF-8."""
+    if platform != "win32":
+        return
+    for stream in streams or (sys.stdout, sys.stderr):
+        if (getattr(stream, "encoding", "") or "").lower().replace("-", "") != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv=None) -> None:
     from .config import apply_alchemist_aws_env, apply_config_file, find_config_file
 
+    utf8_output()
     argv = sys.argv[1:] if argv is None else list(argv)
     try:
         apply_config_file(find_config_file(_config_arg(argv)))

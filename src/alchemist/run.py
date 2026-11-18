@@ -393,7 +393,7 @@ class RunContext:
         cells = []
         if nb_file.exists():
             import hashlib
-            for c in json.loads(nb_file.read_text())["cells"]:
+            for c in json.loads(nb_file.read_text(encoding="utf-8"))["cells"]:
                 if c["cell_type"] == "code":
                     meta = c.get("metadata", {}).get("alchemist", {})
                     src = "".join(c["source"]) if isinstance(c["source"], list) else c["source"]
@@ -1290,7 +1290,7 @@ def execute_replay(svc: Services, run_id: str, *, sandbox_url: str | None = None
     ctx = RunContext(svc, row, user=row["user_id"])
     ctx.models.update({k: v for k, v in read_json(prun / "manifest.json")["model"].items()})
 
-    cells = [c for c in json.loads((prun / "notebook.ipynb").read_text())["cells"] if c["cell_type"] == "code"]
+    cells = [c for c in json.loads((prun / "notebook.ipynb").read_text(encoding="utf-8"))["cells"] if c["cell_type"] == "code"]
     errors = []
     views = pinned_inputs(svc, run_id, rdir)["views"]
     if mode == "replay":

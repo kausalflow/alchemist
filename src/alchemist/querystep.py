@@ -230,10 +230,11 @@ class QueryRunner:
 
     def run(self, *, run_dir: str, views: dict, qid: str, sql: str | None, mode: str = "live") -> dict:
         from . import fsjail
+        from .paths import UTF8_ENV
 
         fsjail.protect_process()  # the step runs as this user: keep it out of this process's /proc files
         tmp = tempfile.mkdtemp(prefix="alc-qstep-")
-        env = {**self.env, "TMPDIR": tmp, "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1"}
+        env = {**self.env, "TMPDIR": tmp, "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1", **UTF8_ENV}
         jail = self.jail(run_dir)
         if jail is not None:
             env["ALC_JAIL_READ"] = os.pathsep.join(jail["read"])
@@ -241,7 +242,8 @@ class QueryRunner:
         req = {"run_dir": str(run_dir), "views": views, "qid": qid, "sql": sql, "mode": mode, "key": self.key}
         try:
             p = subprocess.run([sys.executable, "-m", "alchemist.querystep"], input=json.dumps(req), text=True,
-                               capture_output=True, env=env, cwd=tmp, timeout=self.timeout)
+                               encoding="utf-8", errors="replace", capture_output=True, env=env, cwd=tmp,
+                               timeout=self.timeout)
         except subprocess.TimeoutExpired:
             raise QueryFailed(f"query {qid} ran longer than {self.timeout:.0f} s") from None
         finally:

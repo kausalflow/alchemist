@@ -15,6 +15,8 @@ from alchemist import plain
     ("paused: the model provider is unavailable (ServiceUnavailableException: x)", "The AI model service"),
     ("error: SSLError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed", "A secure connection"),
     ("error: EndpointConnectionError: Could not connect to the endpoint URL", "Alchemist could not reach"),
+    ("error: UnicodeEncodeError: 'charmap' codec can't encode character '\\u2265' in position 12",
+     "A special character"),
     ("interrupted: the worker stopped", "The analysis stopped unexpectedly"),
     ("planning ended without a plan: budget: max steps (60) reached", "The question used up its allowance of steps"),
     ("planning ended without a plan: done", "Alchemist could not finish drafting"),

@@ -330,7 +330,7 @@ def process_profile_env(config_dir: str, command: list[str]) -> dict[str, str | 
     from pathlib import Path
 
     path = Path(config_dir) / "aws-config"
-    path.write_text(f"[profile {PROFILE}]\ncredential_process = {shlex.join(command)}\n")
+    path.write_text(f"[profile {PROFILE}]\ncredential_process = {shlex.join(command)}\n", encoding="utf-8")
     path.chmod(0o600)
     return {"AWS_CONFIG_FILE": str(path), "AWS_PROFILE": PROFILE, "AWS_SDK_LOAD_CONFIG": "1",
             "ALC_S3_CREDENTIALS": "process", "AWS_EC2_METADATA_DISABLED": "true",
@@ -422,7 +422,7 @@ def write_credentials(path: str, body: dict) -> None:
 
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(body, f)
     os.replace(tmp, path)
 
@@ -432,7 +432,7 @@ def read_credentials_file(path: str) -> dict:
     from pathlib import Path
 
     try:
-        body = json.loads(Path(path).read_text())
+        body = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise BrokerDenied(f"no credentials for this run at {path}: {e}") from None
     if "AccessKeyId" not in body:

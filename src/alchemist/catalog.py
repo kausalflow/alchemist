@@ -441,7 +441,7 @@ def index_dataset(catalog: Catalog, settings, dataset_id: str, use_model: bool =
     ds = catalog.dataset(dataset_id)
     meta_text, etag, meta = "", "none", {}
     if ds["metadata_uri"] and as_path(ds["metadata_uri"]).exists():
-        meta_text = as_path(ds["metadata_uri"]).read_text()
+        meta_text = as_path(ds["metadata_uri"]).read_text(encoding="utf-8")
         etag = object_info(ds["metadata_uri"])["etag"]
         try:
             meta = metadata_parser(ds["metadata_uri"]).parse(meta_text)

@@ -393,7 +393,7 @@ def dataset_id(src: Source, table: str) -> str:
 
 def state(cfg: SourcesConfig, src: Source) -> dict:
     p = cfg.source_root(src) / "_sync.json"
-    return json.loads(p.read_text()) if p.exists() else {}
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
 
 @dataclass
@@ -431,7 +431,7 @@ def sync(cfg: SourcesConfig, src: Source, catalog, settings, *, start: datetime 
         meta_path = root / "_metadata.yaml"
         # Rewritten only when it changes, so the card is re-drafted only when the tags or the setup change.
         text = _yaml_text(win.metadata[table])
-        if not meta_path.exists() or meta_path.read_text() != text:
+        if not meta_path.exists() or meta_path.read_text(encoding="utf-8") != text:
             write_text(meta_path, text)
         if register:
             datasets.append(_register(catalog, settings, src, table, root, meta_path, actor, index_dataset))

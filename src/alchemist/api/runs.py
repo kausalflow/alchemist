@@ -79,7 +79,7 @@ def _transcript_steps(path) -> list[dict]:
     if not p.exists():
         return []
     steps = []
-    for line in p.read_text().splitlines():
+    for line in p.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         try:
@@ -234,7 +234,7 @@ def get_run(run_id: str, svc: Svc, me: Me, request: Request) -> dict:
     run = as_path(row["path"])
     q = _question(row)
     conclusion = (run / "report" / "conclusion.md")
-    conclusion_md = conclusion.read_text() if conclusion.exists() else None
+    conclusion_md = conclusion.read_text(encoding="utf-8") if conclusion.exists() else None
     from ..run import pinned_inputs
 
     pinned = pinned_inputs(svc, run_id, run)
@@ -312,7 +312,7 @@ def _query_purposes(run) -> dict:
     if not nb.exists():
         return {}
     out = {}
-    for c in json.loads(nb.read_text())["cells"]:
+    for c in json.loads(nb.read_text(encoding="utf-8"))["cells"]:
         meta = c.get("metadata", {}).get("alchemist", {})
         if meta.get("kind") == "query" and meta.get("query_id"):
             out[meta["query_id"]] = meta.get("purpose", "")
@@ -362,7 +362,7 @@ def notebook(run_id: str, svc: Svc, me: Me) -> dict:
     if not nb.exists():
         return {"cells": []}
     cells = []
-    for c in json.loads(nb.read_text())["cells"]:
+    for c in json.loads(nb.read_text(encoding="utf-8"))["cells"]:
         src = "".join(c["source"]) if isinstance(c["source"], list) else c["source"]
         cell = {"type": c["cell_type"], "source": src, "meta": c.get("metadata", {}).get("alchemist", {}),
                 "outputs": []}

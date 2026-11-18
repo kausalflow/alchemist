@@ -12,6 +12,9 @@ _RULES: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"^interrupted", re.IGNORECASE),
      "The analysis stopped unexpectedly, for example because the server restarted.",
      "Nothing is lost: press Resume to carry on from its last step."),
+    (re.compile(r"UnicodeEncodeError|UnicodeDecodeError|codec can.t (en|de)code", re.IGNORECASE),
+     "A special character (such as °C, ≥ or µ) could not be written or read in this computer's text format.",
+     "Press Resume to carry on. If it happens again, send the details below to IT."),
     (re.compile(r"ExpiredToken|token (has )?expired|security token included in the request is expired|"
                 r"SSO session|Token has expired and refresh failed|sso.*login", re.IGNORECASE),
      "The sign-in Alchemist uses for the AI model has expired.",
