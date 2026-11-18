@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Step } from "../api";
 import { Code, Collapsible } from "./bits";
 import { QueryPreviewView, StepFigures } from "./Visuals";
@@ -75,27 +75,32 @@ export default function StepList({
   const shown = steps.filter((s) => s.type !== "model" || (s.text && s.text.trim()));
   if (!shown.length && !live) return <p className="muted pad">No steps recorded.</p>;
   let n = 0;
-  return (
-    <ol className="log">
-      {shown.map((s, i) => {
+  const nums = shown.map((s) => (s.type === "tool" ? ++n : n));
+  const items = groupDebugging(shown);
+  const row = (i: number) => {
+        const s = shown[i];
         const kind = kindOf(s);
-        if (s.type === "tool") n += 1;
-        const num = n;
+        const num = nums[i];
         const sql = typeof s.input?.sql === "string" ? (s.input.sql as string).trim() : null;
         const code = typeof s.input?.code === "string" ? (s.input.code as string) : null;
         return (
           <li
             key={i}
-            id={s.type === "tool" && runId ? `step-${n}` : undefined}
+            id={s.type === "tool" && runId ? `step-${num}` : undefined}
             className={`log-row ${s.is_error ? "err" : ""} ${kind === "note" || kind === "steer" ? kind : ""}`}
           >
-            <span className="mono faint small">{s.type === "tool" ? `#${n}` : ""}</span>
+            <span className="mono faint small">{s.type === "tool" ? `#${num}` : ""}</span>
             <span className={`kind k-${kind}`}>
               {simple ? (SIMPLE_KIND[kind] ?? kind) : kind === "note" ? "model" : kind === "steer" ? "person" : kind}
             </span>
             <div className="log-body">
               <div className={kind === "note" ? "muted" : kind === "steer" ? "steer-text" : ""}>
-                {describe(s)}
+                {s.type === "model" && s.html ? (
+                  // Sanitised on the server (safehtml.py), the same way as the conclusion.
+                  <div className="step-md" dangerouslySetInnerHTML={{ __html: s.html }} />
+                ) : (
+                  describe(s)
+                )}
                 {s.is_error && (
                   <>
                     {" "}
@@ -136,7 +141,18 @@ export default function StepList({
             </div>
           </li>
         );
-      })}
+  };
+  return (
+    <ol className="log">
+      {items.map((it) =>
+        typeof it === "number" ? (
+          row(it)
+        ) : (
+          <DebugGroup key={`g${it[0]}`} rows={it} steps={shown} nums={nums} simple={simple} working={live && it[it.length - 1] === shown.length - 1}>
+            {it.map(row)}
+          </DebugGroup>
+        ),
+      )}
       {live && (
         <li className="log-live" aria-live="polite">
           <span className="live-dot" aria-hidden="true" />
@@ -144,6 +160,71 @@ export default function StepList({
         </li>
       )}
     </ol>
+  );
+}
+
+/** Indexes of the steps, with each stretch of debugging as one group: a step that did not work, and what follows it
+ * until a step works again (more failed attempts and the agent's notes on fixing them). A person's note ends a
+ * stretch, so it is never hidden. */
+export function groupDebugging(steps: Step[]): (number | number[])[] {
+  const out: (number | number[])[] = [];
+  let group: number[] | null = null;
+  steps.forEach((s, i) => {
+    if (group && (s.type === "model" || (s.type === "tool" && s.is_error))) group.push(i);
+    else if (s.type === "tool" && s.is_error) out.push((group = [i]));
+    else {
+      group = null;
+      out.push(i);
+    }
+  });
+  // Notes the agent wrote after its last failed attempt belong to the steps that follow, not to the debugging.
+  return out.flatMap((g) => {
+    if (typeof g === "number") return [g];
+    let end = g.length;
+    while (end > 1 && steps[g[end - 1]].type === "model") end -= 1;
+    return [g.slice(0, end), ...g.slice(end)];
+  });
+}
+
+/** A stretch of debugging, folded to one line until someone opens it: most readers only need to know that a step
+ * failed and the agent fixed it; the attempts themselves are for advanced users. */
+function DebugGroup({
+  rows,
+  steps,
+  nums,
+  simple,
+  working,
+  children,
+}: {
+  rows: number[];
+  steps: Step[];
+  nums: number[];
+  simple: boolean;
+  working: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const failed = rows.filter((i) => steps[i].type === "tool");
+  const first = nums[failed[0]];
+  const last = nums[failed[failed.length - 1]];
+  const label = `${failed.length} attempt${failed.length === 1 ? "" : "s"} that did not work`;
+  return (
+    <li className={`log-debug ${open ? "open" : ""}`}>
+      <div className="log-row debug-head">
+        <span className="mono faint small">{first === last ? `#${first}` : `#${first}–${last}`}</span>
+        <span className="kind k-debug">{simple ? "retry" : "debug"}</span>
+        <div className="log-body">
+          <div className="muted">
+            {label}
+            {working ? ". The agent is fixing it now." : ". The agent fixed it and carried on."}
+          </div>
+          <button type="button" className="link small" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? "Hide the debugging" : `Show the debugging (${rows.length} step${rows.length === 1 ? "" : "s"})`}
+          </button>
+        </div>
+      </div>
+      {open && <ol className="log debug-body">{children}</ol>}
+    </li>
   );
 }
 

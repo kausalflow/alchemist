@@ -384,6 +384,8 @@ export interface Step {
   model?: string;
   stop_reason?: string;
   text?: string;
+  /** A model step's markdown as sanitised HTML (made by the server, like the conclusion). */
+  html?: string;
   usage?: { input_tokens: number; output_tokens: number };
 }
 

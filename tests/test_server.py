@@ -325,3 +325,23 @@ def test_snapshot_paths_stay_in_the_run(client, svc, finished):
     finally:
         f.write_text(before)
         f.chmod(mode)
+
+
+def test_model_steps_render_markdown_safely(tmp_path):
+    """Model text in the activity log comes with sanitised HTML: markdown renders, injected HTML does not."""
+    import json as _json
+
+    from alchemist.api.runs import _transcript_steps
+
+    text = ("## Plan\n\n- check **R-118**\n- compare `temp`\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
+            "<script>fetch('/api/admin')</script><img src=x onerror=alert(1)> [x](javascript:alert(1))")
+    t = tmp_path / "transcript.jsonl"
+    t.write_text(_json.dumps({"at": 1, "model": "m", "message": {"content": [{"type": "text", "text": text}]}}) + "\n"
+                 + _json.dumps({"at": 2, "model": "m", "message": {"content": []}}) + "\n")
+    first, empty = _transcript_steps(t)
+    assert first["text"] == text  # the raw text stays for notes and copying
+    html = first["html"]
+    assert "<h2>Plan</h2>" in html and "<li>check <strong>R-118</strong></li>" in html and "<code>temp</code>" in html
+    assert "<table>" in html
+    assert "<script" not in html and "onerror" not in html and "<img" not in html and "javascript:" not in html
+    assert empty["html"] == ""

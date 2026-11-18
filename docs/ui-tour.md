@@ -64,7 +64,7 @@ Every question in the workspace sits in the column of its stage. A drafted plan 
 
 ### Running
 
-Each query, computation and finding appears as it happens, with the causes that already have findings and the run's limits. Pause and Stop each say what they will do. Steer the agent leaves it a note, such as a sensor you know drifted; the agent reads it before its next step, and each note shows whether it has been read.
+Each query, computation and finding appears as it happens, with the causes that already have findings and the run's limits. What the agent says between steps is shown as formatted text (lists, tables, code), cleaned the same way as the conclusion. Pause and Stop each say what they will do. Steer the agent leaves it a note, such as a sensor you know drifted; the agent reads it before its next step, and each note shows whether it has been read.
 
 ![Running](assets/ui/running-light.png#only-light)
 ![Running](assets/ui/running-dark.png#only-dark)
@@ -155,6 +155,16 @@ Models, prompt hash, packages and the seal; verify it or download the run folder
 
 ![Report: Provenance](assets/ui/report-provenance-light.png#only-light)
 ![Report: Provenance](assets/ui/report-provenance-dark.png#only-dark)
+
+### Agent steps and debugging
+
+When a step does not work (a query naming a column that does not exist, say), the agent sees the error and tries again. Those attempts are folded into one line, here and on the running page, so the story stays readable; Show the debugging opens them for advanced users.
+
+![Agent steps with a failed attempt folded](assets/ui/report-steps-debugging-light.png#only-light)
+![Agent steps with a failed attempt folded](assets/ui/report-steps-debugging-dark.png#only-dark)
+
+![Agent steps with the debugging opened](assets/ui/report-steps-debugging-open-light.png#only-light)
+![Agent steps with the debugging opened](assets/ui/report-steps-debugging-open-dark.png#only-dark)
 
 ### Replay
 
