@@ -268,6 +268,13 @@ await settle(eng);
 await shoot(eng, "report-notebook-comment");
 await tab(eng, "Provenance");
 await shoot(eng, "report-provenance");
+// A failed attempt in the agent's steps, folded to one line, then opened.
+await tab(eng, "Agent steps");
+await eng.locator(".log-debug").first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+await shoot(eng, "report-steps-debugging");
+await eng.getByRole("button", { name: /^Show the debugging/ }).first().click();
+await eng.locator(".log-debug").first().evaluate((el) => el.scrollIntoView({ block: "center" }));
+await shoot(eng, "report-steps-debugging-open");
 await view(eng, "simple");
 await open(eng, `/runs/${runId}`);
 await shoot(eng, "report-simple");
