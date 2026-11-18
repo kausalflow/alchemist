@@ -6,6 +6,7 @@ import type { NotebookCell } from "../api";
 import { useApi } from "../session";
 import { useSimple } from "../viewMode";
 import { Chip, Code, Collapsible, ErrorNote } from "./bits";
+import Icon from "./icons";
 
 const MARKER = "ALC_RESULT ";
 
@@ -25,6 +26,23 @@ function cleanText(t: string) {
     .filter((l) => !l.startsWith(MARKER))
     .join("\n")
     .replace(/\n+$/, "");
+}
+
+/** How a comment names the cell (and figure) it is about; the server looks the cell up so the agent sees what the
+ * person saw. */
+function cellRef(c: NotebookCell, figure?: number) {
+  const kind = KIND[c.meta.kind ?? ""] ?? "Step";
+  const purpose = c.meta.purpose || c.meta.finding_id || c.meta.query_id || "";
+  const what = purpose ? `${kind}: ${purpose.length > 80 ? `${purpose.slice(0, 77)}...` : purpose}` : kind;
+  return `About ${figure ? `figure ${figure} in ` : ""}cell ${c.meta.cell_id} (${what}): `;
+}
+
+function CommentButton({ onClick, label = "Comment" }: { onClick: () => void; label?: string }) {
+  return (
+    <button type="button" className="link small cell-comment" onClick={onClick} title="Start a note to the agent about this">
+      <Icon name="note" size={14} /> {label}
+    </button>
+  );
 }
 
 /** A markdown cell as plain paragraphs and headings (no HTML is rendered). The simple view leaves out the replay
@@ -56,11 +74,15 @@ export default function NotebookView({
   refresh,
   focus,
   live = false,
+  onComment,
 }: {
   runId: string;
   refresh?: unknown;
   focus?: string | null;
   live?: boolean;
+  /** Offered on each cell and figure while someone can still steer this run or ask a follow-up: start a note
+   * (or follow-up question) about it. */
+  onComment?: (ref: string) => void;
 }) {
   const simple = useSimple();
   const { data, error } = useApi<{ cells: NotebookCell[] }>(`/runs/${runId}/notebook`, [refresh]);
@@ -85,15 +107,24 @@ export default function NotebookView({
           .map((o) => (o.type === "image" ? o : { ...o, text: cleanText(o.text ?? "") }))
           .filter((o) => o.type === "image" || o.text);
         const kind = c.meta.kind ?? "code";
+        // Offered on cells that show something (a table, a figure, printed output), not on the set-up cells.
+        const comment =
+          onComment && c.meta.cell_id && outputs.length && !["parameters", "setup"].includes(kind)
+            ? (figure?: number) => onComment(cellRef(c, figure))
+            : undefined;
+        const figures = outputs.filter((o) => o.type === "image").length;
+        let fig = 0;
         return (
           <div key={i} id={`cell-${anchor}`} className={`nbcell ${hl ? "highlight" : ""}`}>
             {simple ? (
               <div className="nbmeta">
                 <Chip>{KIND[kind] ?? "Step"}</Chip> {c.meta.purpose || c.meta.finding_id || c.meta.query_id || ""}
+                {comment && <CommentButton onClick={() => comment()} />}
               </div>
             ) : (
               <div className="nbmeta small">
                 <code>{c.meta.cell_id}</code> <Chip>{kind}</Chip> {c.meta.query_id} {c.meta.finding_id} {c.meta.purpose}
+                {comment && <CommentButton onClick={() => comment()} />}
               </div>
             )}
             {simple ? (
@@ -105,7 +136,14 @@ export default function NotebookView({
             )}
             {outputs.map((o, j) =>
               o.type === "image" ? (
-                <img key={j} src={`data:image/png;base64,${o.png}`} alt={`output of ${c.meta.cell_id}`} />
+                ((n) => (
+                  <figure key={j} className="nbfig">
+                    <img src={`data:image/png;base64,${o.png}`} alt={`output of ${c.meta.cell_id}`} />
+                    {comment && figures > 1 && (
+                      <CommentButton onClick={() => comment(n)} label={`Comment on figure ${n}`} />
+                    )}
+                  </figure>
+                ))(++fig)
               ) : simple && o.type === "error" ? (
                 <div key={j} className="small warn-text">
                   This step did not work; the agent saw the error and carried on.

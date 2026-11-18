@@ -83,11 +83,15 @@ missing values, so gaps or odd data stand out before any statistics run.
 Notebook, next to Activity, shows the run's notebook as it is now, cell by cell with outputs and figures, and
 updates after every step. Seen something worth following up? Steer or ask for more leaves the agent a note: it
 reads it before its next step, and if it has already written its report, it does what you asked, has the new work
-reviewed and reports again. To point at one query, calculation or figure, click Comment on this step under it in the
-activity log: the note box starts with "About step #6 (...)", so the agent knows which step you mean.
+reviewed and reports again. To point at one table, figure or printed result, click Comment on its cell (or Comment on this
+step under it in the activity log): the note box starts with "About cell c7 (...)", and when the note is sent the
+agent receives what that cell showed (its purpose and text output) with it, so it knows exactly what you mean.
 
 ![Running: the live notebook](assets/ui/running-notebook-light.png#only-light)
 ![Running: the live notebook](assets/ui/running-notebook-dark.png#only-dark)
+
+![Running: a comment on a notebook cell](assets/ui/running-notebook-comment-light.png#only-light)
+![Running: a comment on a notebook cell](assets/ui/running-notebook-comment-dark.png#only-dark)
 
 ### Simple view
 
@@ -139,10 +143,14 @@ Every note people left for the agent, and when it read each one. The full report
 
 ### Report: Notebook
 
-Every executed cell with its outputs; download `notebook.ipynb` to run it yourself.
+Every executed cell with its outputs; download `notebook.ipynb` to run it yourself. Comment on a cell starts a
+follow-up question about it: the new run's agent gets that cell's purpose, code and output with the question.
 
 ![Report: Notebook](assets/ui/report-notebook-light.png#only-light)
 ![Report: Notebook](assets/ui/report-notebook-dark.png#only-dark)
+
+![Report: a follow-up about a notebook cell](assets/ui/report-notebook-comment-light.png#only-light)
+![Report: a follow-up about a notebook cell](assets/ui/report-notebook-comment-dark.png#only-dark)
 
 In the simple view the notebook shows each step's purpose and results, with code and raw rows folded away.
 

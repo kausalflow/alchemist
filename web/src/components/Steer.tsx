@@ -44,15 +44,17 @@ export function NoteList({ run, notes, newestFirst = false }: { run: RunDetail; 
   );
 }
 
-// "Comment on this step" in the activity log starts a note in whichever note box is on the page (the steer box while
-// the agent works, the ask-for-more box when its report waits for review).
+// "Comment on this step" in the activity log, and "Comment" on a notebook cell or figure, start a note in whichever
+// note box is on the page (the steer box while the agent works, the ask-for-more box when its report waits for
+// review). The follow-up box takes the comment only when neither is there (a finished answer).
 const quoteListeners = new Set<(ref: string) => void>();
+const fallbackListeners = new Set<(ref: string) => void>();
 
 export function commentOnStep(ref: string) {
-  quoteListeners.forEach((l) => l(ref));
+  (quoteListeners.size ? quoteListeners : fallbackListeners).forEach((l) => l(ref));
 }
 
-function useStepComments(setText: (f: (t: string) => string) => void) {
+export function useStepComments(setText: (f: (t: string) => string) => void, { fallback = false } = {}) {
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const l = (ref: string) => {
@@ -65,11 +67,12 @@ function useStepComments(setText: (f: (t: string) => string) => void) {
         el.setSelectionRange(el.value.length, el.value.length);
       }, 0);
     };
-    quoteListeners.add(l);
+    const set = fallback ? fallbackListeners : quoteListeners;
+    set.add(l);
     return () => {
-      quoteListeners.delete(l);
+      set.delete(l);
     };
-  }, [setText]);
+  }, [setText, fallback]);
   return box;
 }
 
@@ -123,7 +126,11 @@ export function SteerPanel({ run, reload }: { run: RunDetail; reload: () => void
           <button type="button" className="outline" onClick={send} disabled={busy || !text.trim()}>
             <Icon name="note" /> {busy ? "Sending…" : "Send note"}
           </button>
-          {status === "running" && <div className="small muted">To point at one query, calculation or figure, use Comment on this step under it.</div>}
+          {status === "running" && (
+            <div className="small muted">
+              To point at one table, figure or result, use Comment under it in the activity or the notebook.
+            </div>
+          )}
           <div className="small muted">
             {status === "paused"
               ? "The agent reads it when the run resumes."

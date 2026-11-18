@@ -21,7 +21,7 @@ from typing import Callable
 from penguineer.agent import protocol
 from penguineer.agent.loop import Budget, Model, ScriptedText, ToolOutput, run_loop
 
-from . import documents, fsjail, penguineer_tools, prompts, steering, uploads
+from . import cell_refs, documents, fsjail, penguineer_tools, prompts, steering, uploads
 from .access import AccessDenied, User
 from .llm import role_model
 from .catalog import Catalog, now
@@ -640,6 +640,8 @@ def create(svc: Services, *, user: "str | User", workspace: str, project: str, q
     previous = None
     if follow_up_of:
         previous = follow_up_context(svc, u, workspace, project, follow_up_of)
+        # Cells of the earlier notebook the question points at ("About cell c12 ..."), as they were.
+        previous["cells"] = cell_refs.excerpts(previous.pop("path"), question)
         # The follow-up covers at least the earlier run's plants (its answer is about their data), and by default the
         # same files and scope.
         scope = {**previous["scope"], **scope}
@@ -661,7 +663,8 @@ def create(svc: Services, *, user: "str | User", workspace: str, project: str, q
         update_question(qdir, project_background=background)
     if previous:
         update_question(qdir, follow_up_of={k: previous[k] for k in ("run_id", "question_id", "question", "seal_sha256",
-                                                                      "conclusion", "findings")})
+                                                                      "conclusion", "findings")
+                                            if k in previous} | ({"cells": previous["cells"]} if previous["cells"] else {}))
     pinned_docs = documents.pins(project_dir(s.workspace_root, workspace, project))
     if pinned_docs:  # likewise the documents in the project now
         update_question(qdir, documents=pinned_docs)
@@ -701,7 +704,7 @@ def follow_up_context(svc: Services, user: User, workspace: str, project: str, r
     return {"run_id": run_id, "question_id": row["question_id"], "question": q.get("text"),
             "seal_sha256": row.get("seal_sha256"), "conclusion": conclusion, "findings": findings,
             "scope": {k: v for k, v in (q.get("scope") or {}).items() if k != "plants"}, "plants": plants,
-            "uploads": list(q.get("uploads") or [])}
+            "uploads": list(q.get("uploads") or []), "path": str(rdir)}
 
 
 def follow_up_note(prev: dict) -> str:
@@ -713,7 +716,10 @@ def follow_up_note(prev: dict) -> str:
             "number you use rather than copying it, so this run stands on its own.\n"
             f"<earlier_question>{prev['question']}</earlier_question>\n"
             f"<earlier_conclusion>\n{prev['conclusion']}\n</earlier_conclusion>\n"
-            f"<earlier_findings>\n{findings}\n</earlier_findings>")
+            f"<earlier_findings>\n{findings}\n</earlier_findings>"
+            + ("\nThe new question is about these cells of the earlier run's notebook, as the asker saw them (re-run "
+               "what you need in this run rather than relying on their output):\n<earlier_cells>\n"
+               + cell_refs.for_model(prev["cells"], with_code=True) + "\n</earlier_cells>" if prev.get("cells") else ""))
 
 
 def background_note(text: str) -> str:
