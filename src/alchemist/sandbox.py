@@ -28,7 +28,7 @@ from jupyter_client import KernelManager
 from jupyter_client.kernelspec import KernelSpecManager
 
 from .nb import RESULT_MARKER
-from .paths import as_path, write_text
+from .paths import UTF8_ENV, as_path, write_text
 
 MAX_TEXT = 4000
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -39,7 +39,7 @@ def _kernel_spec_dir(module: str = "ipykernel_launcher") -> str:
     d.mkdir(parents=True)
     (d / "kernel.json").write_text(json.dumps({
         "argv": [sys.executable, "-m", module, "-f", "{connection_file}"],
-        "display_name": "Alchemist (Python)", "language": "python"}))
+        "display_name": "Alchemist (Python)", "language": "python"}), encoding="utf-8")
     return str(d.parent)
 
 
@@ -107,7 +107,7 @@ def kernel_env(run_dir: str, extra_env: dict | None = None, base: dict | None = 
     and `extra_env`; None in extra_env removes a variable."""
     env = {**kernel_base_env(os.environ if base is None else base), "ALC_RUN_DIR": str(run_dir),
            "MPLBACKEND": "module://matplotlib_inline.backend_inline", "PYTHONHASHSEED": "0", "OMP_NUM_THREADS": "1",
-           "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", **(extra_env or {})}
+           "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", **UTF8_ENV, **(extra_env or {})}
     return {k: v for k, v in env.items() if v is not None}
 
 
@@ -425,7 +425,7 @@ class Sandbox:
         re-run in replay mode, so each query reads the snapshot it stored and nothing reads the lake again; then the
         kernel switches back to this sandbox's mode. Nothing is added to the notebook. Returns the cells that raised
         (cells that failed the first time fail again; that is expected)."""
-        self.nb = nbformat.reads((self.run / "notebook.ipynb").read_text(), as_version=4)
+        self.nb = nbformat.reads((self.run / "notebook.ipynb").read_text(encoding="utf-8"), as_version=4)
         self.nb.cells = self.nb.cells[:cells]
         self.counter = counter
 

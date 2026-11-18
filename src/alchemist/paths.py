@@ -34,6 +34,12 @@ def new_id() -> str:
     return "".join(reversed(chars))
 
 
+# Python in UTF-8 mode: open(), Path.write_text(), print() and pipes use UTF-8 whatever the machine's code page. On
+# Windows the default is often cp1252, and analysis code that writes a "°C", a "≥" or a "µ" fails with "'charmap' codec
+# can't encode character". Set for every kernel and query step, overriding what the parent process has.
+UTF8_ENV = {"PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+
+
 def as_path(uri: str | os.PathLike) -> Path | CloudPath:
     return AnyPath(str(uri))
 
@@ -45,12 +51,12 @@ def is_cloud(path) -> bool:
 def write_text(path, text: str) -> None:
     path = as_path(path)
     if is_cloud(path):
-        path.write_text(text)  # an S3 PUT replaces the object atomically
+        path.write_text(text, encoding="utf-8")  # an S3 PUT replaces the object atomically
         return
     # Locally, write a temporary file and rename it, so a reader (the web app following a run) never sees half a file.
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -68,7 +74,7 @@ def create_exclusive(path, text: str) -> None:
             raise
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "x") as f:
+    with open(path, "x", encoding="utf-8") as f:
         f.write(text)
 
 
@@ -113,7 +119,7 @@ def write_json(path, data: Any) -> None:
 
 
 def read_json(path) -> Any:
-    return json.loads(as_path(path).read_text())
+    return json.loads(as_path(path).read_text(encoding="utf-8"))
 
 
 def write_yaml(path, data: Any) -> None:
@@ -121,7 +127,7 @@ def write_yaml(path, data: Any) -> None:
 
 
 def read_yaml(path) -> Any:
-    return yaml.safe_load(as_path(path).read_text())
+    return yaml.safe_load(as_path(path).read_text(encoding="utf-8"))
 
 
 def parse_yaml_text(text: str) -> Any:
@@ -131,7 +137,7 @@ def parse_yaml_text(text: str) -> Any:
 
 def read_structured(path) -> Any:
     """Read a YAML or JSON file."""
-    return parse_yaml_text(as_path(path).read_text())
+    return parse_yaml_text(as_path(path).read_text(encoding="utf-8"))
 
 
 def sha256_file(path) -> str:

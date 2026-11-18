@@ -40,7 +40,7 @@ class Knowledge:
         self.index = KeywordIndex(self.passages)
 
     def _load(self, path, pack: str | None = None) -> None:
-        meta, sections = document(path.read_text(), path.stem)
+        meta, sections = document(path.read_text(encoding="utf-8"), path.stem)
         doc = {k: meta[k] for k in ("doc", "title", "version", "plant", "review_date")} | {"path": str(path)}
         if pack:
             doc["pack"] = pack
@@ -64,7 +64,7 @@ class Knowledge:
             if not folder.exists():
                 continue
             for f in sorted(folder.glob("*.yaml"), key=str):
-                data = yaml.safe_load(f.read_text()) or {}
+                data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
                 entry = {"name": f.stem, "plant": str(data.get("plant", "global")), "version": str(data.get("version", "1")),
                          "description": str(data.get("description", "")), "updated_at": str(data.get("updated_at", "")),
                          "updated_by": str(data.get("updated_by", "")), "path": str(f)}
@@ -84,7 +84,7 @@ class Knowledge:
                 if f.stem in seen:
                     raise ValueError(f"structured knowledge {f.stem!r} is defined twice (in {pack or 'ALC_KNOWLEDGE'})")
                 seen.add(f.stem)
-                data = yaml.safe_load(f.read_text()) or {}
+                data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
                 plant = str(data.get("plant", "global"))
                 if plant != "global" and plant not in plants:
                     continue

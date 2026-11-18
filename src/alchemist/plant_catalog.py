@@ -46,7 +46,7 @@ def _front_matter(meta: dict, body: str) -> str:
 
 def _archive(root, kind: str, name: str, version: str, path) -> None:
     src = as_path(path)
-    write_text(as_path(root) / ".history" / kind / name / f"v{version}{src.suffix}", src.read_text())
+    write_text(as_path(root) / ".history" / kind / name / f"v{version}{src.suffix}", src.read_text(encoding="utf-8"))
 
 
 def save_document(knowledge, root, *, plant: str, title: str, type: str, lines: list[str], review_date: str,
@@ -69,7 +69,7 @@ def save_document(knowledge, root, *, plant: str, title: str, type: str, lines: 
 
 def read_document(knowledge, doc_id: str) -> str:
     """A document's body without its front matter."""
-    text = as_path(knowledge.documents[doc_id]["path"]).read_text()
+    text = as_path(knowledge.documents[doc_id]["path"]).read_text(encoding="utf-8")
     return text.split("---", 2)[2].lstrip("\n") if text.startswith("---") else text
 
 
@@ -96,7 +96,7 @@ def save_fact(knowledge, root, *, name: str, plant: str, description: str, conte
 
 def read_fact(knowledge, name: str) -> str:
     f = next(f for f in knowledge.facts() if f["name"] == name)
-    data = yaml.safe_load(as_path(f["path"]).read_text()) or {}
+    data = yaml.safe_load(as_path(f["path"]).read_text(encoding="utf-8")) or {}
     values = {k: v for k, v in data.items() if k not in RESERVED_FACT_KEYS}
     return yaml.safe_dump(values, sort_keys=False, allow_unicode=True) if values else ""
 

@@ -63,7 +63,7 @@ def generate(home: Path, seed: int = 7) -> dict:
             "operator_name": {"description": "lead operator", "pii": True},
             "first_pass_yield_pct": {"description": "share of output passing first inspection", "units": "%", "min": 0, "max": 100},
         },
-    }, indent=2))
+    }, indent=2), encoding="utf-8")
 
     # ---- historian, Line 2 (P01): 1-minute averages, partitioned by day
     ts = pd.date_range(START - pd.Timedelta(hours=1), END, freq="min", inclusive="left")
@@ -97,7 +97,7 @@ def generate(home: Path, seed: int = 7) -> dict:
             {"tag": "melt_pressure_bar", "desc": "melt pressure before the die, PT-210", "eng_unit": "bar", "range": [0, 400]},
         ],
         "notes": ["TT-204 drops out for a few hours on some days; gaps are null values, not zeros."],
-    }, sort_keys=False))
+    }, sort_keys=False), encoding="utf-8")
 
     # ---- resin receipts (P01): CSV with a minimal metadata file
     mdir = lake / "plant=P01" / "materials"
@@ -108,37 +108,37 @@ def generate(home: Path, seed: int = 7) -> dict:
         {"resin_lot": "R-117", "supplier": "PolyCo", "received_date": "2026-07-24", "cert_mfi_g10min": 2.1},
         {"resin_lot": "R-118", "supplier": "ResinWorks", "received_date": "2026-07-31", "cert_mfi_g10min": 1.4},
     ]).to_csv(mdir / "resin_lots.csv", index=False)
-    (mdir / "_meta.yml").write_text("desc: Resin lot receipts with supplier certificate values\n")
+    (mdir / "_meta.yml").write_text("desc: Resin lot receipts with supplier certificate values\n", encoding="utf-8")
 
     # ---- a second plant (P02) that P01 users must not read
     p2 = lake / "plant=P02" / "historian" / "line5" / "date=2026-08-01"
     p2.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"ts": pd.date_range("2026-08-01", periods=60, freq="min"), "line": "L5",
                   "barrel_temp_c": 221.0}).to_parquet(p2 / "part-0.parquet", index=False)
-    (lake / "plant=P02" / "historian" / "line5" / "_meta.yaml").write_text("description: Line 5 historian (plant P02)\ntimezone: UTC\n")
+    (lake / "plant=P02" / "historian" / "line5" / "_meta.yaml").write_text("description: Line 5 historian (plant P02)\ntimezone: UTC\n", encoding="utf-8")
 
     # ---- knowledge
     kn = home / "knowledge"
     (kn / "structured").mkdir(parents=True, exist_ok=True)
     (kn / "glossary.md").write_text("---\nid: GLOSSARY\ntitle: Plant glossary\nversion: 5\nplant: global\nreview_date: 2027-01-01\n---\n"
                                     "# Quality\nWhen engineers say quality on an extrusion line they mean first-pass yield (FPY): the share of output passing first inspection.\n"
-                                    "# MFI\nMelt flow index of a resin lot, g/10 min, from the supplier certificate. Lower MFI means a more viscous melt.\n")
+                                    "# MFI\nMelt flow index of a resin lot, g/10 min, from the supplier certificate. Lower MFI means a more viscous melt.\n", encoding="utf-8")
     (kn / "FMEA-L2.md").write_text("---\nid: FMEA-L2\ntitle: FMEA extrusion Line 2\nversion: 4\nplant: P01\nreview_date: 2027-03-01\n---\n"
                                    "# Failure mode: voids and surface defects lower first-pass yield\n"
                                    "Causes ranked by occurrence: resin lot variation (MFI outside the usual band), low melt temperature, "
                                    "line speed above the validated range, recipe change, crew practice at start-up, sensor fault (TT-204, PT-210).\n"
-                                   "# Detection\nInline inspection after the die; lab test per lot.\n")
+                                   "# Detection\nInline inspection after the die; lab test per lot.\n", encoding="utf-8")
     (kn / "SOP-114.md").write_text("---\nid: SOP-114\ntitle: Melt temperature window, Line 2\nversion: 3\nplant: P01\nreview_date: 2027-02-01\n---\n"
                                    "# Melt temperature window\nBarrel zone 3 melt temperature must stay within 228 to 234 degC. "
                                    "Below 229 degC the melt is not fully homogenised, which causes voids and lowers first-pass yield.\n"
                                    "# Low-MFI resin\nA resin lot with low melt flow index needs more energy to reach the same melt temperature; "
-                                   "at unchanged heater settings the melt runs cooler.\n")
+                                   "at unchanged heater settings the melt runs cooler.\n", encoding="utf-8")
     (kn / "PI-2025-07.md").write_text("---\nid: PI-2025-07\ntitle: Past investigation, yield drop Line 2, July 2025\nversion: 1\nplant: P01\nreview_date: 2026-06-01\n---\n"
                                       "# Conclusion\nA five-point first-pass yield drop was traced to a resin lot with low MFI from a new supplier; "
-                                      "melt temperature ran about two degrees low. Raising zone 3 setpoint restored yield.\n")
+                                      "melt temperature ran about two degrees low. Raising zone 3 setpoint restored yield.\n", encoding="utf-8")
     (kn / "structured" / "line2_process.yaml").write_text(yaml.safe_dump({
         "plant": "P01", "version": 3, "line": "L2", "residence_time_min": RESIDENCE_MIN,
-        "melt_temp_window_c": [228, 234], "validated_line_speed_mpm": [38, 46]}, sort_keys=False))
+        "melt_temp_window_c": [228, 234], "validated_line_speed_mpm": [38, 46]}, sort_keys=False), encoding="utf-8")
 
     # ---- access groups
     (home / "access.yaml").write_text(yaml.safe_dump({
@@ -149,7 +149,7 @@ def generate(home: Path, seed: int = 7) -> dict:
             "eng_p2": {"plants": ["P02"], "workspaces": ["quality"]},
             "data_admin": {"admin": True, "global": True, "workspaces": ["quality"]},
         },
-    }, sort_keys=False))
+    }, sort_keys=False), encoding="utf-8")
 
     return {
         "historian_line2": dict(s3_prefix=str(hroot), file_glob="date=*/*.parquet", file_format="parquet", plant="P01",

@@ -252,7 +252,7 @@ def _penguineer_input(value: str, staged: Path) -> tuple[Path, str]:
     if value.startswith("knowledge:"):
         name = value.removeprefix("knowledge:")
         path = staged / f"{name}.yaml"
-        path.write_text(yaml.safe_dump(knowledge(name), sort_keys=False))
+        path.write_text(yaml.safe_dump(knowledge(name), sort_keys=False), encoding="utf-8")
         return path, value
     queries = _queries()
     if value in queries:
