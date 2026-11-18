@@ -6,6 +6,7 @@ import { Chip, Code, Collapsible, ErrorNote, day, fmtValue, shortId, statusLabel
 import Icon from "./icons";
 import StepList from "./StepList";
 import NotebookView from "./Notebook";
+import { commentOnStep } from "./Steer";
 import { useSimple } from "../viewMode";
 
 // ------------------------------------------------------------------ answer
@@ -401,7 +402,11 @@ export function NotebookTab({ run }: { run: RunDetail }) {
         Download <a href={fileUrl(run.run.run_id, "notebook.ipynb", true)}>notebook.ipynb</a> to open it in Jupyter
         {simple ? "." : <>; set <code>run_mode = 'replay'</code> in its first cell to re-run it on the stored snapshots.</>}
       </p>
-      <NotebookView runId={run.run.run_id} focus={params.get("cell")} />
+      <NotebookView
+        runId={run.run.run_id}
+        focus={params.get("cell")}
+        onComment={run.run.mode === "live" && run.conclusion_html ? commentOnStep : undefined}
+      />
     </div>
   );
 }

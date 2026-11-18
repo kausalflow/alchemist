@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 
+from . import cell_refs
 from .catalog import now
 from .paths import as_path, read_json, write_json
 
@@ -26,8 +27,11 @@ def add(svc, run_id: str, *, author: str, text: str, kind: str = "note", phase: 
     text = text.strip()
     if not text:
         raise ValueError("a note needs some text")
-    svc.catalog.audit(author, "run.note", run_id, {"text": text[:4000], "kind": kind,
-                                                   "status": phase or svc.catalog.run(run_id)["status"]})
+    row = svc.catalog.run(run_id)
+    # A note about notebook cells ("About cell c12 ...") keeps what those cells showed when it was written.
+    cells = cell_refs.excerpts(row["path"], text) if row.get("path") else []
+    svc.catalog.audit(author, "run.note", run_id, {"text": text[:4000], "kind": kind, "status": phase or row["status"],
+                                                   **({"cells": cells} if cells else {})})
 
 
 def notes(svc, run_id: str) -> list[dict]:
@@ -38,7 +42,8 @@ def notes(svc, run_id: str) -> list[dict]:
     for n, r in enumerate(rows, 1):
         d = json.loads(r["detail"]) if r["detail"] else {}
         out.append({"id": r["id"], "n": n, "at": r["at"], "author": r["actor"], "text": d.get("text", ""),
-                    "kind": d.get("kind", "note"), "status": d.get("status")})
+                    "kind": d.get("kind", "note"), "status": d.get("status"),
+                    **({"cells": d["cells"]} if d.get("cells") else {})})
     return out
 
 
@@ -81,6 +86,9 @@ def for_model(notes_: list[dict], *, after_report: bool = False) -> str:
         else:
             parts.append(f"Note from {n['author']} ({n['at']}), who is following this run:\n{n['text']}\n"
                          "Take it into account from your next step.")
+        if n.get("cells"):
+            parts[-1] += ("\nThey wrote it about these notebook cells, as they saw them:\n"
+                          + cell_refs.for_model(n["cells"]))
     return "\n\n".join(parts)
 
 
