@@ -64,7 +64,7 @@ Every question in the workspace sits in the column of its stage. A drafted plan 
 
 ### Running
 
-Each query, computation and finding appears as it happens, with the causes that already have findings and the run's limits. Pause and Stop each say what they will do. Steer the agent leaves it a note, such as a sensor you know drifted; the agent reads it before its next step, and each note shows whether it has been read.
+Each query, computation and finding appears as it happens, with the causes that already have findings and the run's limits. What the agent says between steps is shown as formatted text (lists, tables, code), cleaned the same way as the conclusion. Pause and Stop each say what they will do. Steer the agent leaves it a note, such as a sensor you know drifted; the agent reads it before its next step, and each note shows whether it has been read.
 
 ![Running](assets/ui/running-light.png#only-light)
 ![Running](assets/ui/running-dark.png#only-dark)
@@ -83,11 +83,15 @@ missing values, so gaps or odd data stand out before any statistics run.
 Notebook, next to Activity, shows the run's notebook as it is now, cell by cell with outputs and figures, and
 updates after every step. Seen something worth following up? Steer or ask for more leaves the agent a note: it
 reads it before its next step, and if it has already written its report, it does what you asked, has the new work
-reviewed and reports again. To point at one query, calculation or figure, click Comment on this step under it in the
-activity log: the note box starts with "About step #6 (...)", so the agent knows which step you mean.
+reviewed and reports again. To point at one table, figure or printed result, click Comment on its cell (or Comment on this
+step under it in the activity log): the note box starts with "About cell c7 (...)", and when the note is sent the
+agent receives what that cell showed (its purpose and text output) with it, so it knows exactly what you mean.
 
 ![Running: the live notebook](assets/ui/running-notebook-light.png#only-light)
 ![Running: the live notebook](assets/ui/running-notebook-dark.png#only-dark)
+
+![Running: a comment on a notebook cell](assets/ui/running-notebook-comment-light.png#only-light)
+![Running: a comment on a notebook cell](assets/ui/running-notebook-comment-dark.png#only-dark)
 
 ### Simple view
 
@@ -139,10 +143,14 @@ Every note people left for the agent, and when it read each one. The full report
 
 ### Report: Notebook
 
-Every executed cell with its outputs; download `notebook.ipynb` to run it yourself.
+Every executed cell with its outputs; download `notebook.ipynb` to run it yourself. Comment on a cell starts a
+follow-up question about it: the new run's agent gets that cell's purpose, code and output with the question.
 
 ![Report: Notebook](assets/ui/report-notebook-light.png#only-light)
 ![Report: Notebook](assets/ui/report-notebook-dark.png#only-dark)
+
+![Report: a follow-up about a notebook cell](assets/ui/report-notebook-comment-light.png#only-light)
+![Report: a follow-up about a notebook cell](assets/ui/report-notebook-comment-dark.png#only-dark)
 
 In the simple view the notebook shows each step's purpose and results, with code and raw rows folded away.
 
@@ -155,6 +163,16 @@ Models, prompt hash, packages and the seal; verify it or download the run folder
 
 ![Report: Provenance](assets/ui/report-provenance-light.png#only-light)
 ![Report: Provenance](assets/ui/report-provenance-dark.png#only-dark)
+
+### Agent steps and debugging
+
+When a step does not work (a query naming a column that does not exist, say), the agent sees the error and tries again. Those attempts are folded into one line, here and on the running page, so the story stays readable; Show the debugging opens them for advanced users.
+
+![Agent steps with a failed attempt folded](assets/ui/report-steps-debugging-light.png#only-light)
+![Agent steps with a failed attempt folded](assets/ui/report-steps-debugging-dark.png#only-dark)
+
+![Agent steps with the debugging opened](assets/ui/report-steps-debugging-open-light.png#only-light)
+![Agent steps with the debugging opened](assets/ui/report-steps-debugging-open-dark.png#only-dark)
 
 ### Replay
 

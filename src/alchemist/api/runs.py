@@ -73,6 +73,9 @@ def _summary(svc, me, row: dict) -> dict:
     return out
 
 
+STEP_MARKDOWN = ["tables", "fenced_code", "sane_lists"]
+
+
 def _transcript_steps(path) -> list[dict]:
     """Model turns and tool calls from a transcript, in the shape the live view shows."""
     p = as_path(path)
@@ -95,8 +98,12 @@ def _transcript_steps(path) -> list[dict]:
                           **({"meta": e["meta"]} if e.get("meta") else {})})
         elif "model" in e:
             texts = [b.get("text", "") for b in e["message"]["content"] if b.get("type") == "text"]
+            text = "\n".join(t for t in texts if t)[:2000]
+            # The model writes markdown; `html` is it rendered and sanitised like the conclusion, so the page can show
+            # headings, lists and tables without trusting model text as HTML.
             steps.append({"at": e["at"], "type": "model", "model": e["model"], "stop_reason": e.get("stop_reason"),
-                          "usage": e.get("usage"), "text": "\n".join(t for t in texts if t)[:2000]})
+                          "usage": e.get("usage"), "text": text,
+                          "html": markdown_html(text, extensions=STEP_MARKDOWN) if text.strip() else ""})
     return steps
 
 

@@ -32,7 +32,9 @@ PLAN = {
 }
 
 PLAN_TURNS = [
-    [("search_catalog", {"query": "line 2 first pass yield lots resin"}),
+    [("text", "To plan this I need to know **which data covers Line 2** and what the plant already knows about low yield:\n\n"
+              "- lot yields and resin lots\n- historian tags for melt temperature and line speed\n- past investigations and the FMEA"),
+     ("search_catalog", {"query": "line 2 first pass yield lots resin"}),
      ("search_catalog", {"query": "line 2 historian barrel temperature line speed"}),
      ("search_knowledge", {"query": "low first-pass yield line 2 causes voids"})],
     [("search_knowledge", {"query": "melt temperature window resin MFI"})],
@@ -120,7 +122,9 @@ print("non-R-118 lots in scope:", int((in_scope.resin_lot != "R-118").sum()))"""
 FPY = "first_pass_yield_pct"
 
 ANALYSIS_TURNS = [
-    [("run_query", {"sql": Q_LOTS, "purpose": "Lot yields with resin lot, recipe and crew for scope and baseline"}),
+    [("text", "Starting with the data the plan needs:\n\n1. **Lot yields** for scope and baseline\n"
+              "2. **Process tags**, with one hour before the first lot for the 45 min residence time\n3. **Resin certificates**"),
+     ("run_query", {"sql": Q_LOTS, "purpose": "Lot yields with resin lot, recipe and crew for scope and baseline"}),
      ("run_query", {"sql": Q_PROC, "purpose": "One-minute process tags, including one hour before the first lot"}),
      ("run_query", {"sql": Q_RESIN, "purpose": "Resin lot certificates"})],
     [("run_python", {"code": HEALTH, "purpose": "Data health: gaps in TT-204 and implausible values before any test (H5)"}),
@@ -135,7 +139,9 @@ ANALYSIS_TURNS = [
     [("record_finding", {"hypothesis": "H1", "statement": "How much lower first-pass yield was on R-118 lots than on other lots in the same week.",
                          "value_expression": "round(-pg_p3['diff'], 2)", "unit": "percentage points", "verdict": "supported",
                          "confidence": "high", "evidence": ["q1", "q3", "FMEA-L2", "PI-2025-07"]})],
-    [("penguineer_align", {"data": "q2", "lots": "q1", "tags": ["barrel_temp_c", "line_speed_mpm"], "dead_time_min": 45}),
+    [("text", "R-118 lots explain most of the drop. Next, the **mechanism** and the other causes:\n\n"
+              "- align `barrel_temp_c` to lots with the 45 min dead time (H2)\n- compare line speed (H3) and recipe versions (H4)"),
+     ("penguineer_align", {"data": "q2", "lots": "q1", "tags": ["barrel_temp_c", "line_speed_mpm"], "dead_time_min": 45}),
      ("penguineer_compare", {"data": "p4", "value": "barrel_temp_c", "group": "resin_lot", "a": "R-118", "where": ["period=scope"]}),
      ("penguineer_compare", {"data": "p4", "value": "line_speed_mpm", "group": "period", "a": "scope", "b": "baseline"}),
      ("run_python", {"code": ALIGNED, "purpose": "Plot yield against aligned melt temperature; count new recipe versions (H2, H4)"})],
@@ -151,7 +157,10 @@ ANALYSIS_TURNS = [
      ("record_finding", {"hypothesis": "H5", "statement": "Critical data faults penguineer's data health check found on the process tags: one gap in TT-204 on 5 August, too short to explain a week-long drop.",
                          "value_expression": "pg_p1['counts']['critical']", "unit": "critical data faults", "verdict": "refuted",
                          "confidence": "high", "evidence": ["q2", "work/penguineer/p1/runs/health.json"]})],
-    [("run_python", {"code": CREW_CHECK, "purpose": "Check the R-118 effect holds within each crew (confounding by crew)"})],
+    [("text", "One more check before the review: does the **R-118 effect hold within each crew**?"),
+     ("run_query", {"sql": "select lot_id, crew_id from ds.quality_lots where line = 'L2'",
+                    "purpose": "Crew of each Line 2 lot"}),
+     ("run_python", {"code": CREW_CHECK, "purpose": "Check the R-118 effect holds within each crew (confounding by crew)"})],
     [("finish_analysis", {"summary": "R-118 lots explain the yield drop; melt temperature ran low on those lots, consistent with low MFI. Speed and recipe unchanged; TT-204 gap on 5 Aug excluded."})],
     [("build_report", {
         "title": "Line 2 first-pass yield, 3 to 9 August 2026",
