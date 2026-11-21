@@ -37,7 +37,12 @@ export function FocusLayout() {
 
 export function DemoBanner({ scripted }: { scripted: boolean }) {
   if (!scripted) return null;
-  return <div className="banner">Demo mode: runs play the offline script for the demo question instead of calling a model.</div>;
+  return (
+    <div className="banner">
+      Demo mode: runs play a scripted investigation of the Line 2 question instead of calling a model. Notes, comments on notebook
+      cells and the suggested follow-up get scripted answers.
+    </div>
+  );
 }
 
 export function Brand() {

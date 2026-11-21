@@ -125,6 +125,8 @@ export interface Meta {
   version: string;
   auth: string;
   models: { roles: Record<ModelRoleName, string>; allowed_providers: string[]; scripted: boolean };
+  /** Present in demo mode (offline script): the follow-up the script answers, and seconds per agent step. */
+  demo?: { follow_up: string; pace_seconds: number };
   budgets: { max_steps: number; max_output_tokens: number; max_run_minutes: number; max_run_minutes_cap: number };
   tools: { planning: Tool[]; analysis: Tool[] };
   prompts: string;
