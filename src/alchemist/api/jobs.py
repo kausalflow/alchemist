@@ -49,12 +49,9 @@ class Launcher(Protocol):
 def models(settings: Settings, phase: str):
     """Lead and reviewer models for API runs. ALC_API_MODEL=scripted plays the offline demo script instead."""
     if os.environ.get("ALC_API_MODEL", "default") == "scripted":
-        from ..agent import ScriptedModel
-        from ..demo import script
-        from ..run import ScriptedReviewer
+        from ..demo.live import DemoModel, DemoReviewer
 
-        turns = script.PLAN_TURNS if phase == "plan" else script.ANALYSIS_TURNS
-        return ScriptedModel(turns), ScriptedReviewer(script.REVIEW)
+        return DemoModel(phase), DemoReviewer()  # paced by ALC_DEMO_PACE; answers notes and follow-ups
     return None, None  # run.py uses the role models (model_roles.py)
 
 

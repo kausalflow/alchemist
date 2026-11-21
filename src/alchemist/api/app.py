@@ -156,6 +156,7 @@ def meta(request: Request, svc: Svc, me: Me) -> dict:
         "models": {"roles": {r["role"]: r["spec"] for r in model_roles.describe(s, svc.catalog.db)},
                    "allowed_providers": s.allowed_providers,
                    "scripted": os.environ.get("ALC_API_MODEL") == "scripted"},
+        **({"demo": _demo_meta()} if os.environ.get("ALC_API_MODEL") == "scripted" else {}),
         "budgets": {"max_steps": svc.settings.max_steps, "max_output_tokens": svc.settings.max_output_tokens_total,
                     "max_run_minutes": svc.settings.max_run_minutes,
                     "max_run_minutes_cap": svc.settings.max_run_minutes_cap},
@@ -167,6 +168,14 @@ def meta(request: Request, svc: Svc, me: Me) -> dict:
         "launcher": type(request.app.state.launcher).__name__,
     }
 
+
+
+
+def _demo_meta() -> dict:
+    """In demo mode: the suggested follow-up the script answers, and the pace of each agent step."""
+    from ..demo.live import FOLLOW_UP_QUESTION, pace
+
+    return {"follow_up": FOLLOW_UP_QUESTION, "pace_seconds": pace()}
 
 def _registry():
     """The plugin registry (alchemist.plugins), when this build has it."""

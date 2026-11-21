@@ -18,7 +18,7 @@ uv run alchemist serve --scripted
 Open <http://127.0.0.1:8000>. The API is under `/api`, with interactive docs at `/api/docs`.
 
 `--scripted` plays the offline demo script instead of calling a model, so it needs no credentials but only answers the
-demo question (the Ask page offers it). Without `--scripted`, runs use the role models (`ALC_PLANNING_MODEL`, `ALC_ANALYSIS_MODEL`,
+demo question (the Ask page offers it). To present Alchemist to people, use `alchemist demo serve` instead ([Give a demo](demo.md)). Without `--scripted`, runs use the role models (`ALC_PLANNING_MODEL`, `ALC_ANALYSIS_MODEL`,
 `ALC_REVIEWER_MODEL`, `ALC_SMALL_MODEL`, or an admin's choice) exactly as `alchemist ask` does; see
 [Model providers](models.md).
 

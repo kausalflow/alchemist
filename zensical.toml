@@ -25,6 +25,7 @@ nav = [
   ] },
   { "Guides" = [
     "guides/pilot.md",
+    "guides/demo.md",
     "guides/docker-laptop.md",
     "guides/web-app.md",
     "guides/ai-assistants.md",

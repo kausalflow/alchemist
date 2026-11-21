@@ -162,3 +162,33 @@ def generate(home: Path, seed: int = 7) -> dict:
                                 file_format="parquet", plant="P02",
                                 metadata_uri=str(lake / "plant=P02" / "historian" / "line5" / "_meta.yaml"), owner="P02 data"),
     }
+
+
+SAMPLE_FILE = "Line 2 lab void counts.xlsx"
+
+
+def sample_upload(home: Path, seed: int = 11) -> Path:
+    """A lab spreadsheet to upload during the demo: void counts per Line 2 lot, laid out as a lab keeps it (a title
+    row, a header, a units row), so the upload shows how Alchemist reads such a sheet. R-118 lots have more voids."""
+    from openpyxl import Workbook
+
+    rng = np.random.default_rng(seed)
+    lots = pd.read_parquet(home / "lake" / "plant=P01" / "quality" / "lots" / "lots.parquet")
+    lots = lots[lots.start_ts >= pd.Timestamp("2026-07-27")].iloc[::2]  # the lab samples every other lot
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Void counts"
+    ws.append(["Line 2 QC lab: void counts on cut samples (weeks 31 to 32)"])
+    ws.append([])
+    ws.append(["Lot", "Sampled", "Resin lot", "Voids", "Density", "Analyst"])
+    ws.append(["", "", "", "per m", "g/cm3", ""])
+    for _, r in lots.iterrows():
+        r118 = r.resin_lot == "R-118"
+        voids = max(0.0, rng.normal(6.5 if r118 else 2.2, 1.1))
+        density = 0.952 - (0.004 if r118 else 0.0) + rng.normal(0, 0.0012)
+        ws.append([r.lot_id, (r.end_ts + pd.Timedelta(hours=1)).to_pydatetime(), r.resin_lot, round(voids, 1),
+                   round(density, 4), ["KM", "TS", "RB"][int(rng.integers(0, 3))]])
+    out = home / "demo-files" / SAMPLE_FILE
+    out.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(out)
+    return out

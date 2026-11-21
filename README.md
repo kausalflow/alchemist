@@ -31,6 +31,15 @@ The demo plays a scripted investigation through the real agent loop and tools, s
 synthetic data has a planted cause (resin lot R-118 lowers melt temperature by about 2 °C and yield by about 5 points),
 a sensor gap, a second plant the demo user may not read, and metadata files in three different layouts.
 
+## Give a demo
+
+```bash
+uv run alchemist demo serve   # http://127.0.0.1:8000, sign in as eng_p1; no model or AWS needed
+```
+
+A paced, offline walkthrough of the whole process (plan, approval, live notebook, steering notes, review, follow-up,
+replay) for an audience. See [Give a demo](docs/guides/demo.md).
+
 ## Use it in the browser
 
 ```bash

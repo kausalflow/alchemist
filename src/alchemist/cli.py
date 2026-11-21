@@ -11,7 +11,7 @@ from pathlib import Path
 from .catalog import index_dataset
 from .config import _home, load_settings
 from .db import is_postgres
-from .paths import as_path, copy_tree, read_yaml
+from .paths import as_path, copy_tree, read_yaml, write_yaml
 
 
 def _svc():
@@ -26,10 +26,9 @@ def _print(obj) -> None:
 
 def _model(name: str, phase: str):
     if name == "scripted":
-        from .agent import ScriptedModel
-        from .demo import script
+        from .demo.live import DemoModel
 
-        return ScriptedModel(script.PLAN_TURNS if phase == "plan" else script.ANALYSIS_TURNS)
+        return DemoModel(phase)
     if name in ("bedrock", "default"):
         return None  # the run uses the role's model (ALC_PLANNING_MODEL / ALC_ANALYSIS_MODEL, or an admin's choice)
     from .llm import PydanticAIModel
@@ -49,10 +48,9 @@ def _user(a, svc=None):
 
 def _reviewer(name: str, spec: str | None = None):
     if name == "scripted":
-        from .demo import script
-        from .run import ScriptedReviewer
+        from .demo.live import DemoReviewer
 
-        return ScriptedReviewer(script.REVIEW)
+        return DemoReviewer()
     if spec:
         from .llm import PydanticAIModel
 
@@ -416,6 +414,127 @@ def cmd_demo_run(a) -> None:
     print(f"\nReport: {as_path(res['path']) / 'report' / 'report.html'}")
 
 
+DEMO_BACKGROUND = """Line 2 extrudes HDPE pipe. Normal first-pass yield is about 96 %, with lot-to-lot variation of about one point.
+Barrel zone 3 (TT-204) should stay within the SOP-114 window, 228 to 234 degC; the melt takes about 45 minutes from
+the zone to the die. Resin comes from PolyCo; a second supplier, ResinWorks, was qualified in July.
+We suspect the new resin, but the line speed was also raised slightly in August, so please check that too."""
+
+# Settings that would point a demo at real data, a real database or another launcher: the demo uses its own folder.
+_DEMO_CLEARS = ("ALC_WORKSPACE", "ALC_ACCESS", "ALC_LAKE", "ALC_KNOWLEDGE", "ALC_SOURCES", "ALC_LAUNCHER",
+                "ALC_SANDBOX_URL", "ALC_SANDBOX_TASK_ARN", "ALC_RUN_ROLE_ARN", "ALC_ACCESS_PROVIDER")
+
+
+def demo_environment(home: Path, pace: float) -> None:
+    """Point this process at the demo folder, with the offline script, the dev sign-in and in-process runs."""
+    import os
+
+    for k in list(os.environ):
+        if k in _DEMO_CLEARS or k.startswith("ALC_DB"):
+            os.environ.pop(k)
+    os.environ.update(ALC_HOME=str(home), ALC_API_MODEL="scripted", ALC_DEMO_PACE=f"{pace:g}", ALC_AUTH="dev",
+                      ALC_SANDBOX_MODE="in_process")
+
+
+def demo_prepare(home: Path, *, example: bool = True) -> dict:
+    """Make the demo folder ready to present: data and catalog, the project with its background, the lab file to
+    upload, and one finished, replayed answer to open straight away. Idempotent: an existing folder is kept."""
+    from types import SimpleNamespace
+
+    from .demo.generate import sample_upload
+    from .demo.live import DemoModel, DemoReviewer
+    from .demo import script
+    from .run import approve, ask, replay
+    from .workspace import ensure_project, project_dir
+
+    svc = _svc()
+    if not any(d["dataset"]["id"] == "quality_lots" for d in svc.catalog.queryable({"P01"})):
+        print("Setting up the demo data (about 10 seconds) ...")
+        cmd_demo_setup(SimpleNamespace(lake=None, use_model=False, no_approve=False))
+        svc = _svc()
+    sample = home / "demo-files" / "Line 2 lab void counts.xlsx"
+    if not sample.exists():
+        sample = sample_upload(home)
+    root = svc.settings.workspace_root
+    ensure_project(root, "quality", "line2-yield", owner="eng_p1", plants=["P01"])
+    pfile = project_dir(root, "quality", "line2-yield") / "project.yaml"
+    meta = read_yaml(pfile)
+    if not meta.get("background"):
+        from .catalog import now
+
+        meta.update(background=DEMO_BACKGROUND, background_updated_by="eng_p1", background_updated_at=now())
+        write_yaml(pfile, meta)
+    finished = None
+    has_runs = svc.catalog.db.execute("select count(*) as n from runs").fetchone()["n"]
+    if example and not has_runs:
+        print("Preparing a finished example answer (about 15 seconds) ...")
+        out = ask(svc, user="eng_p1", workspace="quality", project="line2-yield", question=script.QUESTION,
+                  scope=script.SCOPE, model=DemoModel("plan", seconds=0))
+        res = approve(svc, out["run_id"], user="eng_p1", model=DemoModel("analysis", seconds=0), reviewer=DemoReviewer())
+        if res["status"] == "completed":
+            replay(svc, out["run_id"], user="eng_p1")
+            finished = out["run_id"]
+    svc.catalog.db.close()
+    return {"sample": sample, "example": finished}
+
+
+def _web_dist_ready() -> bool:
+    """The built web app, building it once if it is missing and npm is installed (a source checkout)."""
+    import os
+    import shutil
+    import subprocess
+
+    web = Path(__file__).resolve().parents[2] / "web"
+    dist = Path(os.environ.get("ALC_WEB_DIST") or web / "dist")
+    if (dist / "index.html").exists():
+        return True
+    npm = shutil.which("npm")
+    if not npm or not (web / "package.json").exists():
+        return False
+    print("Building the web app once (a minute or two) ...")
+    for args in (["ci"], ["run", "build"]):
+        if subprocess.run([npm, *args], cwd=web).returncode != 0:
+            return False
+    return (dist / "index.html").exists()
+
+
+def cmd_demo_serve(a) -> None:
+    """One command for a live demo: prepare the demo folder, then serve the web app on the offline script."""
+    import os
+
+    home = Path(a.home or os.environ.get("ALC_DEMO_HOME") or Path.home() / "alchemist-demo").expanduser()
+    if a.fresh and home.exists():
+        import shutil
+
+        shutil.rmtree(home)
+    home.mkdir(parents=True, exist_ok=True)
+    demo_environment(home, a.pace)
+    ready = demo_prepare(home, example=not a.no_example)
+    if not _web_dist_ready():
+        print("\nThe web app is not built: run `npm ci` and `npm run build` in the web folder, or use the Docker image "
+              "(see docs/guides/demo.md). The API still starts.", file=sys.stderr)
+    url = f"http://{'127.0.0.1' if a.host in ('0.0.0.0', '::') else a.host}:{a.port}"
+    print(f"""
+Alchemist demo: {url}   (demo folder {home})
+  Sign in as eng_p1. Runs play the scripted investigation, {a.pace:g} s per step; nothing calls a model or AWS.
+  - Ask: "Use the demo question" fills in the Line 2 question (project line2-yield has a background already).
+  - Upload: {ready['sample']}
+  - While it runs: write a note, or comment on a notebook cell (e.g. "check the crews" or "what about speed?").
+  - On the answer: ask the follow-up "{_follow_up_text()}", then Replay.
+  Stop with Ctrl+C. Start over with --fresh.
+""", flush=True)
+    import uvicorn
+
+    from .api.app import create_app
+
+    uvicorn.run(create_app(), host=a.host, port=a.port, log_level="warning")
+
+
+def _follow_up_text() -> str:
+    from .demo.live import FOLLOW_UP_QUESTION
+
+    return FOLLOW_UP_QUESTION
+
+
 def _first_tool_error(run_dir: str) -> str:
     """The first failed tool call in a run's transcript: in the scripted demo, the step every later one tripped on."""
     log = as_path(run_dir) / "logs" / "transcript.jsonl"
@@ -741,6 +860,15 @@ def main(argv=None) -> None:
     ds.add_argument("--lake", help="upload the demo lake here (e.g. s3://my-bucket/alchemist-demo/lake) and register it there")
     ds.set_defaults(fn=cmd_demo_setup)
     dsub.add_parser("run", help="ask, approve, replay and verify the demo question offline").set_defaults(fn=cmd_demo_run)
+    dv = dsub.add_parser("serve", help="present Alchemist: prepare a demo folder and serve the web app on the offline "
+                                        "script, paced so people can follow (no model, no AWS)")
+    dv.add_argument("--host", default="127.0.0.1")
+    dv.add_argument("--port", type=int, default=8000)
+    dv.add_argument("--pace", type=float, default=2.0, help="seconds per agent step (default 2; 0 = as fast as possible)")
+    dv.add_argument("--home", help="demo folder (default ALC_DEMO_HOME, else alchemist-demo in your home folder)")
+    dv.add_argument("--fresh", action="store_true", help="delete the demo folder first and start over")
+    dv.add_argument("--no-example", action="store_true", help="do not prepare a finished example answer")
+    dv.set_defaults(fn=cmd_demo_serve)
 
     c = sub.add_parser("catalog", help="manage the data catalog")
     c.add_argument("action", choices=["list", "register", "index", "show", "approve", "reject", "suggestions", "health"])

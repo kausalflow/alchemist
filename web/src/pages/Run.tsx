@@ -624,6 +624,7 @@ function ReportView({ run, reload }: { run: RunDetail; reload: () => void }) {
 function FollowUp({ run }: { run: RunDetail }) {
   const r = run.run;
   const nav = useNavigate();
+  const { meta } = useSession();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -673,6 +674,13 @@ function FollowUp({ run }: { run: RunDetail }) {
         placeholder="For example: split that by shift, or check whether the same happened on Line 5."
         aria-label="Follow-up question"
       />
+      {meta?.demo?.follow_up && (
+        <div>
+          <button type="button" className="link" onClick={() => setText(meta.demo!.follow_up)}>
+            Use the demo follow-up
+          </button>
+        </div>
+      )}
       <ErrorNote error={error} />
       <div className="row-center">
         <button type="button" className="primary" onClick={ask} disabled={busy || text.trim().length < 5}>
